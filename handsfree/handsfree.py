@@ -76,8 +76,9 @@ SPEECH = VadOptions(threshold=0.6, min_speech_duration_ms=250, min_silence_durat
 # While a clip plays the canceller squashes the user's voice; measured on a
 # double-talk recording, 0.6/250 ms caught 11 of 48 windows of them talking;
 # 0.3/150 ms caught 26 but in live use cut talkback off on its own echo four
-# times in a row (2026-11-14 20:18), so this sits in between
-SPEECH_OVER = VadOptions(threshold=0.45, min_speech_duration_ms=200, min_silence_duration_ms=100,
+# times in a row (2026-11-14 20:18), so this sits in between; 0.45/200 ms
+# still stopped on a throat clear, hence 0.5/300 ms (a real interruption is longer)
+SPEECH_OVER = VadOptions(threshold=0.5, min_speech_duration_ms=300, min_silence_duration_ms=100,
                          speech_pad_ms=0)
 VOICE_SHARE = 0.5  # share of a frame's energy below 1 kHz for it to sound like a voice
 END_DB = 6
