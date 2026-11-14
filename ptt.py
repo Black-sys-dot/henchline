@@ -10,6 +10,7 @@ import gc
 import json
 import os
 import queue
+import re
 import select
 import shutil
 import signal
@@ -262,6 +263,42 @@ def can_type(cls: str, role: str) -> bool:
     return True
 
 
+SHELLS = {"bash", "zsh", "fish", "sh", "dash", "ksh", "tcsh"}
+
+
+def shell_only(cls: str) -> bool:
+    """A terminal whose current tab runs nothing but a shell.
+
+    Enter there would run the dictated words as a command, so paste() leaves
+    it out. Unknown cases (several Konsole windows, odd terminals) say no and
+    keep the usual Enter.
+    """
+    if not any(f'"{name}"' in cls for name in TERMINALS):
+        return False
+    try:
+        root = subprocess.check_output(["xprop", "-root", "_NET_ACTIVE_WINDOW"], text=True)
+        wid = root.strip().split()[-1]
+        pid = int(subprocess.check_output(["xprop", "-id", wid, "_NET_WM_PID"], text=True).split()[-1])
+        if '"konsole"' in cls:
+            service = f"org.kde.konsole-{pid}"
+            paths = subprocess.check_output(["qdbus", service], text=True).split()
+            windows = [p for p in paths if re.fullmatch(r"/Windows/\d+", p)]
+            if len(windows) != 1:
+                return False
+            tab = subprocess.check_output(["qdbus", service, windows[0], "currentSession"], text=True).strip()
+            fg = int(subprocess.check_output(
+                ["qdbus", service, f"/Sessions/{tab}", "foregroundProcessId"], text=True).strip())
+        else:
+            children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
+            shells = [c for c in children if Path(f"/proc/{c}/comm").read_text().strip() in SHELLS]
+            if len(shells) != 1:
+                return False
+            fg = int(Path(f"/proc/{shells[0]}/stat").read_text().rsplit(")", 1)[1].split()[5])
+        return Path(f"/proc/{fg}/comm").read_text().strip() in SHELLS
+    except (subprocess.CalledProcessError, OSError, ValueError, IndexError):
+        return False
+
+
 def paste() -> bool:
     os.environ.setdefault("DISPLAY", ":0")
     cls, role = active_window()
@@ -310,8 +347,11 @@ def paste() -> bool:
         tap(XK_V, 0)
         tap(XK_CONTROL_L, 0)
     time.sleep(0.12)
-    tap(XK_RETURN, 1)
-    tap(XK_RETURN, 0)
+    if terminal and shell_only(cls):
+        log("only a shell in that terminal: pasted without Enter")
+    else:
+        tap(XK_RETURN, 1)
+        tap(XK_RETURN, 0)
     x11.XCloseDisplay(disp)
     return True
 
