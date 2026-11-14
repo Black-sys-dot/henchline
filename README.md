@@ -66,7 +66,20 @@ python3 -m venv ~/.local/share/talkback/venv
 
 ## Hands-free
 
-`handsfree on` talks to the same agents without a key (`handsfree/handsfree.py`, user unit `handsfree/handsfree.service`; `install.sh` installs it, `systemctl --user enable handsfree` starts it at every login). It needs a speech helper that writes `~/.local/state/ptt/talkback.*` (the talkback skill this was built for), and the echo canceller in `handsfree/talkback-echo-cancel.conf` copied to `~/.config/pipewire/`; it captures the built-in mic, which shares a clock with the speakers. It listens for a few seconds after an agent speaks, while an agent speaks (talking over it stops it), and for a wake word the rest of the time. The words are typed into the Konsole tab of the agent that spoke last, prefixed `[hands-free · how it was heard]`. "Over" sends at once, "give me a minute" keeps listening, "never mind" drops it, "hands-free off" ends it. "Switch to Cursor" (or "hand over to Claude in pc diagnostics") changes who your replies go to, "send that to Claude" forwards your last message there, and "who am I talking to?" tells you. `handsfree listen N` and `handsfree close` widen or close the window.
+`handsfree on` talks to the same agents without a key (`handsfree/handsfree.py`, user unit `handsfree/handsfree.service`; `install.sh` installs it, `systemctl --user enable handsfree` starts it at every login). It needs a speech helper that writes `~/.local/state/ptt/talkback.*` (the talkback skill this was built for), and the echo canceller in `handsfree/talkback-echo-cancel.conf` copied to `~/.config/pipewire/`; it captures the built-in mic, which shares a clock with the speakers. It listens for a few seconds after an agent speaks, while an agent speaks (talking over it stops it), and for a wake word the rest of the time. The words are typed into the Konsole tab of the agent that spoke last, prefixed `[hands-free · how it was heard]`. "Over" sends at once, "give me a minute" keeps listening, "never mind" drops it, "hands-free off" ends it. Replies go to the agent that spoke last; switching is by voice.
+
+### Switching agents: fixed phrases, on purpose
+
+Switching recognises a handful of phrase shapes, not free-form language: there is no language model in the loop, by choice, to keep the dependencies small. Say the whole utterance as one of these (an agent name is Claude, Cursor or Codex; "in <workspace>" picks one of several):
+
+| Say | Does |
+|---|---|
+| "switch to Cursor", "hand it back to Claude", "pass me over to Cursor", "back to Claude", "let me talk to Cursor in copilot ptt", "put me through to Claude", "can you switch me to Cursor?" | your replies go to that agent from now on |
+| "send that to Claude" | forwards your last message there, and switches |
+| "…never mind / scratch that / forget what I said, hand this to Cursor" | drops what came before, then switches |
+| "who am I talking to?" | says who your replies go to |
+
+A leading "okay", "no" or "actually" is fine. Anything negated ("don't switch me to Claude") or longer is an ordinary message to the current agent. A switch never sends your words anywhere by itself and is announced out loud, so a misheard one is undone with "back to …". `handsfree listen N` and `handsfree close` widen or close the window.
 
 The wake word is a personal detector: `handsfree/wakeword_collect.py` records you at a few spots around the house, `handsfree/wakeword_train.py` fits it on openWakeWord embeddings (`pip install --user --no-deps openwakeword`; its TFLite dependency has no Python 3.12 build), and Whisper confirms each candidate on just those two seconds.
 

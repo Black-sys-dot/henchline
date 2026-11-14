@@ -207,10 +207,13 @@ AGENT_NAMES = r"(claude|cursor|codex)"
 WHERE = r"(?:\s+(?:in|from|on)\s+(?:the\s+)?(.+?))?"
 SWITCH = re.compile(
     rf"^\W*(?:(?:okay|ok|alright|right|so|no|actually)[\s,]+)?(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?"
-    rf"(?:switch(?:\s+me)?|(?:hand|pass|give|send)(?:\s+(?:me|it|this))?\s+(?:over|back)|go\s+back|"
+    rf"(?:switch(?:\s+me)?|(?:hand|pass)(?:\s+(?:me|it|this))?(?:\s+(?:over|back))?|(?:give|send)(?:\s+(?:me|it|this))?\s+(?:over|back)|go\s+back|"
     rf"(?:let\s+me\s+)?talk|connect\s+me|put\s+me\s+through|i\s+want\s+to\s+talk|back)"
     rf"\s+(?:over\s+)?to\s+{AGENT_NAMES}{WHERE}(?:\s+please)?\W*$", re.I)
 SEND_THAT = re.compile(rf"^\W*(?:please\s+)?(?:send|forward|give)\s+(?:that|this|it)(?:\s+message)?\s+to\s+{AGENT_NAMES}{WHERE}\W*$", re.I)
+# "…actually, scratch that, hand this to Cursor": drop what came before, then switch
+DISCARD = re.compile(r".*\b(?:never\s*mind|scratch\s+that|forget\s+(?:it|that|all\s+that|what\s+i\s+(?:just\s+)?said))\W+(.+)$",
+                     re.I | re.S)
 WHO = re.compile(r"^\W*who\s+(?:am\s+i|are\s+you)\s+(?:talking\s+to|speaking\s+to)?\W*$|^\W*who\s+is\s+(?:this|listening)\W*$", re.I)
 
 
@@ -613,6 +616,10 @@ class Listener:
                 "Nobody yet: no agent has spoken.")
             return 0.0
         match = SWITCH.match(text) or SEND_THAT.match(text)
+        if not match and (tail := DISCARD.match(text)):
+            match = SWITCH.match(tail.group(1))
+            if match:
+                log("heard: discard and switch")
         if not match:
             return None
         agent, where = match.group(1), match.group(2)
