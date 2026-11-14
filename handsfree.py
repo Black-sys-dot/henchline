@@ -134,6 +134,19 @@ def send(text: str, how: str) -> bool:
         log(f"no konsole session for {last.get('agent', 'nobody')}")
         say("I heard you, but I don't know which terminal to type that into.")
         return False
+    # Only ever type into a tab where an agent is in the foreground: if the
+    # agent has quit, the tab is a plain shell and Enter would run the words
+    fg = subprocess.run(["qdbus", service, session, "foregroundProcessId"],
+                        capture_output=True, text=True).stdout.strip()
+    try:
+        command = Path(f"/proc/{fg}/cmdline").read_bytes().replace(b"\0", b" ").decode()
+    except (OSError, ValueError):
+        command = ""
+    if not re.search(r"claude|cursor-agent|/agent\b", command):
+        log(f"no agent running in {session} ({command.split(' ')[0] or 'tab gone'})")
+        say("I heard you, but the agent I was talking to isn't running any more, "
+            "so I didn't type it anywhere.")
+        return False
     # How it was heard, so the agent can judge whether it was meant for it:
     # woke (wake word), reply (window after a clip), think (asked for time),
     # follow-on (right after their last message), over you (talked over a clip)
@@ -418,12 +431,24 @@ class Listener:
 
 def tray(listener: Listener, stop: threading.Event) -> None:
     from PyQt5.QtCore import QTimer
-    from PyQt5.QtGui import QIcon
+    from PyQt5.QtGui import QColor, QIcon, QPainter, QPixmap
     from PyQt5.QtWidgets import QAction, QApplication, QMenu, QSystemTrayIcon
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
-    icon = QSystemTrayIcon(QIcon.fromTheme("audio-headset"))  # not a mic: that is push-to-talk
+    headset = QIcon.fromTheme("audio-headset")  # not a mic: that is push-to-talk
+
+    def tinted(color: str) -> QIcon:
+        """The headset in one colour, like push-to-talk's red and yellow bubble."""
+        pixmap = headset.pixmap(22, 22)
+        painter = QPainter(pixmap)
+        painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+        painter.fillRect(pixmap.rect(), QColor(color))
+        painter.end()
+        return QIcon(pixmap)
+
+    icons = {"recording": tinted("#e24a4a"), "transcribing": tinted("#e0a100")}
+    icon = QSystemTrayIcon(headset)
     menu = QMenu()
     off = QAction("Turn hands-free off")
     off.triggered.connect(stop.set)
@@ -437,8 +462,13 @@ def tray(listener: Listener, stop: threading.Event) -> None:
         "transcribing": "Hands-free: transcribing",
     }
 
+    shown = [""]
+
     def poll() -> None:
         icon.setToolTip(labels.get(listener.state, "Hands-free on"))
+        if listener.state != shown[0]:
+            shown[0] = listener.state
+            icon.setIcon(icons.get(listener.state, headset))
         if stop.is_set():
             app.quit()
 
