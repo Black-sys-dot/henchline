@@ -84,6 +84,11 @@ def log(path: Path, line: str, echo: bool = False) -> None:
         print(stamped, flush=True)
 
 
+def ptt_log(line: str) -> None:
+    """Push-to-talk's log, also printed to its service journal."""
+    log(PTT_LOG, line, echo=True)
+
+
 def set_phase(phase: Phase, by: str = "") -> None:
     """What the mic is doing; talkback goes quiet and holds while it records."""
     write_json(PHASE, {"phase": phase.value, "by": by, "at": time.time()})
