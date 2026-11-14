@@ -202,6 +202,41 @@ def type_into_cursor(wid: str, message: str) -> bool:
     return True
 
 
+SPEAKERS = STATE / "talkback.speakers"  # every agent that has spoken (talkback)
+AGENT_NAMES = r"(claude|cursor|codex)"
+WHERE = r"(?:\s+(?:in|from|on)\s+(?:the\s+)?(.+?))?"
+SWITCH = re.compile(rf"^\W*(?:please\s+)?(?:switch(?:\s+me)?|hand(?:\s+(?:me|it))?\s+over|go\s+back|talk|connect\s+me)"
+                    rf"\s+(?:over\s+)?to\s+{AGENT_NAMES}{WHERE}\W*$", re.I)
+SEND_THAT = re.compile(rf"^\W*(?:please\s+)?(?:send|forward|give)\s+(?:that|this|it)(?:\s+message)?\s+to\s+{AGENT_NAMES}{WHERE}\W*$", re.I)
+WHO = re.compile(r"^\W*who\s+(?:am\s+i|are\s+you)\s+(?:talking\s+to|speaking\s+to)?\W*$|^\W*who\s+is\s+(?:this|listening)\W*$", re.I)
+
+
+def squash(words: str) -> str:
+    return re.sub(r"[^a-z0-9]", "", words.lower())
+
+
+def find_speaker(agent: str, where: str | None) -> dict:
+    """The most recent agent of that kind to speak, in that workspace if named."""
+    found = []
+    for item in SPEAKERS.glob("*.json"):
+        try:
+            record = json.loads(item.read_text())
+        except (OSError, ValueError):
+            continue
+        if record.get("agent") != agent.lower() or time.time() - record.get("at", 0) > 24 * 3600:
+            continue  # only agents heard in the last day
+        if where and squash(where) not in squash(record.get("where", "")) \
+                and squash(record.get("where", "")) not in squash(where):
+            continue
+        found.append(record)
+    return max(found, key=lambda r: r.get("at", 0)) if found else {}
+
+
+def spoken(record: dict) -> str:
+    where = record.get("where", "").replace("_", " ").replace("-", " ")
+    return f"{record['agent'].capitalize()}, in {where}" if where else record["agent"].capitalize()
+
+
 def send(text: str, how: str) -> bool:
     """Type the words into the Konsole session of the agent that spoke last."""
     try:
@@ -322,6 +357,7 @@ class Listener:
         self.last_activity = time.monotonic()
         self.wake = Wake() if WAKE_MODEL.exists() else None
         self.on_cpu = False
+        self.last_message: tuple[str, str] | None = None  # for "send that to …"
         self.crashed = False
 
     @staticmethod
@@ -537,6 +573,11 @@ class Listener:
             phase("idle")
             say("Take your time.")
             return THINK_WINDOW
+        routed = self.route(text)
+        if routed is not None:
+            ptt.note("target", {"agent": False})
+            phase("idle")
+            return routed
         # One word is a real answer ("yes", "go", "stop"); only bare fillers are noise
         filler = re.fullmatch(r"\W*(um+|uh+|hmm+|mm+|ah+|oh|eh)\W*", text, re.I)
         to_agent = bool(text.strip()) and not filler and not CANCEL.match(text)
@@ -553,7 +594,42 @@ class Listener:
         phase("idle")
         if to_agent and send(rich, how):
             ptt.ding(self.cfg)
+            self.last_message = (rich, how)
         return THINK_WINDOW if thinking else 0.0
+
+    def route(self, text: str) -> float | None:
+        """Spoken routing ("switch to Cursor", "send that to Claude in pc
+        diagnostics", "who am I talking to?"). Returns None when it is not one."""
+        try:
+            current = json.loads(LAST.read_text())
+        except (OSError, ValueError):
+            current = {}
+        if WHO.match(text):
+            log("heard: who am I talking to")
+            say(f"You're talking to {spoken(current)}." if current.get("agent") else
+                "Nobody yet: no agent has spoken.")
+            return 0.0
+        match = SWITCH.match(text) or SEND_THAT.match(text)
+        if not match:
+            return None
+        agent, where = match.group(1), match.group(2)
+        target = find_speaker(agent, where)
+        if not target:
+            log(f"heard: route to {agent}, none found")
+            say(f"I can't find {agent.capitalize()}{' in ' + where if where else ''}. "
+                "It has to have spoken through talkback first.")
+            return 0.0
+        LAST.write_text(json.dumps({k: target[k] for k in ("session", "agent", "where", "konsole")}))
+        log(f"heard: route to {target['agent']} in {target.get('where', '?')}")
+        if SEND_THAT.match(text):
+            if not self.last_message:
+                say(f"Now talking to {spoken(target)}, but there's nothing to send yet.")
+            elif send(*self.last_message):
+                ptt.ding(self.cfg)
+                say(f"Sent to {spoken(target)}.")
+        else:
+            say(f"Now talking to {spoken(target)}.")
+        return 0.0
 
 
 def tray(listener: Listener, stop: threading.Event) -> None:

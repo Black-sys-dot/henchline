@@ -46,6 +46,7 @@ LOCK = STATE / "talkback.lock"
 PIDFILE = STATE / "talkback.pid"
 PLAYING = STATE / "talkback.playing"
 LAST = STATE / "talkback.last"
+SPEAKERS = STATE / "talkback.speakers"
 LOG = STATE / "talkback.log"
 TAGS = re.compile(r"\[(?:laugh|chuckle|sigh|gasp|groan|cough|sniff|shush|clear throat|whispering)\]\s*")
 PHASE = STATE / "phase"  # written by push-to-talk
@@ -358,9 +359,12 @@ class Speaker:
             if read_json(LAST).get("session") != clip["session"]:
                 name = NAMES.get(clip["agent"], clip["agent"].capitalize())
                 sentences = [f"{name} here, from {clip['where']}."] + sentences
-            write_json(LAST, {"session": clip["session"], "agent": clip["agent"],
-                              "where": clip.get("where", ""),
-                              "konsole": clip.get("konsole", ["", ""])})
+            speaker = {"session": clip["session"], "agent": clip["agent"],
+                       "where": clip.get("where", ""), "konsole": clip.get("konsole", ["", ""])}
+            write_json(LAST, speaker)
+            # Every agent that has spoken, so hands-free can switch to one by name
+            SPEAKERS.mkdir(exist_ok=True)
+            write_json(SPEAKERS / f"{clip['session']}.json", {**speaker, "at": time.time()})
         voice = clip.get("voice") or VOICES.get(clip["agent"], DEFAULT_VOICE)
         ready: queue.Queue = queue.Queue(maxsize=2)
         done = threading.Event()
