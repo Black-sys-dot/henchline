@@ -205,8 +205,11 @@ def type_into_cursor(wid: str, message: str) -> bool:
 SPEAKERS = STATE / "talkback.speakers"  # every agent that has spoken (talkback)
 AGENT_NAMES = r"(claude|cursor|codex)"
 WHERE = r"(?:\s+(?:in|from|on)\s+(?:the\s+)?(.+?))?"
-SWITCH = re.compile(rf"^\W*(?:please\s+)?(?:switch(?:\s+me)?|hand(?:\s+(?:me|it))?\s+over|go\s+back|talk|connect\s+me)"
-                    rf"\s+(?:over\s+)?to\s+{AGENT_NAMES}{WHERE}\W*$", re.I)
+SWITCH = re.compile(
+    rf"^\W*(?:(?:okay|ok|alright|right|so)[\s,]+)?(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?"
+    rf"(?:switch(?:\s+me)?|(?:hand|pass|give|send)(?:\s+(?:me|it|this))?\s+(?:over|back)|go\s+back|"
+    rf"(?:let\s+me\s+)?talk|connect\s+me|put\s+me\s+through|i\s+want\s+to\s+talk|back)"
+    rf"\s+(?:over\s+)?to\s+{AGENT_NAMES}{WHERE}(?:\s+please)?\W*$", re.I)
 SEND_THAT = re.compile(rf"^\W*(?:please\s+)?(?:send|forward|give)\s+(?:that|this|it)(?:\s+message)?\s+to\s+{AGENT_NAMES}{WHERE}\W*$", re.I)
 WHO = re.compile(r"^\W*who\s+(?:am\s+i|are\s+you)\s+(?:talking\s+to|speaking\s+to)?\W*$|^\W*who\s+is\s+(?:this|listening)\W*$", re.I)
 
