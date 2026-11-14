@@ -36,7 +36,8 @@ from pathlib import Path
 import numpy as np
 from faster_whisper.vad import VadOptions, get_speech_timestamps
 
-import ptt
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "ptt"))
+import ptt  # noqa: E402  push-to-talk's Whisper, tone marks and state files
 
 STATE = Path.home() / ".local/state/ptt"
 FLAG = STATE / "handsfree"

@@ -6,6 +6,15 @@ People already remap that chord with [keyd](https://github.com/rvaiya/keyd) and 
 
 On some laptops the Copilot key sends the chord down and up immediately, so it cannot be held. This program needs a key that stays down while you speak. If yours does not, push-to-talk on that key will not work. Set another hotkey from the status icon.
 
+## What is in here
+
+| Folder | What it does | Needs |
+|---|---|---|
+| `ptt/` | **Push-to-talk:** hold a key, speak, the words are typed into the focused window. Works on its own. | the rest of this page |
+| `talkback/` | **Talkback:** AI agents (Claude Code, Cursor) speak their replies through a local voice, one at a time. | `ptt/` only if you want it to go quiet while you talk |
+| `handsfree/` | **Hands-free:** talk with those agents without touching a key: a reply window after they speak, talking over them, and a personal wake word. | `ptt/` and `talkback/` |
+| `agents/` | What the agents need to be told (Claude Code snippet, Cursor rules and hook). | `talkback/` |
+
 ## Wayland
 
 Wayland is not implemented. Paste sends keys with the X11 test extension, and the focused window is read with `xprop`. Pull requests that make paste work on Wayland are welcome.
@@ -36,7 +45,7 @@ Hold the Copilot key, speak, release. A two-key hold stays one recording until b
 
 Log: `~/.local/state/ptt/ptt.log`
 
-When the words go to a terminal, Cursor or Code window, a word said louder, higher or longer than the rest comes out as `*word*`, and an utterance that stands out from your usual voice ends with a note such as `[tone: loud, fast]` (`tone.py`). Other windows get the plain text. Only numbers about the voice are kept, in `~/.local/state/ptt/voice.json`. `"hotwords"` in the config lists names Whisper should expect; keep it short.
+When the words go to a terminal, Cursor or Code window, a word said louder, higher or longer than the rest comes out as `*word*`, and an utterance that stands out from your usual voice ends with a note such as `[tone: loud, fast]` (`ptt/tone.py`). Other windows get the plain text. Only numbers about the voice are kept, in `~/.local/state/ptt/voice.json`. `"hotwords"` in the config lists names Whisper should expect; keep it short.
 
 The listener writes `~/.local/state/ptt/phase` and `~/.local/state/ptt/target` (whether the paste went to an agent window, never the words) for a speech helper that should go quiet while you talk.
 
@@ -58,9 +67,9 @@ ln -s "$PWD/talkback" ~/.cursor/skills/talkback   # Cursor
 
 ## Hands-free
 
-`handsfree on` talks to the same agents without a key (`handsfree.py`, user unit `handsfree.service`; `install.sh` installs it, `systemctl --user enable handsfree` starts it at every login). It needs a speech helper that writes `~/.local/state/ptt/talkback.*` (the talkback skill this was built for), and the echo canceller in `talkback-echo-cancel.conf` copied to `~/.config/pipewire/`; it captures the built-in mic, which shares a clock with the speakers. It listens for a few seconds after an agent speaks, while an agent speaks (talking over it stops it), and for a wake word the rest of the time. The words are typed into the Konsole tab of the agent that spoke last, prefixed `[hands-free · how it was heard]`. "Over" sends at once, "give me a minute" keeps listening, "never mind" drops it, "hands-free off" ends it. `handsfree listen N` and `handsfree close` widen or close the window.
+`handsfree on` talks to the same agents without a key (`handsfree/handsfree.py`, user unit `handsfree/handsfree.service`; `install.sh` installs it, `systemctl --user enable handsfree` starts it at every login). It needs a speech helper that writes `~/.local/state/ptt/talkback.*` (the talkback skill this was built for), and the echo canceller in `handsfree/talkback-echo-cancel.conf` copied to `~/.config/pipewire/`; it captures the built-in mic, which shares a clock with the speakers. It listens for a few seconds after an agent speaks, while an agent speaks (talking over it stops it), and for a wake word the rest of the time. The words are typed into the Konsole tab of the agent that spoke last, prefixed `[hands-free · how it was heard]`. "Over" sends at once, "give me a minute" keeps listening, "never mind" drops it, "hands-free off" ends it. `handsfree listen N` and `handsfree close` widen or close the window.
 
-The wake word is a personal detector: `wakeword_collect.py` records you at a few spots around the house, `wakeword_train.py` fits it on openWakeWord embeddings (`pip install --user --no-deps openwakeword`; its TFLite dependency has no Python 3.12 build), and Whisper confirms each candidate on just those two seconds.
+The wake word is a personal detector: `handsfree/wakeword_collect.py` records you at a few spots around the house, `handsfree/wakeword_train.py` fits it on openWakeWord embeddings (`pip install --user --no-deps openwakeword`; its TFLite dependency has no Python 3.12 build), and Whisper confirms each candidate on just those two seconds.
 
 Log: `~/.local/state/ptt/handsfree.log` (events, no words)
 

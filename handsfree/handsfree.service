@@ -5,7 +5,7 @@ PartOf=graphical-session.target
 
 [Service]
 Type=simple
-ExecStart=%h/copilot-ptt/handsfree.py run
+ExecStart=%h/copilot-ptt/handsfree/handsfree.py run
 # Talkback players it starts are shared with the agents; leave them running on stop
 KillMode=process
 Environment=DISPLAY=:0
