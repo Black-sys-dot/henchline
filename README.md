@@ -10,7 +10,7 @@ On some laptops the Copilot key sends the chord down and up immediately, so it c
 
 | Folder | What it does | Needs |
 |---|---|---|
-| `ptt/` | **Push-to-talk:** hold a key, speak, the words are typed into the focused window. Works on its own. | the rest of this page |
+| `ptt/` | **Push-to-talk:** hold a key, speak, the words are typed into the focused window (`keys.py` the hotkey, `paste.py` the window, `tray.py` the icon, `ptt.py` records in between). Works on its own. | the rest of this page |
 | `talkback/` | **Talkback:** AI agents (Claude Code, Cursor) speak their replies through a local voice, one at a time. | `ptt/` only if you want it to go quiet while you talk |
 | `handsfree/` | **Hands-free:** talk with those agents without touching a key: a reply window after they speak, talking over them, and a personal wake word. | `ptt/` and `talkback/` |
 | `agents/` | What the agents need to be told: one snippet for Claude Code, Cursor, Codex and anything reading `AGENTS.md`. | `talkback/` |
