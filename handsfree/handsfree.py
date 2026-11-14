@@ -112,6 +112,17 @@ def say(text: str) -> None:
                      stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
+_sink = {"at": 0.0, "speakers": True}
+
+
+def on_speakers() -> bool:
+    """Is the default output the laptop's speakers (not headphones or earbuds)?"""
+    if time.monotonic() - _sink["at"] > 2:
+        name = subprocess.run(["pactl", "get-default-sink"], capture_output=True, text=True).stdout
+        _sink.update(at=time.monotonic(), speakers=not re.search(r"bluez|headphone|headset|usb", name, re.I))
+    return _sink["speakers"]
+
+
 def talkback_busy() -> bool:
     return PLAYING.exists() or TALKBACK_PID.exists() or any(QUEUE.glob("*.json"))
 
@@ -541,6 +552,21 @@ class Listener:
                 preroll.append(frame)
                 recent.append(frame)
                 checked += 1
+                if playing and on_speakers():
+                    # Laptop speakers leak our own voice past the canceller often enough
+                    # to cut clips off, so there only the wake word (or an earbud tap)
+                    # interrupts; on headphones and earbuds, talking over still does
+                    if (self.wake and not PAUSE.exists() and not ptt_busy()
+                            and self.wake.feed(np.frombuffer(data, dtype="<i2"))
+                            and self.whisper(self.wake.confirm)):
+                        log("woke during a clip")
+                        ptt.ding(self.cfg)
+                        extra = self.utterance(reader, [], max(floor, room_floor), "woke")
+                        self.last_activity = time.monotonic()
+                        window_until, kind = time.monotonic() + (extra or FOLLOW), ("think" if extra else "follow-on")
+                        was_busy = talkback_busy()
+                    history.append(level)
+                    continue
                 # A fresh canceller still leaks some of our own voice: be stricter then
                 warming = playing and (time.monotonic() - self.canceller_since < WARMUP
                                        or time.monotonic() < self.wary_until)
