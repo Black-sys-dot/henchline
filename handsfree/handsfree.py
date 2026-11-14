@@ -448,7 +448,10 @@ def tray(listener: Listener, stop: threading.Event) -> None:
         painter.end()
         return QIcon(pixmap)
 
-    icons = {"recording": tinted("#e24a4a"), "transcribing": tinted("#e0a100")}
+    # Plain headset: only the wake word gets in. Green: listening (reply window,
+    # or while an agent speaks). Red: recording you. Yellow: transcribing.
+    icons = {"listening": tinted("#3cb371"), "recording": tinted("#e24a4a"),
+             "transcribing": tinted("#e0a100")}
     icon = QSystemTrayIcon(headset)
     menu = QMenu()
     off = QAction("Turn hands-free off")
@@ -457,7 +460,7 @@ def tray(listener: Listener, stop: threading.Event) -> None:
     icon.setContextMenu(menu)
     icon.show()
     labels = {
-        "waiting": "Hands-free on: waiting for an agent to speak",
+        "waiting": "Hands-free on: only \"hey Claude\" gets in",
         "listening": "Hands-free: listening for your answer",
         "recording": "Hands-free: recording you",
         "transcribing": "Hands-free: transcribing",
