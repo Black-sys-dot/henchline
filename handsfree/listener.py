@@ -21,8 +21,8 @@ from faster_whisper.vad import VadOptions, get_speech_timestamps
 
 import routing
 from routing import Heard, Meaning
-from sensing import (EC_SOURCE, LEVEL_SPAN, PER_SECOND, RATE, EarbudButton, Output, Playback, Wake, level,
-                     mic_stream, read_frame, voiced)
+from sensing import (EC_SOURCE, LEVEL_SPAN, PER_SECOND, RATE, EarbudButton, EchoWatch, Output, Playback, Wake,
+                     level, mic_stream, read_frame, start_canceller, voiced)
 from voice import whisper
 from voice.spool import queued
 from voice.state import (BY_HANDSFREE, CLOSE, HANDSFREE_LOG, HANDSFREE_WAV, LISTEN, PAUSE, PLAYING, WORKER_PID,
@@ -110,6 +110,7 @@ class Listener:
         self.window = Window()
         self.wake = Wake.available()
         self.button, self.playback, self.output = EarbudButton(stop), Playback(stop), Output()
+        self.echo_watch, self.restart_due = EchoWatch(), False
         self.last_activity, self.wary_until, self.play_started = time.monotonic(), 0.0, 0.0
         self.on_cpu = self.crashed = False
         self.last_message: tuple[str, Heard] | None = None  # for "send that to …"
@@ -161,8 +162,20 @@ class Listener:
                         continue
                 if self.step(samples, frame):
                     was_busy = talkback_busy()
+                elif self.restart_due and not busy and self.mode is Mode.WAITING and not ptt_busy():
+                    self.restart_canceller()
         finally:
             self.stream.terminate()
+
+    def restart_canceller(self) -> None:
+        """A fresh canceller, at a quiet moment: nothing playing, no window open."""
+        log(HANDSFREE_LOG, "restarting the echo canceller before it drifts further")
+        self.restart_due = False
+        self.stream.terminate()
+        self.canceller_since = start_canceller(restart=True)
+        self.echo_watch.restarted = time.monotonic()
+        self.echo.clear()
+        self.stream = mic_stream(EC_SOURCE)
 
     def follow_requests(self) -> None:
         """`handsfree close` and `handsfree listen N` / a switch, through their files."""
@@ -179,7 +192,11 @@ class Listener:
         """One 30 ms frame; True when it led to a turn."""
         db = level(frame)
         playing = PLAYING.exists()
+        if self.play_started and not playing:
+            self.restart_due |= self.echo_watch.clip_over()
         self.play_started = (self.play_started or time.monotonic()) if playing else 0.0
+        if playing and time.monotonic() - self.play_started > BARGE_GRACE:
+            self.echo_watch.add(db, self.playback.loudest())
         open_ = (playing or self.window.is_open()) and not ptt_busy() and not PAUSE.exists()
         self.mode = Mode.LISTENING if open_ else Mode.WAITING
         if not open_:
@@ -242,9 +259,19 @@ class Listener:
         """Record, transcribe, act; then decide how long to keep listening."""
         if heard is Heard.WOKE:
             whisper.ding(self.cfg)  # "I'm listening"
+        if heard is Heard.OVER_YOU:
+            self.echo_watch.discard()
+        kept = self.window.until, self.window.kind
         LISTEN.unlink(missing_ok=True)  # they spoke: an earlier long window is used up (a switch writes a new one)
         extra = self.utterance(frames, floor, heard)
         self.last_activity = time.monotonic()
+        self.loud.clear()
+        self.preroll.clear()
+        if extra is None:  # no words in it (a noise): the window they had stays theirs
+            self.window.until, self.window.kind = kept
+            if kept[0] > time.monotonic() and not LISTEN.exists():
+                LISTEN.write_text(str(time.time() + kept[0] - time.monotonic()))
+            return
         if extra:
             self.window.open(extra, Heard.THINK)
             LISTEN.write_text(str(time.time() + extra))
@@ -252,8 +279,6 @@ class Listener:
             self.window.close()  # a follow-on never opens another, so chatter cannot chain
         else:
             self.window.open(FOLLOW, Heard.FOLLOW_ON)
-        self.loud.clear()
-        self.preroll.clear()
 
     def record(self, frames: list, floor: float, heard: Heard) -> list | None:
         """Frames until a pause, "over", or the limit; None if push-to-talk took over."""
@@ -305,8 +330,8 @@ class Listener:
         finally:
             HANDSFREE_WAV.unlink(missing_ok=True)
 
-    def utterance(self, frames: list, floor: float, heard: Heard) -> float:
-        """One turn, end to end; returns seconds to keep listening (0: the default)."""
+    def utterance(self, frames: list, floor: float, heard: Heard) -> float | None:
+        """One turn, end to end; returns seconds to keep listening (0: the default), None if no words."""
         frames = self.record(frames, floor, heard)
         if frames is None:
             return 0.0
@@ -320,7 +345,7 @@ class Listener:
         finally:
             release_phase(BY_HANDSFREE)  # act() normally has already, before anything is sent
 
-    def act(self, text: str, rich: str, heard: Heard) -> float:
+    def act(self, text: str, rich: str, heard: Heard) -> float | None:
         meaning = routing.meaning(text)
         # Before anything is said or sent: talkback may speak again, and knows whether an agent got words
         set_target(meaning is Meaning.MESSAGE)
@@ -343,7 +368,9 @@ class Listener:
             log(HANDSFREE_LOG, f"ignored {len(text.split())} words")
             if heard is Heard.OVER_YOU:  # nothing said over a clip: our echo cut it; no cut-resume-cut loop
                 self.wary_until = time.monotonic() + WARY
+                self.restart_due |= self.echo_watch.may_restart()  # past the early warning already
                 log(HANDSFREE_LOG, f"echo cut a clip: stricter about talking over for {WARY:.0f}s")
+            return None
         elif routing.deliver(rich, heard):
             whisper.ding(self.cfg)
             self.last_message = (rich, heard)

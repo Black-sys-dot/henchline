@@ -60,8 +60,10 @@ def of_session(session: str) -> list[Path]:
     return [path for path in queued() if read_json(path).get("session") == session]
 
 
-def queued_sessions() -> set[str]:
-    return {read_json(path).get("session") for path in queued()} - {None}
+def queued_sessions(skip_agents: set[str] = frozenset()) -> set[str]:
+    """Sessions with clips waiting, leaving out those of the given agents."""
+    clips = [read_json(path) for path in queued()]
+    return {c.get("session") for c in clips if c.get("agent") not in skip_agents} - {None}
 
 
 def is_held(session: str) -> bool:

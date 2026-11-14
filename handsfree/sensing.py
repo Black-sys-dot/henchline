@@ -53,13 +53,13 @@ def read_frame(stream: subprocess.Popen) -> np.ndarray | None:
     return np.frombuffer(data, dtype="<i2")
 
 
-def start_canceller() -> float:
-    """Start the echo canceller unit if needed; return when it started (monotonic).
+def start_canceller(restart: bool = False) -> float:
+    """Start (or restart) the echo canceller unit; return when it started (monotonic).
 
     It is its own unit so restarting hands-free does not reset it: a fresh
     canceller has to learn the room again, and leaks our voice meanwhile.
     """
-    subprocess.run(["systemctl", "--user", "start", EC_UNIT], check=False)
+    subprocess.run(["systemctl", "--user", "restart" if restart else "start", EC_UNIT], check=False)
     for _ in range(50):
         sources = subprocess.run(["pactl", "list", "short", "sources"], capture_output=True, text=True).stdout
         if EC_SOURCE in sources:
@@ -68,6 +68,48 @@ def start_canceller() -> float:
             return int(since) / 1e6 if since.isdigit() else time.monotonic()
         time.sleep(0.1)
     raise SystemExit("echo canceller did not come up")
+
+
+class EchoWatch:
+    """How close our own voice comes back to the playback, clip by clip.
+
+    A healthy canceller kept our echo 20 dB or more under the playback; it
+    drifted to 10 dB under (2026-11-14, laptop overloaded), and from 15 dB a
+    clip gets cut. So a clip whose echo mostly sits within EARLY of the
+    playback asks for a fresh canceller before any cut happens. Clips the
+    user talked over are left out: their voice is not echo.
+    """
+
+    EARLY = -22.0  # dB: the 90th percentile of mic minus playback above this asks for a restart
+    SPEAKING = -40.0  # dB: playback quieter than this is a pause, not a voice to compare against
+    ENOUGH = 2 * PER_SECOND  # frames of a clip needed to judge it
+    REST = 5 * 60.0  # seconds between restarts: if a fresh canceller does no better, restarting again won't help
+
+    def __init__(self) -> None:
+        self.margins: list[float] = []
+        self.restarted = 0.0
+
+    def add(self, mic_db: float, played_db: float | None) -> None:
+        if played_db is not None and played_db > self.SPEAKING:
+            self.margins.append(mic_db - played_db)
+
+    def may_restart(self) -> bool:
+        return time.monotonic() - self.restarted > self.REST
+
+    def discard(self) -> None:
+        """The user talked over this clip: it says nothing about the canceller."""
+        self.margins.clear()
+
+    def clip_over(self) -> bool:
+        """The clip ended; True when the canceller should be restarted."""
+        margins, self.margins = self.margins, []
+        if len(margins) < self.ENOUGH:
+            return False
+        p90 = float(np.percentile(margins, 90))
+        drifting = p90 > self.EARLY and self.may_restart()
+        log(HANDSFREE_LOG, f"clip echo: {-p90:.0f} dB under the playback at worst (90%)"
+                           f"{', canceller drifting: restart when quiet' if drifting else ''}")
+        return drifting
 
 
 class Output:

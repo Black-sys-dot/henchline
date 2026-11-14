@@ -134,16 +134,18 @@ class Voice:
                 player.stdin.close()
             player.wait()
             PLAYING.unlink(missing_ok=True)
-        if cut and not self.skip:
+        if cut and clip.agent in SYSTEM:
+            log(TALKBACK_LOG, f"{clip.agent} notice cut and dropped: said later it would be out of place")
+        elif cut and not self.skip:
             # The intro, once heard, is not said again; resume from the cut sentence
             clip.sentences = sentences[max(spoken, intro):]
             clip.save(path)
-            log(TALKBACK_LOG, f"{clip.agent} cut by push-to-talk, {len(clip.sentences)} sentences kept")
+            log(TALKBACK_LOG, f"{clip.agent} cut by the mic, {len(clip.sentences)} sentences kept")
 
 
 def after_input(since: float) -> None:
     """The mic just went idle: hold waiting clips if the words went to an agent."""
-    waiting = spool.queued_sessions()
+    waiting = spool.queued_sessions(skip_agents=SYSTEM)  # notices are never held: they play now or not at all
     if not waiting:
         return
     deadline = time.time() + 2

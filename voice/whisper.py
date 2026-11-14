@@ -15,7 +15,7 @@ CONFIG = Path.home() / ".config/ptt/config.json"
 AC_ONLINE = Path("/sys/class/power_supply/AC/online")
 # Names Whisper otherwise hears as "cloud" and the like. Keep it short: a long
 # list (and hyphenated words) made Whisper hyphenate and drop ordinary words.
-DEFAULT_HOTWORDS = ["Claude", "Cursor", "Kokoro"]
+DEFAULT_HOTWORDS = ["Claude", "Cursor", "Codex", "Kokoro"]
 
 
 @dataclass
