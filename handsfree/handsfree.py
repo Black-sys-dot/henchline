@@ -377,6 +377,7 @@ class EarbudButton(threading.Thread):
         from evdev import InputDevice, ecodes, list_devices
 
         held: dict[str, InputDevice] = {}
+        last = 0.0
         while not self.stop.is_set():
             for path in list_devices():
                 if path in held:
@@ -397,7 +398,8 @@ class EarbudButton(threading.Thread):
                     for event in device.read():
                         if event.type == ecodes.EV_KEY and event.value == 1:
                             name = ecodes.KEY.get(event.code, "")
-                            if name in self.TAP:
+                            if name in self.TAP and time.monotonic() - last > 2:  # one press, not its echo
+                                last = time.monotonic()
                                 self.tap.set()
                             else:
                                 log(f"earbud {name} ignored")
