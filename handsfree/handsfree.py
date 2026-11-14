@@ -320,6 +320,8 @@ class Listener:
         self.state = "waiting"  # waiting / listening / recording / transcribing
         self.last_activity = time.monotonic()
         self.wake = Wake() if WAKE_MODEL.exists() else None
+        self.on_cpu = False
+        self.crashed = False
 
     @staticmethod
     def voiced(frame: np.ndarray) -> bool:
@@ -330,6 +332,18 @@ class Listener:
         return bool(total) and power[(freqs >= 80) & (freqs < 1000)].sum() / total > VOICE_SHARE
 
     def run(self) -> None:
+        try:
+            self.listen()
+        except Exception:
+            import traceback
+
+            log("listener crashed, restarting: " + traceback.format_exc().strip().splitlines()[-1])
+            self.crashed = True
+            if ptt_phase().get("by") == "handsfree":
+                phase("idle")
+            self.stop.set()
+
+    def listen(self) -> None:
         reader = subprocess.Popen(
             ["parec", f"--device={EC_SOURCE}", "--format=s16le", f"--rate={RATE}",
              "--channels=1", "--raw", "--latency-msec=30"],
@@ -388,7 +402,7 @@ class Listener:
                     (echo if playing else room).append(level)
                     if (self.wake and not playing and not PAUSE.exists() and not ptt_busy()
                             and self.wake.feed(np.frombuffer(data, dtype="<i2"))):
-                        if self.wake.confirm(self.model):
+                        if self.whisper(self.wake.confirm):
                             log("woke")
                             ptt.ding(self.cfg)  # "I'm listening"
                             floor = np.percentile(room, 20) if len(room) > 30 else level
@@ -438,11 +452,27 @@ class Listener:
         finally:
             reader.terminate()
 
+    def whisper(self, use):
+        """use(model); if the GPU is full, move Whisper to the CPU and try again.
+
+        A training run on the same GPU left no room on 2026-11-14 and the
+        CUDA error killed the listening thread.
+        """
+        try:
+            return use(self.model)
+        except RuntimeError as exc:
+            if "out of memory" not in str(exc).lower() or self.on_cpu:
+                raise
+            log("GPU out of memory: Whisper moves to the CPU")
+            self.model, self.on_cpu = ptt.load_model(self.cfg, False), True
+            return use(self.model)
+
     def ends_with_over(self, frames: list) -> bool:
         """Quick look at the last few seconds: did they finish with "over"?"""
         tail = np.concatenate(frames[-130:])  # ~4 s
-        segments, _ = self.model.transcribe(tail, language="en", beam_size=1, vad_filter=False)
-        return bool(OVER.search(" ".join(seg.text for seg in segments).strip()))
+        text = self.whisper(lambda model: " ".join(
+            seg.text for seg in model.transcribe(tail, language="en", beam_size=1, vad_filter=False)[0]))
+        return bool(OVER.search(text.strip()))
 
     def utterance(self, reader, frames: list, floor: float, how: str) -> float:
         """Record, transcribe and send one turn; return seconds to keep listening."""
@@ -483,7 +513,7 @@ class Listener:
             log("no speech in the recording")
         else:
             try:
-                text, rich = ptt.transcribe(self.model, WAV, self.cfg)
+                text, rich = self.whisper(lambda model: ptt.transcribe(model, WAV, self.cfg))
             except Exception as exc:
                 log(f"transcribe failed: {exc}")
                 text = rich = ""
@@ -591,7 +621,7 @@ def run() -> int:
             phase("idle")
         FLAG.unlink(missing_ok=True)
         log("off")
-    return 0
+    return 1 if listener.crashed else 0  # non-zero: systemd starts it again
 
 
 def main() -> int:
