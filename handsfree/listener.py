@@ -193,10 +193,8 @@ class Listener:
         db = level(frame)
         playing = PLAYING.exists()
         if self.play_started and not playing:
-            self.restart_due |= self.echo_watch.clip_over()
+            self.echo_watch.clip_over()
         self.play_started = (self.play_started or time.monotonic()) if playing else 0.0
-        if playing and time.monotonic() - self.play_started > BARGE_GRACE:
-            self.echo_watch.add(db, self.playback.loudest())
         open_ = (playing or self.window.is_open()) and not ptt_busy() and not PAUSE.exists()
         self.mode = Mode.LISTENING if open_ else Mode.WAITING
         if not open_:
@@ -211,6 +209,8 @@ class Listener:
         self.recent.append(frame)
         self.levels.append(db)
         self.checked += 1
+        if playing and time.monotonic() - self.play_started > BARGE_GRACE:
+            self.echo_watch.add(max(self.levels), self.playback.loudest())
         if playing and self.output.on_speakers() and self.playback.loudest() is None:
             history.append(db)  # playback level unknown: our voice might leak, so only the wake word
             return self.woke(samples, turn_floor)
@@ -236,11 +236,13 @@ class Listener:
         played = self.playback.loudest()
         heard = max(self.levels)
         echo = played is not None and heard - played < ECHO_MARGIN  # far quieter than we play: our own echo
+        near_miss = echo and self.echo_watch.near_miss(heard - played)
+        self.restart_due |= near_miss
         # Every decision over a clip, in numbers (never audio), so a false cut can be explained
         log(HANDSFREE_LOG, f"over a clip: mic {heard:.0f} dB, playing {'?' if played is None else f'{played:.0f}'} dB, "
                            f"floor {floor:.0f} dB, {time.monotonic() - self.play_started:.1f}s in"
                            f"{', wary' if wary else ''}{', whisper on cpu' if self.on_cpu else ''}: "
-                           f"{'echo, kept playing' if echo else 'cut'}")
+                           f"{'echo, kept playing' if echo else 'cut'}{'; near miss: restart the canceller when quiet' if near_miss else ''}")
         return not echo
 
     def woke(self, samples: np.ndarray, floor: float) -> bool:

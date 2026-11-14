@@ -75,41 +75,42 @@ class EchoWatch:
 
     A healthy canceller kept our echo 20 dB or more under the playback; it
     drifted to 10 dB under (2026-11-14, laptop overloaded), and from 15 dB a
-    clip gets cut. So a clip whose echo mostly sits within EARLY of the
-    playback asks for a fresh canceller before any cut happens. Clips the
-    user talked over are left out: their voice is not echo.
+    clip gets cut. The drift shows in short bursts, not on average: a 90th
+    percentile per clip stayed near 58 dB under while bursts that sounded like
+    speech came within 19 dB (2026-11-15). So a burst that sounds like speech,
+    was taken for echo, and came within EARLY of the playback is a near miss,
+    and a near miss asks for a fresh canceller before any cut happens.
     """
 
-    EARLY = -22.0  # dB: the 90th percentile of mic minus playback above this asks for a restart
+    EARLY = -22.0  # dB: a near miss closer than this to the playback asks for a restart
     SPEAKING = -40.0  # dB: playback quieter than this is a pause, not a voice to compare against
-    ENOUGH = 2 * PER_SECOND  # frames of a clip needed to judge it
     REST = 5 * 60.0  # seconds between restarts: if a fresh canceller does no better, restarting again won't help
 
     def __init__(self) -> None:
-        self.margins: list[float] = []
+        self.closest: float | None = None  # this clip's echo, nearest to the playback (mic minus playback, dB)
         self.restarted = 0.0
 
     def add(self, mic_db: float, played_db: float | None) -> None:
+        """Loudest mic and playback of the last half second, the measure a cut uses."""
         if played_db is not None and played_db > self.SPEAKING:
-            self.margins.append(mic_db - played_db)
+            margin = mic_db - played_db
+            self.closest = margin if self.closest is None else max(self.closest, margin)
 
     def may_restart(self) -> bool:
         return time.monotonic() - self.restarted > self.REST
 
+    def near_miss(self, margin: float) -> bool:
+        """Speech-like echo, kept out; True when it came close enough to ask for a restart."""
+        return margin > self.EARLY and self.may_restart()
+
     def discard(self) -> None:
         """The user talked over this clip: it says nothing about the canceller."""
-        self.margins.clear()
+        self.closest = None
 
-    def clip_over(self) -> bool:
-        """The clip ended; True when the canceller should be restarted."""
-        margins, self.margins = self.margins, []
-        if len(margins) < self.ENOUGH:
-            return False
-        p90 = float(np.percentile(margins, 90))
-        drifting = p90 > self.EARLY and self.may_restart()
-        log(HANDSFREE_LOG, f"clip echo: {-p90:.0f} dB under the playback at worst (90%)"
-                           f"{', canceller drifting: restart when quiet' if drifting else ''}")
-        return drifting
+    def clip_over(self) -> None:
+        if self.closest is not None:
+            log(HANDSFREE_LOG, f"clip echo: {-self.closest:.0f} dB under the playback at the closest")
+        self.closest = None
 
 
 class Output:
