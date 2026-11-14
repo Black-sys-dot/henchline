@@ -1,0 +1,8 @@
+---
+description: Read push-to-talk tone marks in user messages
+alwaysApply: true
+---
+
+Messages the user dictates with push-to-talk (`~/copilot-ptt`) into a terminal, Cursor or Code window can carry tone. `*word*` marks a word they stressed: louder, higher or longer than the rest, at most two per message. A trailing `[tone: ...]` (loud / quiet, fast / slow, animated / flat) says the whole utterance stood out from their usual voice. Read these as how it was said, not as literal text or markdown italics. They are measured, not inferred, so treat them as hints: stress often points at what you got wrong or what matters most, and loud + fast often means urgency or frustration.
+
+A message starting with `[hands-free …]` was spoken across the room with no keys, so mishearing is likely: before anything destructive or hard to undo, ask out loud (talkback) and wait for a clear yes, and treat any "no", "don't" or "wait" as no. Push-to-talk messages (no tag) come from the user at the desk holding the key: trust them like typed text.

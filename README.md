@@ -40,6 +40,22 @@ When the words go to a terminal, Cursor or Code window, a word said louder, high
 
 The listener writes `~/.local/state/ptt/phase` and `~/.local/state/ptt/target` (whether the paste went to an agent window, never the words) for a speech helper that should go quiet while you talk.
 
+## Talkback
+
+`talkback/` lets AI agents (Claude Code, Cursor, others that read a skill or rule) speak back through a local [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) voice on the CPU. Each call to `talkback/scripts/say.py` joins one queue, so agents never talk over each other; each agent has its own voice and introduces itself when the speaker changes. When push-to-talk or hands-free hears you, it goes quiet, holds what it had not said, and the agent decides whether to carry on, acknowledge, or answer you instead.
+
+Install the voice once:
+
+```bash
+python3 -m venv ~/.local/share/talkback/venv
+~/.local/share/talkback/venv/bin/pip install kokoro-onnx soundfile
+# kokoro-v1.0.onnx and voices-v1.0.bin from the kokoro-onnx releases into ~/.local/share/talkback/
+ln -s "$PWD/talkback" ~/.claude/skills/talkback   # Claude Code
+ln -s "$PWD/talkback" ~/.cursor/skills/talkback   # Cursor
+```
+
+`agents/` holds what the agents need to know: `CLAUDE-snippet.md` for `~/.claude/CLAUDE.md`, and for Cursor the rules in `agents/cursor/*.mdc` (to `~/.cursor/rules/`) and the stop hook `talkback_stop.py` (`~/.cursor/hooks/`, listed under `stop` in `~/.cursor/hooks.json`). Say "talk back" to an agent to turn it on.
+
 ## Hands-free
 
 `handsfree on` talks to the same agents without a key (`handsfree.py`, user unit `handsfree.service`; `install.sh` installs it, `systemctl --user enable handsfree` starts it at every login). It needs a speech helper that writes `~/.local/state/ptt/talkback.*` (the talkback skill this was built for), and the echo canceller in `talkback-echo-cancel.conf` copied to `~/.config/pipewire/`; it captures the built-in mic, which shares a clock with the speakers. It listens for a few seconds after an agent speaks, while an agent speaks (talking over it stops it), and for a wake word the rest of the time. The words are typed into the Konsole tab of the agent that spoke last, prefixed `[hands-free · how it was heard]`. "Over" sends at once, "give me a minute" keeps listening, "never mind" drops it, "hands-free off" ends it. `handsfree listen N` and `handsfree close` widen or close the window.

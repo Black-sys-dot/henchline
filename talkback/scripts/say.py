@@ -1,4 +1,4 @@
-#!/home/shekharu/.local/share/talkback/venv/bin/python3
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/talkback/venv/bin/python3" "$0" "$@"'
 """Speak text with the local Kokoro voice on the default output.
 
     say.py [--wait] [--voice V] [TEXT ...]   text from the arguments, or stdin
