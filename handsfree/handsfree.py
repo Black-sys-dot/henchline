@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import collections
 import json
+import os
 import re
 import shutil
 import signal
@@ -124,6 +125,82 @@ def phase(name: str) -> None:
     ptt.note("phase", {"phase": name, "by": "handsfree"})
 
 
+def cursor_window(where: str) -> str:
+    """The Cursor editor window for a workspace, by its title "… - <where> - Cursor"."""
+    try:
+        listing = subprocess.check_output(["xprop", "-root", "_NET_CLIENT_LIST"], text=True)
+        for wid in re.findall(r"0x[0-9a-f]+", listing):
+            cls = subprocess.run(["xprop", "-id", wid, "WM_CLASS"], capture_output=True, text=True).stdout
+            if '"cursor"' not in cls.lower():
+                continue
+            title = subprocess.run(["xprop", "-id", wid, "_NET_WM_NAME"], capture_output=True, text=True).stdout
+            title = title.split("=", 1)[-1].strip().strip('"')
+            if title == f"{where} - Cursor" or title.endswith(f" - {where} - Cursor"):
+                return wid
+    except (subprocess.CalledProcessError, OSError):
+        pass
+    return ""
+
+
+def type_into_cursor(wid: str, message: str) -> bool:
+    """Raise the window, focus its agent chat, paste, Enter.
+
+    Cursor's chat is not a terminal, so it is reached through the editor: the
+    window is activated over EWMH, then ctrl+alt+shift+F12 runs
+    composer.focusComposer (a user keybinding, see agents/README.md).
+    """
+    import ctypes
+
+    if not ptt.clipboard(message):
+        return False
+    x11 = ctypes.CDLL("libX11.so.6")
+    xtst = ctypes.CDLL("libXtst.so.6")
+    x11.XOpenDisplay.restype = ctypes.c_void_p
+    x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
+    x11.XDefaultRootWindow.restype = ctypes.c_ulong
+    x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]
+    x11.XInternAtom.restype = ctypes.c_ulong
+    x11.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
+    x11.XKeysymToKeycode.restype = ctypes.c_ubyte
+    x11.XFlush.argtypes = [ctypes.c_void_p]
+    xtst.XTestFakeKeyEvent.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_int, ctypes.c_ulong]
+
+    class Event(ctypes.Structure):  # XClientMessageEvent, padded to sizeof(XEvent)
+        _fields_ = [("type", ctypes.c_int), ("serial", ctypes.c_ulong), ("send_event", ctypes.c_int),
+                    ("display", ctypes.c_void_p), ("window", ctypes.c_ulong),
+                    ("message_type", ctypes.c_ulong), ("format", ctypes.c_int),
+                    ("data", ctypes.c_long * 5), ("pad", ctypes.c_long * 12)]
+
+    disp = x11.XOpenDisplay(os.environ.get("DISPLAY", ":0").encode())
+    if not disp:
+        return False
+    root = x11.XDefaultRootWindow(disp)
+    event = Event(type=33, send_event=1, window=int(wid, 16), format=32,
+                  message_type=x11.XInternAtom(disp, b"_NET_ACTIVE_WINDOW", 0))
+    event.data[0] = 2  # source: a pager, so the window manager obeys
+    x11.XSendEvent.argtypes = [ctypes.c_void_p, ctypes.c_ulong, ctypes.c_int, ctypes.c_long, ctypes.c_void_p]
+    x11.XSendEvent(disp, root, 0, (1 << 20) | (1 << 19), ctypes.byref(event))
+    x11.XFlush(disp)
+    time.sleep(0.4)
+
+    def tap(*keysyms: int) -> None:
+        codes = [x11.XKeysymToKeycode(disp, k) for k in keysyms]
+        for code in codes:
+            xtst.XTestFakeKeyEvent(disp, code, 1, 0)
+        for code in reversed(codes):
+            xtst.XTestFakeKeyEvent(disp, code, 0, 0)
+        x11.XFlush(disp)
+        time.sleep(0.15)
+
+    tap(0xFFE3, 0xFFE9, 0xFFE1, 0xFFC9)  # ctrl+alt+shift+F12: focus the agent chat
+    time.sleep(0.3)
+    tap(0xFFE3, 0x76)  # ctrl+v
+    time.sleep(0.2)
+    tap(0xFF0D)  # Enter
+    x11.XCloseDisplay(disp)
+    return True
+
+
 def send(text: str, how: str) -> bool:
     """Type the words into the Konsole session of the agent that spoke last."""
     try:
@@ -131,6 +208,18 @@ def send(text: str, how: str) -> bool:
     except (FileNotFoundError, ValueError):
         last = {}
     service, session = last.get("konsole") or ["", ""]
+    if (not service or not session) and last.get("agent") == "cursor" and last.get("where"):
+        wid = cursor_window(last["where"])
+        if not wid:
+            log(f"no Cursor window for {last['where']}")
+            say("I heard you, but I can't find Cursor's window for that project.")
+            return False
+        # In a child process: Xlib from this worker thread, beside the Qt tray
+        # thread, crashed the whole service (SIGSEGV, 2026-11-14)
+        ok = subprocess.run([sys.executable, str(Path(__file__).resolve()), "type-into-cursor", wid,
+                             f"[hands-free · {how}] {text}"], timeout=20).returncode == 0
+        log(f"sent to cursor window {last['where']}" if ok else "Cursor delivery failed")
+        return ok
     if not service or not session:
         log(f"no konsole session for {last.get('agent', 'nobody')}")
         say("I heard you, but I don't know which terminal to type that into.")
@@ -507,6 +596,8 @@ def run() -> int:
 
 def main() -> int:
     command = sys.argv[1] if len(sys.argv) > 1 else "status"
+    if command == "type-into-cursor":  # internal, see send()
+        return 0 if type_into_cursor(sys.argv[2], sys.argv[3]) else 1
     if command == "run":
         return run()
     if command == "on":

@@ -60,7 +60,7 @@ VOICES = {"claude": "af_heart", "cursor": "af_bella", "codex": "bf_alice",
 DEFAULT_VOICE = "af_sky"  # any other agent
 NAMES = {"claude": "Claude", "cursor": "Cursor", "codex": "Codex"}
 # Agent processes, nearest ancestor first wins, when the environment says nothing
-AGENT_PROCESSES = [(r"(^|/)claude(/|$)", "claude"), (r"cursor-agent|(^|/)agent$", "cursor"),
+AGENT_PROCESSES = [(r"(^|/)claude(/|$)", "claude"), (r"cursor-agent|(^|/)agent$|(^|/)cursor$", "cursor"),
                    (r"(^|/)codex$", "codex"), (r"(^|/)gemini$", "gemini"), (r"(^|/)opencode$", "opencode")]
 SYSTEM = {"handsfree"}
 PLAYER = [
@@ -86,6 +86,44 @@ def write_json(path: Path, data: dict) -> None:
     tmp = path.parent / f".{path.name}.tmp"
     tmp.write_text(json.dumps(data))
     tmp.replace(path)
+
+
+def agent_folder() -> Path:
+    """The folder the calling agent runs in (its workspace), not the shell's
+    current folder: an agent's shell may be anywhere (/tmp, a subfolder)."""
+    pid = os.getppid()
+    while pid > 1:
+        try:
+            words = [w.decode(errors="replace")
+                     for w in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:2]]
+            if any(re.search(r"(^|/)cursor$", word) for word in words):
+                # One Cursor editor process serves every window, from whatever folder
+                # it was first started in; the agent's own shell starts in the workspace
+                top = subprocess.run(["git", "rev-parse", "--show-toplevel"],
+                                     capture_output=True, text=True).stdout.strip()
+                return Path(top) if top else Path.cwd()
+            if any(re.search(pattern, word) for word in words for pattern, _ in AGENT_PROCESSES):
+                return Path(os.readlink(f"/proc/{pid}/cwd"))
+            pid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            break
+    return Path.cwd()
+
+
+def nearest_agent_command() -> str:
+    """The command line of the nearest ancestor that is an agent, or ""."""
+    pid = os.getppid()
+    while pid > 1:
+        try:
+            words = [w.decode(errors="replace")
+                     for w in Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:2]]
+            pid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            return ""
+        for word in words:
+            if any(re.search(pattern, word) for pattern, _ in AGENT_PROCESSES):
+                return word
+    return ""
 
 
 def agent_process() -> str:
@@ -114,8 +152,13 @@ def identity(args: list[str]) -> tuple[str, str]:
         elif flag == "--session":
             session = value
     if not agent:
+        # The process we really run under wins over environment markers: an
+        # editor started from a Claude shell (2026-11-14) inherits CLAUDECODE
+        # and Claude's session id, and its agent was taken for Claude
         if os.environ.get("TALKBACK_AGENT"):
             agent = os.environ["TALKBACK_AGENT"].lower()
+        elif agent_process():
+            agent = agent_process()
         elif os.environ.get("CLAUDECODE"):
             agent = "claude"
         elif "cursor" in os.environ.get("AI_AGENT", "").lower() or any(
@@ -123,12 +166,12 @@ def identity(args: list[str]) -> tuple[str, str]:
         ):
             agent = "cursor"
         else:
-            agent = agent_process() or "agent"
+            agent = "agent"
     if not session:
         session = (
-            os.environ.get("CLAUDE_CODE_SESSION_ID")
-            or os.environ.get("CURSOR_TRACE_ID")
-            or os.getcwd()
+            (os.environ.get("CLAUDE_CODE_SESSION_ID") if agent == "claude" else None)
+            or (os.environ.get("CURSOR_TRACE_ID") if agent == "cursor" else None)
+            or str(agent_folder())
         )
     key = re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{agent}-{session}")[-120:]
     return agent, key
@@ -153,6 +196,8 @@ def konsole_target() -> list[str]:
     the user's hands-free replies). Then the tab is looked up by its
     "<workspace> : claude" title instead, and left empty when not unique.
     """
+    if re.search(r"(^|/)cursor$", nearest_agent_command()):
+        return ["", ""]  # an agent in the Cursor editor: hands-free goes to its window
     service = os.environ.get("KONSOLE_DBUS_SERVICE", "")
     session = os.environ.get("KONSOLE_DBUS_SESSION", "")
     if not service:
@@ -200,7 +245,7 @@ def konsole_target() -> list[str]:
 def enqueue(agent: str, key: str, text: str, voice: str, at: int | None = None) -> Path:
     """Spool the text; `at` (ns) places it in the queue, default now."""
     item = SPOOL / f"{at or time.time_ns()}-{os.getpid()}.json"
-    cwd = Path.cwd()
+    cwd = agent_folder()
     write_json(item, {
         "agent": agent,
         "session": key,
@@ -314,6 +359,7 @@ class Speaker:
                 name = NAMES.get(clip["agent"], clip["agent"].capitalize())
                 sentences = [f"{name} here, from {clip['where']}."] + sentences
             write_json(LAST, {"session": clip["session"], "agent": clip["agent"],
+                              "where": clip.get("where", ""),
                               "konsole": clip.get("konsole", ["", ""])})
         voice = clip.get("voice") or VOICES.get(clip["agent"], DEFAULT_VOICE)
         ready: queue.Queue = queue.Queue(maxsize=2)

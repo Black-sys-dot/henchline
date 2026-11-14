@@ -8,6 +8,9 @@ Type=simple
 ExecStart=%h/copilot-ptt/handsfree/handsfree.py run
 # Talkback players it starts are shared with the agents; leave them running on stop
 KillMode=process
+# Come back by itself if it ever crashes
+Restart=on-failure
+RestartSec=3
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=%h/.Xauthority
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
