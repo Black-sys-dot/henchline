@@ -56,6 +56,7 @@ EC_CONF = Path.home() / ".config/pipewire/talkback-echo-cancel.conf"
 EC_SOURCE = "talkback_ec_source"
 UNIT = "handsfree.service"
 EC_UNIT = "talkback-echo-cancel.service"
+ECHO_MARGIN = -15.0  # talking over a clip must be no more than this many dB under the playback
 WARY = 60.0  # after an echo cut a clip, how long talking over stays stricter
 WARMUP = 60.0  # seconds after the canceller starts in which talking over a clip needs a louder voice
 WAKE_MODEL = Path.home() / ".local/share/handsfree/hey_claude_personal.pkl"
@@ -431,6 +432,40 @@ class EarbudButton(threading.Thread):
                     log("earbud button gone")
 
 
+class SpeakerOutput(threading.Thread):
+    """Loudness of what the speakers are playing (the default output's monitor).
+
+    Our own voice reaches the cancelled mic far quieter than it is played,
+    since the canceller removes most of it; the user's voice does not get
+    quieter for that. Measured on 2026-11-14: echo stayed 20 dB or more under
+    the playback, the user often within a few dB of it or above.
+    """
+
+    def __init__(self, stop: threading.Event) -> None:
+        super().__init__(daemon=True)
+        self.stop = stop
+        self.levels: collections.deque = collections.deque(maxlen=17)  # last 0.5 s
+        self.at = 0.0
+
+    def run(self) -> None:
+        while not self.stop.is_set():
+            reader = subprocess.Popen(["parec", "--device=@DEFAULT_MONITOR@", "--format=s16le", f"--rate={RATE}",
+                                       "--channels=1", "--raw", "--latency-msec=30"], stdout=subprocess.PIPE)
+            while not self.stop.is_set():
+                data = reader.stdout.read(FRAME * 2)
+                if len(data) < FRAME * 2:
+                    break
+                frame = np.frombuffer(data, dtype="<i2").astype(np.float32) / 32768
+                self.levels.append(20 * np.log10(np.sqrt((frame ** 2).mean()) + 1e-6))
+                self.at = time.monotonic()
+            reader.terminate()
+            self.stop.wait(1)  # output changed or parec ended: start again
+
+    def loudest(self) -> float | None:
+        """Loudest playback level in the last half second, or None if unknown."""
+        return max(self.levels) if self.levels and time.monotonic() - self.at < 1 else None
+
+
 class Listener:
     def __init__(self, cfg: dict, model, stop: threading.Event) -> None:
         self.cfg, self.model, self.stop = cfg, model, stop
@@ -442,6 +477,7 @@ class Listener:
         self.canceller_since = time.monotonic()  # run() sets the real start
         self.last_message: tuple[str, str] | None = None  # for "send that to …"
         self.button = EarbudButton(stop)
+        self.output = SpeakerOutput(stop)
         self.crashed = False
 
     @staticmethod
@@ -477,6 +513,7 @@ class Listener:
         preroll = collections.deque(maxlen=PREROLL)
         loud = collections.deque(maxlen=12)
         recent = collections.deque(maxlen=33)  # last second, for the speech check
+        ec_levels = collections.deque(maxlen=17)  # last 0.5 s, against the playback level
         checked = 0
         window_until, was_busy, play_started = 0.0, False, 0.0
         kind = "reply"  # what opened the current window
@@ -552,10 +589,10 @@ class Listener:
                 preroll.append(frame)
                 recent.append(frame)
                 checked += 1
-                if playing and on_speakers():
-                    # Laptop speakers leak our own voice past the canceller often enough
-                    # to cut clips off, so there only the wake word (or an earbud tap)
-                    # interrupts; on headphones and earbuds, talking over still does
+                ec_levels.append(level)
+                if playing and on_speakers() and self.output.loudest() is None:
+                    # Playback level unknown on laptop speakers: our own voice might leak, so
+                    # only the wake word (or an earbud tap) interrupts until it is back
                     if (self.wake and not PAUSE.exists() and not ptt_busy()
                             and self.wake.feed(np.frombuffer(data, dtype="<i2"))
                             and self.whisper(self.wake.confirm)):
@@ -578,6 +615,9 @@ class Listener:
                     checked = 0  # at most one speech check per 90 ms
                     speech = bool(get_speech_timestamps(np.concatenate(recent),
                                                         SPEECH_OVER if playing else SPEECH))
+                    played = self.output.loudest() if playing else None
+                    if speech and played is not None and max(ec_levels) - played < ECHO_MARGIN:
+                        speech = False  # far quieter than what we are playing: our own echo
                 if speech:
                     how = "over you" if playing else kind
                     extra = self.utterance(reader, list(preroll), max(floor, room_floor), how)
@@ -816,6 +856,7 @@ def run() -> int:
     listener = Listener(cfg, model, stop)
     listener.canceller_since = canceller_since
     listener.button.start()
+    listener.output.start()
     worker = threading.Thread(target=listener.run, daemon=True)
     worker.start()
     log("on")
