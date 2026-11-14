@@ -43,6 +43,7 @@ import ptt  # noqa: E402  push-to-talk's Whisper, tone marks and state files
 
 STATE = Path.home() / ".local/state/ptt"
 FLAG = STATE / "handsfree"
+ANNOUNCE = STATE / "handsfree.announce"  # set by `handsfree on`: say so once
 TALKBACK = STATE / "talkback"
 LOG = STATE / "handsfree.log"
 WAV = STATE / "handsfree.wav"
@@ -784,7 +785,9 @@ def run() -> int:
     worker = threading.Thread(target=listener.run, daemon=True)
     worker.start()
     log("on")
-    say("Hands-free is on. I'll listen for a few seconds after I speak, and you can talk over me.")
+    if ANNOUNCE.exists():  # only when the user turned it on, not on every restart
+        ANNOUNCE.unlink(missing_ok=True)
+        say("Hands-free is on.")
     try:
         tray(listener, stop)
     finally:
@@ -805,6 +808,7 @@ def main() -> int:
     if command == "on":
         STATE.mkdir(parents=True, exist_ok=True)
         FLAG.touch()
+        ANNOUNCE.touch()
         TALKBACK.touch()  # hands-free needs the agents to talk
         return subprocess.call(["systemctl", "--user", "start", UNIT])
     if command == "switch":  # e.g. an agent asked by the user to hand them over
