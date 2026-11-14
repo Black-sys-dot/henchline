@@ -56,6 +56,7 @@ EC_CONF = Path.home() / ".config/pipewire/talkback-echo-cancel.conf"
 EC_SOURCE = "talkback_ec_source"
 UNIT = "handsfree.service"
 EC_UNIT = "talkback-echo-cancel.service"
+WARY = 60.0  # after an echo cut a clip, how long talking over stays stricter
 WARMUP = 60.0  # seconds after the canceller starts in which talking over a clip needs a louder voice
 WAKE_MODEL = Path.home() / ".local/share/handsfree/hey_claude_personal.pkl"
 WAKE_PREFIX = re.compile(r"^\W*((hey|hi|okay|ok)\W+)?claude\W*", re.I)
@@ -426,6 +427,7 @@ class Listener:
         self.last_activity = time.monotonic()
         self.wake = Wake() if WAKE_MODEL.exists() else None
         self.on_cpu = False
+        self.wary_until = 0.0
         self.canceller_since = time.monotonic()  # run() sets the real start
         self.last_message: tuple[str, str] | None = None  # for "send that to …"
         self.button = EarbudButton(stop)
@@ -540,7 +542,8 @@ class Listener:
                 recent.append(frame)
                 checked += 1
                 # A fresh canceller still leaks some of our own voice: be stricter then
-                warming = playing and time.monotonic() - self.canceller_since < WARMUP
+                warming = playing and (time.monotonic() - self.canceller_since < WARMUP
+                                       or time.monotonic() < self.wary_until)
                 over = level > floor + (BARGE_DB + 10 if warming else BARGE_DB if playing else START_DB)
                 settled = not playing or now - play_started > BARGE_GRACE
                 loud.append(over and settled and self.voiced(frame))
@@ -674,6 +677,11 @@ class Listener:
             log("heard: never mind")
         elif not to_agent:
             log(f"ignored {len(text.split())} words")
+            if how == "over you":
+                # Talking over a clip but nothing said: our own echo cut the clip.
+                # Without this it cuts, finds nothing, resumes and cuts again.
+                self.wary_until = time.monotonic() + WARY
+                log(f"echo cut a clip: stricter about talking over for {WARY:.0f}s")
         ptt.note("target", {"agent": to_agent})
         phase("idle")
         if to_agent and send(rich, how):
