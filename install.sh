@@ -50,6 +50,7 @@ systemctl --user daemon-reload
 systemctl --user enable --now ptt.service
 echo "ptt is enabled for this graphical session."
 install -m 644 "$root/handsfree/handsfree.service" "$HOME/.config/systemd/user/handsfree.service"
+install -m 644 "$root/handsfree/talkback-echo-cancel.service" "$HOME/.config/systemd/user/talkback-echo-cancel.service"
 mkdir -p "$HOME/.config/pipewire"
 install -m 644 "$root/handsfree/talkback-echo-cancel.conf" "$HOME/.config/pipewire/talkback-echo-cancel.conf"
 ln -sfn "$root/handsfree/handsfree.py" "$HOME/.local/bin/handsfree"

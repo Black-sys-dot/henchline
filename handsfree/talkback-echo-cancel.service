@@ -1,0 +1,9 @@
+[Unit]
+Description=Echo-cancelled built-in mic for hands-free (kept apart so a hands-free restart does not reset it)
+After=pipewire.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/pipewire -c %h/.config/pipewire/talkback-echo-cancel.conf
+Restart=on-failure
+RestartSec=3

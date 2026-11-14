@@ -54,6 +54,8 @@ SAY = Path(__file__).resolve().parent.parent / "talkback/scripts/say.py"
 EC_CONF = Path.home() / ".config/pipewire/talkback-echo-cancel.conf"
 EC_SOURCE = "talkback_ec_source"
 UNIT = "handsfree.service"
+EC_UNIT = "talkback-echo-cancel.service"
+WARMUP = 60.0  # seconds after the canceller starts in which talking over a clip needs a louder voice
 WAKE_MODEL = Path.home() / ".local/share/handsfree/hey_claude_personal.pkl"
 WAKE_PREFIX = re.compile(r"^\W*((hey|hi|okay|ok)\W+)?claude\W*", re.I)
 PAUSE = STATE / "handsfree.pause"  # e.g. while wake-word samples are recorded
@@ -300,16 +302,22 @@ def send(text: str, how: str) -> bool:
     return True
 
 
-def start_canceller() -> subprocess.Popen:
-    proc = subprocess.Popen(["pipewire", "-c", str(EC_CONF)],
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def start_canceller() -> float:
+    """Start the echo canceller unit if needed; return when it started (monotonic).
+
+    It runs as its own unit (talkback-echo-cancel.service) so restarting
+    hands-free does not reset it: a fresh canceller has to learn the room
+    again, and every echo leak on 2026-11-14 came within a minute of one.
+    """
+    subprocess.run(["systemctl", "--user", "start", EC_UNIT], check=False)
     for _ in range(50):
         sources = subprocess.run(["pactl", "list", "short", "sources"],
                                  capture_output=True, text=True).stdout
         if EC_SOURCE in sources:
-            return proc
+            since = subprocess.run(["systemctl", "--user", "show", "-p", "ActiveEnterTimestampMonotonic",
+                                    "--value", EC_UNIT], capture_output=True, text=True).stdout.strip()
+            return int(since) / 1e6 if since.isdigit() else time.monotonic()
         time.sleep(0.1)
-    proc.terminate()
     raise SystemExit("echo canceller did not come up")
 
 
@@ -417,6 +425,7 @@ class Listener:
         self.last_activity = time.monotonic()
         self.wake = Wake() if WAKE_MODEL.exists() else None
         self.on_cpu = False
+        self.canceller_since = time.monotonic()  # run() sets the real start
         self.last_message: tuple[str, str] | None = None  # for "send that to …"
         self.button = EarbudButton(stop)
         self.crashed = False
@@ -529,7 +538,9 @@ class Listener:
                 preroll.append(frame)
                 recent.append(frame)
                 checked += 1
-                over = level > floor + (BARGE_DB if playing else START_DB)
+                # A fresh canceller still leaks some of our own voice: be stricter then
+                warming = playing and time.monotonic() - self.canceller_since < WARMUP
+                over = level > floor + (BARGE_DB + 10 if warming else BARGE_DB if playing else START_DB)
                 settled = not playing or now - play_started > BARGE_GRACE
                 loud.append(over and settled and self.voiced(frame))
                 speech = False
@@ -763,11 +774,12 @@ def tray(listener: Listener, stop: threading.Event) -> None:
 
 def run() -> int:
     cfg = ptt.load_config()
-    canceller = start_canceller()
+    canceller_since = start_canceller()
     model = ptt.load_model(cfg, ptt.want_cuda(cfg))
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     listener = Listener(cfg, model, stop)
+    listener.canceller_since = canceller_since
     listener.button.start()
     worker = threading.Thread(target=listener.run, daemon=True)
     worker.start()
@@ -777,7 +789,6 @@ def run() -> int:
         tray(listener, stop)
     finally:
         stop.set()
-        canceller.terminate()
         if ptt_phase().get("by") == "handsfree":
             phase("idle")
         FLAG.unlink(missing_ok=True)
@@ -817,7 +828,7 @@ def main() -> int:
         return 0
     if command == "off":
         FLAG.unlink(missing_ok=True)
-        return subprocess.call(["systemctl", "--user", "stop", UNIT])
+        return subprocess.call(["systemctl", "--user", "stop", UNIT, EC_UNIT])
     active = subprocess.run(["systemctl", "--user", "is-active", UNIT],
                             capture_output=True, text=True).stdout.strip()
     print(f"hands-free {'on' if active == 'active' else 'off'}")
