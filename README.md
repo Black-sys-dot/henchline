@@ -32,9 +32,21 @@ python3 -m pip install --user faster-whisper
 
 The first start downloads the Whisper small weights. The user service starts again at graphical login.
 
-Hold the Copilot key, speak, release. A two-key hold stays one recording until both keys are up. Holding the key also stops desktop speech from speech-dispatcher, if that is playing. Right-click the speech bubble for language, power, another hotkey, or to turn the chime off. The chime is the freedesktop sound `complete.oga` if that file is installed. A missing sound is skipped. `"chime_sound"` in the config can point at another file. The Copilot key stays on when another hotkey is set.
+Hold the Copilot key, speak, release. A two-key hold stays one recording until both keys are up. The words are typed into the focused window. Okular and a Thunderbird mail window are left alone; a Thunderbird compose window still receives the paste and Enter. Holding the key also stops desktop speech from speech-dispatcher, if that is playing. Right-click the speech bubble for language, power, another hotkey, or to turn the chime off. The chime is the freedesktop sound `complete.oga` if that file is installed. A missing sound is skipped. `"chime_sound"` in the config can point at another file. The Copilot key stays on when another hotkey is set.
 
 Log: `~/.local/state/ptt/ptt.log`
+
+When the words go to a terminal, Cursor or Code window, a word said louder, higher or longer than the rest comes out as `*word*`, and an utterance that stands out from your usual voice ends with a note such as `[tone: loud, fast]` (`tone.py`). Other windows get the plain text. Only numbers about the voice are kept, in `~/.local/state/ptt/voice.json`. `"hotwords"` in the config lists names Whisper should expect; keep it short.
+
+The listener writes `~/.local/state/ptt/phase` and `~/.local/state/ptt/target` (whether the paste went to an agent window, never the words) for a speech helper that should go quiet while you talk.
+
+## Hands-free
+
+`handsfree on` talks to the same agents without a key (`handsfree.py`, user unit `handsfree.service`, off by default). It needs a speech helper that writes `~/.local/state/ptt/talkback.*` (the talkback skill this was built for), and the echo canceller in `talkback-echo-cancel.conf` copied to `~/.config/pipewire/`; it captures the built-in mic, which shares a clock with the speakers. It listens for a few seconds after an agent speaks, while an agent speaks (talking over it stops it), and for a wake word the rest of the time. The words are typed into the Konsole tab of the agent that spoke last, prefixed `[hands-free · how it was heard]`. "Over" sends at once, "give me a minute" keeps listening, "never mind" drops it, "hands-free off" ends it. `handsfree listen N` and `handsfree close` widen or close the window.
+
+The wake word is a personal detector: `wakeword_collect.py` records you at a few spots around the house, `wakeword_train.py` fits it on openWakeWord embeddings (`pip install --user --no-deps openwakeword`; its TFLite dependency has no Python 3.12 build), and Whisper confirms each candidate on just those two seconds.
+
+Log: `~/.local/state/ptt/handsfree.log` (events, no words)
 
 ## License
 

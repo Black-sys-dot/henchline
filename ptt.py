@@ -27,6 +27,10 @@ WAV = STATE / "utterance.wav"
 CONFIG = Path.home() / ".config/ptt/config.json"
 DEFAULT_KEYS = ("F23",)
 DEFAULT_CHORDS = (("RIGHTCTRL", "RIGHTSHIFT"),)
+# Names Whisper otherwise hears as "cloud" and the like; "hotwords" in the config
+# replaces them. Keep it short: a long list (and hyphenated words) made Whisper
+# hyphenate and drop ordinary words in testing.
+DEFAULT_HOTWORDS = ("Claude", "Cursor", "Kokoro")
 PHASE: queue.Queue[str] = queue.Queue()
 PASTE: queue.Queue[str] = queue.Queue()
 XK_CONTROL_L = 0xFFE3
@@ -153,6 +157,18 @@ def load_model(cfg: dict, cuda: bool):
 
 def set_phase(phase: str) -> None:
     PHASE.put(phase)
+    note("phase", {"phase": phase})
+
+
+def note(name: str, data: dict) -> None:
+    """Share state with talkback, which pauses while a hold is recording.
+
+    Only the phase and the kind of window pasted into, never the words.
+    """
+    STATE.mkdir(parents=True, exist_ok=True)
+    tmp = STATE / f"{name}.tmp"
+    tmp.write_text(json.dumps({**data, "at": time.time()}))
+    tmp.replace(STATE / name)
 
 
 def save_config(cfg: dict) -> None:
@@ -160,14 +176,35 @@ def save_config(cfg: dict) -> None:
     CONFIG.write_text(json.dumps(cfg, indent=2) + "\n")
 
 
-def transcribe(model, path: Path, cfg: dict) -> str:
+def transcribe(model, path: Path, cfg: dict) -> tuple[str, str]:
+    """The plain transcript, and the one with tone marks for agent windows."""
     lang = cfg.get("language", "en")
     if lang in (None, "", "auto"):
         lang = None
+    tone = cfg.get("tone", True)
+    hotwords = cfg.get("hotwords", list(DEFAULT_HOTWORDS))
     segments, _info = model.transcribe(
-        str(path), language=lang, vad_filter=True, beam_size=1
+        str(path), language=lang, vad_filter=True, beam_size=1, word_timestamps=tone,
+        hotwords=", ".join(hotwords) or None,
     )
-    return " ".join(seg.text.strip() for seg in segments).strip()
+    segments = list(segments)
+    text = " ".join(seg.text.strip() for seg in segments).strip()
+    rich = text
+    if tone and text:
+        try:
+            import tone as tones
+
+            words = [(w.start, w.end, w.word) for seg in segments for w in seg.words or []]
+            rich = tones.annotate(path, words, text)
+        except Exception as exc:  # tone is extra; the words must still get through
+            log(f"tone failed: {exc}")
+    return text, rich
+
+
+def agent_window(cls: str, role: str) -> bool:
+    """A terminal or editor, where an agent may be reading what is pasted."""
+    names = TERMINALS + ("cursor", "code")
+    return any(f'"{name}"' in cls for name in names) and can_type(cls, role)
 
 
 def clipboard(text: str) -> bool:
@@ -194,24 +231,44 @@ def clipboard(text: str) -> bool:
     return got.stdout.strip() == text
 
 
-def focused_class() -> str:
+def active_window() -> tuple[str, str]:
     try:
         root = subprocess.check_output(
             ["xprop", "-root", "_NET_ACTIVE_WINDOW"], text=True, stderr=subprocess.DEVNULL
         )
         wid = root.strip().split()[-1]
         if wid in {"0x0", "0"}:
-            return ""
+            return "", ""
         cls = subprocess.check_output(
             ["xprop", "-id", wid, "WM_CLASS"], text=True, stderr=subprocess.DEVNULL
-        )
-        return cls.lower()
-    except (subprocess.CalledProcessError, IndexError):
-        return ""
+        ).lower()
+    except (subprocess.CalledProcessError, IndexError, ValueError):
+        return "", ""
+    role = ""
+    try:
+        role = subprocess.check_output(
+            ["xprop", "-id", wid, "WM_WINDOW_ROLE"], text=True, stderr=subprocess.DEVNULL
+        ).lower()
+    except (subprocess.CalledProcessError, IndexError, ValueError):
+        role = ""
+    return cls, role
 
 
-def paste() -> None:
+def can_type(cls: str, role: str) -> bool:
+    if '"okular"' in cls:
+        return False
+    if "thunderbird" in cls or '"mail"' in cls:
+        return "msgcompose" in role or "msgcompose" in cls
+    return True
+
+
+def paste() -> bool:
     os.environ.setdefault("DISPLAY", ":0")
+    cls, role = active_window()
+    note("target", {"agent": agent_window(cls, role)})
+    if not can_type(cls, role):
+        log(f"clipboard only, focus {cls.strip() or 'unknown'} role {role.strip() or 'none'}")
+        return False
     x11 = ctypes.CDLL("libX11.so.6")
     xtst = ctypes.CDLL("libXtst.so.6")
     x11.XOpenDisplay.restype = ctypes.c_void_p
@@ -227,7 +284,7 @@ def paste() -> None:
     disp = x11.XOpenDisplay(os.environ["DISPLAY"].encode())
     if not disp:
         log("no X display")
-        return
+        return False
 
     def tap(keysym: int, down: int) -> None:
         code = x11.XKeysymToKeycode(disp, keysym)
@@ -238,8 +295,7 @@ def paste() -> None:
         x11.XFlush(disp)
         time.sleep(0.02)
 
-    cls = focused_class()
-    terminal = any(name in cls for name in TERMINALS)
+    terminal = any(f'"{name}"' in cls for name in TERMINALS)
     log(f"focus {cls.strip() or 'unknown'} chord={'ctrl+shift+v' if terminal else 'ctrl+v'}")
     if terminal:
         tap(XK_CONTROL_L, 1)
@@ -257,6 +313,7 @@ def paste() -> None:
     tap(XK_RETURN, 1)
     tap(XK_RETURN, 0)
     x11.XCloseDisplay(disp)
+    return True
 
 
 def ding(cfg: dict) -> None:
@@ -276,13 +333,7 @@ def ding(cfg: dict) -> None:
 
 
 def hush() -> None:
-    pidfile = STATE / "talkback.pid"
-    if pidfile.exists():
-        try:
-            os.kill(int(pidfile.read_text().strip()), signal.SIGTERM)
-        except (OSError, ValueError):
-            pass
-        pidfile.unlink(missing_ok=True)
+    # Talkback pauses by itself from the phase file
     if shutil.which("spd-say") is None:
         return
     subprocess.Popen(
@@ -329,7 +380,7 @@ def stop_recording(proc: subprocess.Popen, started: float) -> Path | None:
 def handle_text(model, path: Path, cfg: dict) -> None:
     set_phase("transcribing")
     try:
-        text = transcribe(model, path, cfg)
+        text, rich = transcribe(model, path, cfg)
     except Exception as exc:
         log(f"transcribe failed: {exc}")
         return
@@ -339,7 +390,9 @@ def handle_text(model, path: Path, cfg: dict) -> None:
         log("empty")
         return
     log(f"text: {text}")
-    PASTE.put(text)
+    if rich != text:
+        log(f"tone: {rich}")
+    PASTE.put((text, rich))
 
 
 def main(cfg: dict, stop: threading.Event) -> None:
@@ -581,7 +634,9 @@ def run_tray(cfg: dict, stop: threading.Event) -> None:
             pass
         try:
             while True:
-                text = PASTE.get_nowait()
+                text, rich = PASTE.get_nowait()
+                if agent_window(*active_window()):
+                    text = rich
                 if clipboard(text):
                     paste()
                     ding(cfg)
