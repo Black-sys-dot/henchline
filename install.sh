@@ -15,4 +15,4 @@ mkdir -p "$HOME/.config/pipewire"
 install -m 644 "$root/talkback-echo-cancel.conf" "$HOME/.config/pipewire/talkback-echo-cancel.conf"
 ln -sfn "$root/handsfree.py" "$HOME/.local/bin/handsfree"
 systemctl --user daemon-reload
-echo "hands-free is installed but off: handsfree on"
+echo "hands-free is installed: handsfree on (it then starts again at login)"
