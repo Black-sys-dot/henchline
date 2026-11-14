@@ -1,0 +1,3 @@
+# Whisper on an NVIDIA GPU: the CUDA libraries ctranslate2 loads (only installed when nvidia-smi exists)
+nvidia-cublas-cu12==12.4.5.8
+nvidia-cudnn-cu12==9.1.0.70

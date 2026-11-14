@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
 """Hold a configured key or chord on any keyboard to record, then paste and Enter.
 
 The laptop Copilot key is F23. An external keyboard uses the chord in

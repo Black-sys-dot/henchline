@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
 """Guided "hey Claude" recordings around the house, scored as they come in.
 
     wakeword_collect.py [POSITION ...]

@@ -1,0 +1,7 @@
+# Hands-free: Whisper (ptt.txt), Kokoro (talkback.txt), and the wake word.
+# openwakeword itself goes in with --no-deps: its tflite dependency has no
+# Python 3.12 build, and only its ONNX models are used.
+scipy==1.17.1
+scikit-learn==1.5.2
+tqdm
+requests

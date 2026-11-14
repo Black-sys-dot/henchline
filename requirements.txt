@@ -1,3 +1,0 @@
-faster-whisper
-evdev
-PyQt5

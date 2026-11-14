@@ -1,0 +1,6 @@
+# Push-to-talk (and hands-free): Whisper. Versions as tested on 2026-11-15:
+# av 19 dropped an argument faster-whisper 1.2.1 passes (open(metadata_errors=…)),
+# so av and ctranslate2 stay at the versions that worked before the venv.
+faster-whisper==1.2.1
+av==18.0.0
+ctranslate2==4.8.1

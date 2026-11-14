@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
 """Hands-free conversation with the talkback agents: no keys.
 
     handsfree on | off | status        (handsfree run is the service itself)

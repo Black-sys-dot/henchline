@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
 """Train a personal "hey Claude" detector from wakeword_collect.py recordings.
 
 The published openWakeWord model missed most of the user's own "hey Claude"s,
@@ -86,7 +86,7 @@ def kokoro_negatives() -> list[np.ndarray]:
         "np.save(sys.argv[1], np.array(out, dtype=object), allow_pickle=True)\n"
     )
     target = DATA / "kokoro_negatives.npy"
-    subprocess.run([str(KOKORO / "venv/bin/python"), "-I", "-c", code, str(target)], check=True)
+    subprocess.run([sys.executable, "-E", "-s", "-c", code, str(target)], check=True)
     return list(np.load(target, allow_pickle=True))
 
 
