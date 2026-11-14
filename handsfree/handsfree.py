@@ -2,6 +2,7 @@
 """Hands-free conversation with the talkback agents.
 
     handsfree on | off | status        (handsfree run is the service itself)
+    handsfree switch AGENT [WORKSPACE] hand the user over to that agent, announced
 
 While on, the laptop's built-in mic runs through an echo canceller
 (~/.config/pipewire/talkback-echo-cancel.conf), and speech is listened for
@@ -207,8 +208,8 @@ SPEAKERS = STATE / "talkback.speakers"  # every agent that has spoken (talkback)
 AGENT_NAMES = r"(claude|cursor|codex)"
 WHERE = r"(?:\s+(?:in|from|on)\s+(?:the\s+)?(.+?))?"
 SWITCH = re.compile(
-    rf"^\W*(?:(?:okay|ok|alright|right|so|no|actually)[\s,]+)?(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?"
-    rf"(?:switch(?:\s+me)?|(?:hand|pass)(?:\s+(?:me|it|this))?(?:\s+(?:over|back))?|(?:give|send)(?:\s+(?:me|it|this))?\s+(?:over|back)|go\s+back|"
+    rf"^\W*(?:(?:okay|ok|alright|right|so|no|actually)[\s,]+)?(?:(?:hey\s+)?(?:claude|cursor|codex)[\s,]+)?(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?(?:please\s+)?"
+    rf"(?:switch(?:\s+me)?(?:\s+back)?|(?:hand|pass)(?:\s+(?:me|it|this))?(?:\s+(?:over|back))?|(?:give|send)(?:\s+(?:me|it|this))?\s+(?:over|back)|go\s+back|"
     rf"(?:let\s+me\s+)?talk|connect\s+me|put\s+me\s+through|i\s+want\s+to\s+talk|back)"
     rf"\s+(?:over\s+)?to\s+{AGENT_NAMES}{WHERE}(?:\s+please)?\W*$", re.I)
 SEND_THAT = re.compile(rf"^\W*(?:please\s+)?(?:send|forward|give)\s+(?:that|this|it)(?:\s+message)?\s+to\s+{AGENT_NAMES}{WHERE}\W*$", re.I)
@@ -793,6 +794,18 @@ def main() -> int:
         FLAG.touch()
         TALKBACK.touch()  # hands-free needs the agents to talk
         return subprocess.call(["systemctl", "--user", "start", UNIT])
+    if command == "switch":  # e.g. an agent asked by the user to hand them over
+        if len(sys.argv) < 3:
+            sys.exit("usage: handsfree switch claude|cursor|codex [workspace words]")
+        target = find_speaker(sys.argv[2], " ".join(sys.argv[3:]) or None)
+        if not target:
+            print(f"no {sys.argv[2]} has spoken through talkback in the last day")
+            return 1
+        LAST.write_text(json.dumps({k: target[k] for k in ("session", "agent", "where", "konsole")}))
+        log(f"switched by command to {target['agent']} in {target.get('where', '?')}")
+        say(f"Now talking to {spoken(target)}.")
+        print(f"now talking to {spoken(target)}")
+        return 0
     if command == "close":
         CLOSE.touch()
         return 0
