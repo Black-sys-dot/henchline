@@ -15,7 +15,8 @@ from pathlib import Path
 
 import numpy as np
 
-BASELINE = Path.home() / ".local/state/ptt/voice.json"
+from voice.state import VOICE_BASELINE as BASELINE
+
 FRAME = 0.04  # seconds per analysis frame
 WARMUP = 5  # utterances before tone notes start
 MAX_MARKS = 2

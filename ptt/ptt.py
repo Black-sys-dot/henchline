@@ -6,8 +6,8 @@ The laptop Copilot key is F23. An external keyboard uses the chord in
 Default mic route only: pw-record with no --target.
 """
 import ctypes
+import functools
 import gc
-import json
 import os
 import queue
 import re
@@ -22,22 +22,16 @@ from pathlib import Path
 
 from evdev import InputDevice, ecodes, list_devices
 
-STATE = Path.home() / ".local/state/ptt"
-LOG = STATE / "ptt.log"
-WAV = STATE / "utterance.wav"
-CONFIG = Path.home() / ".config/ptt/config.json"
-DEFAULT_KEYS = ("F23",)
-DEFAULT_CHORDS = (("RIGHTCTRL", "RIGHTSHIFT"),)
-# Names Whisper otherwise hears as "cloud" and the like; "hotwords" in the config
-# replaces them. Keep it short: a long list (and hyphenated words) made Whisper
-# hyphenate and drop ordinary words in testing.
-DEFAULT_HOTWORDS = ("Claude", "Cursor", "Kokoro")
-PHASE: queue.Queue[str] = queue.Queue()
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
+from voice import agents, x11  # noqa: E402
+from voice import state as shared  # noqa: E402
+from voice.state import BY_PTT, PHASE_COLOURS, PTT_LOG, PTT_WAV, Phase  # noqa: E402
+from voice.whisper import Config, ding, load_model, transcribe  # noqa: E402
+
+COPILOT_KEY = "F23"  # always a trigger, whatever else is set
+SHORTEST = 0.35  # seconds: a shorter press is a slip, not speech
+TRAY_PHASE: queue.Queue[Phase] = queue.Queue()  # phase changes for the tray icon
 PASTE: queue.Queue[str] = queue.Queue()
-XK_CONTROL_L = 0xFFE3
-XK_SHIFT_L = 0xFFE1
-XK_RETURN = 0xFF0D
-XK_V = 0x76
 TERMINALS = (
     "konsole",
     "yakuake",
@@ -52,22 +46,7 @@ TERMINALS = (
 )
 
 
-def log(msg: str) -> None:
-    STATE.mkdir(parents=True, exist_ok=True)
-    line = time.strftime("%Y-%m-%d %H:%M:%S ") + msg
-    with LOG.open("a") as fh:
-        fh.write(line + "\n")
-    print(line, flush=True)
-
-
-def load_config() -> dict:
-    if not CONFIG.exists():
-        return {}
-    try:
-        return json.loads(CONFIG.read_text())
-    except json.JSONDecodeError as exc:
-        log(f"bad config: {exc}")
-        return {}
+log = functools.partial(shared.log, PTT_LOG, echo=True)
 
 
 def keycode(name: str) -> int:
@@ -77,13 +56,10 @@ def keycode(name: str) -> int:
     return code
 
 
-def triggers(cfg: dict) -> tuple[set[int], list[frozenset[int]]]:
-    keys = {keycode(name) for name in cfg.get("keys", DEFAULT_KEYS)}
-    keys.add(keycode("F23"))
-    chords = [
-        frozenset(keycode(name) for name in chord)
-        for chord in cfg.get("chords", DEFAULT_CHORDS)
-    ]
+def triggers(cfg: Config) -> tuple[set[int], list[frozenset[int]]]:
+    keys = {keycode(name) for name in cfg.keys}
+    keys.add(keycode(COPILOT_KEY))
+    chords = [frozenset(keycode(name) for name in chord) for chord in cfg.chords]
     return keys, [chord for chord in chords if chord]
 
 
@@ -124,82 +100,10 @@ def open_keyboards() -> dict[str, InputDevice]:
     return found
 
 
-def on_battery() -> bool:
-    try:
-        return Path("/sys/class/power_supply/AC/online").read_text().strip() == "0"
-    except OSError:
-        return False
-
-
-def want_cuda(cfg: dict) -> bool:
-    device = cfg.get("device", "auto")
-    if device == "cpu":
-        return False
-    if device == "cuda":
-        return True
-    return not on_battery()
-
-
-def load_model(cfg: dict, cuda: bool):
-    from faster_whisper import WhisperModel
-
-    name = cfg.get("model", "small")
-    if cuda:
-        try:
-            model = WhisperModel(name, device="cuda", compute_type="float16")
-            log(f"model {name} on cuda")
-            return model
-        except Exception as exc:
-            log(f"cuda model failed ({exc}); using cpu")
-    model = WhisperModel(name, device="cpu", compute_type="int8")
-    log(f"model {name} on cpu")
-    return model
-
-
-def set_phase(phase: str) -> None:
-    PHASE.put(phase)
-    note("phase", {"phase": phase})
-
-
-def note(name: str, data: dict) -> None:
-    """Share state with talkback, which pauses while a hold is recording.
-
-    Only the phase and the kind of window pasted into, never the words.
-    """
-    STATE.mkdir(parents=True, exist_ok=True)
-    tmp = STATE / f"{name}.tmp"
-    tmp.write_text(json.dumps({**data, "at": time.time()}))
-    tmp.replace(STATE / name)
-
-
-def save_config(cfg: dict) -> None:
-    CONFIG.parent.mkdir(parents=True, exist_ok=True)
-    CONFIG.write_text(json.dumps(cfg, indent=2) + "\n")
-
-
-def transcribe(model, path: Path, cfg: dict) -> tuple[str, str]:
-    """The plain transcript, and the one with tone marks for agent windows."""
-    lang = cfg.get("language", "en")
-    if lang in (None, "", "auto"):
-        lang = None
-    tone = cfg.get("tone", True)
-    hotwords = cfg.get("hotwords", list(DEFAULT_HOTWORDS))
-    segments, _info = model.transcribe(
-        str(path), language=lang, vad_filter=True, beam_size=1, word_timestamps=tone,
-        hotwords=", ".join(hotwords) or None,
-    )
-    segments = list(segments)
-    text = " ".join(seg.text.strip() for seg in segments).strip()
-    rich = text
-    if tone and text:
-        try:
-            import tone as tones
-
-            words = [(w.start, w.end, w.word) for seg in segments for w in seg.words or []]
-            rich = tones.annotate(path, words, text)
-        except Exception as exc:  # tone is extra; the words must still get through
-            log(f"tone failed: {exc}")
-    return text, rich
+def set_phase(phase: Phase) -> None:
+    """For the tray icon, and for talkback, which goes quiet while we record."""
+    TRAY_PHASE.put(phase)
+    shared.set_phase(phase, by=BY_PTT)
 
 
 def agent_window(cls: str, role: str) -> bool:
@@ -209,50 +113,16 @@ def agent_window(cls: str, role: str) -> bool:
 
 
 def clipboard(text: str) -> bool:
-    bus = os.environ.get("DBUS_SESSION_BUS_ADDRESS")
-    if not bus:
-        os.environ["DBUS_SESSION_BUS_ADDRESS"] = f"unix:path=/run/user/{os.getuid()}/bus"
-    proc = subprocess.run(
-        ["qdbus", "org.kde.klipper", "/klipper", "setClipboardContents", text],
-        check=False,
-        text=True,
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.PIPE,
-    )
-    if proc.returncode != 0:
-        log(f"clipboard set failed: {proc.stderr.strip()}")
-        return False
-    got = subprocess.run(
-        ["qdbus", "org.kde.klipper", "/klipper", "getClipboardContents"],
-        check=False,
-        text=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.DEVNULL,
-    )
-    return got.stdout.strip() == text
+    if x11.set_clipboard(text):
+        return True
+    log("clipboard set failed")
+    return False
 
 
 def active_window() -> tuple[str, str]:
-    try:
-        root = subprocess.check_output(
-            ["xprop", "-root", "_NET_ACTIVE_WINDOW"], text=True, stderr=subprocess.DEVNULL
-        )
-        wid = root.strip().split()[-1]
-        if wid in {"0x0", "0"}:
-            return "", ""
-        cls = subprocess.check_output(
-            ["xprop", "-id", wid, "WM_CLASS"], text=True, stderr=subprocess.DEVNULL
-        ).lower()
-    except (subprocess.CalledProcessError, IndexError, ValueError):
-        return "", ""
-    role = ""
-    try:
-        role = subprocess.check_output(
-            ["xprop", "-id", wid, "WM_WINDOW_ROLE"], text=True, stderr=subprocess.DEVNULL
-        ).lower()
-    except (subprocess.CalledProcessError, IndexError, ValueError):
-        role = ""
-    return cls, role
+    """WM_CLASS and WM_WINDOW_ROLE of the focused window, lower case."""
+    wid = x11.active_window()
+    return x11.window_class(wid), x11.window_role(wid)
 
 
 def can_type(cls: str, role: str) -> bool:
@@ -276,100 +146,46 @@ def shell_only(cls: str) -> bool:
     if not any(f'"{name}"' in cls for name in TERMINALS):
         return False
     try:
-        root = subprocess.check_output(["xprop", "-root", "_NET_ACTIVE_WINDOW"], text=True)
-        wid = root.strip().split()[-1]
-        pid = int(subprocess.check_output(["xprop", "-id", wid, "_NET_WM_PID"], text=True).split()[-1])
+        pid = x11.window_pid(x11.active_window())
         if '"konsole"' in cls:
             service = f"org.kde.konsole-{pid}"
-            paths = subprocess.check_output(["qdbus", service], text=True).split()
-            windows = [p for p in paths if re.fullmatch(r"/Windows/\d+", p)]
+            windows = [p for p in agents.qdbus(service).split() if re.fullmatch(r"/Windows/\d+", p)]
             if len(windows) != 1:
                 return False
-            tab = subprocess.check_output(["qdbus", service, windows[0], "currentSession"], text=True).strip()
-            fg = int(subprocess.check_output(
-                ["qdbus", service, f"/Sessions/{tab}", "foregroundProcessId"], text=True).strip())
+            tab = agents.qdbus(service, windows[0], "currentSession")
+            fg = int(agents.qdbus(service, f"/Sessions/{tab}", "foregroundProcessId"))
         else:
             children = Path(f"/proc/{pid}/task/{pid}/children").read_text().split()
             shells = [c for c in children if Path(f"/proc/{c}/comm").read_text().strip() in SHELLS]
             if len(shells) != 1:
                 return False
-            fg = int(Path(f"/proc/{shells[0]}/stat").read_text().rsplit(")", 1)[1].split()[5])
+            fg = agents.terminal_foreground(int(shells[0]))
         return Path(f"/proc/{fg}/comm").read_text().strip() in SHELLS
-    except (subprocess.CalledProcessError, OSError, ValueError, IndexError):
+    except (OSError, ValueError, IndexError):
         return False
 
 
 def paste() -> bool:
     os.environ.setdefault("DISPLAY", ":0")
     cls, role = active_window()
-    note("target", {"agent": agent_window(cls, role)})
+    shared.set_target(agent_window(cls, role))
     if not can_type(cls, role):
         log(f"clipboard only, focus {cls.strip() or 'unknown'} role {role.strip() or 'none'}")
         return False
-    x11 = ctypes.CDLL("libX11.so.6")
-    xtst = ctypes.CDLL("libXtst.so.6")
-    x11.XOpenDisplay.restype = ctypes.c_void_p
-    x11.XKeysymToKeycode.argtypes = [ctypes.c_void_p, ctypes.c_ulong]
-    x11.XKeysymToKeycode.restype = ctypes.c_ubyte
-    x11.XFlush.argtypes = [ctypes.c_void_p]
-    xtst.XTestFakeKeyEvent.argtypes = [
-        ctypes.c_void_p,
-        ctypes.c_uint,
-        ctypes.c_int,
-        ctypes.c_ulong,
-    ]
-    disp = x11.XOpenDisplay(os.environ["DISPLAY"].encode())
-    if not disp:
-        log("no X display")
-        return False
-
-    def tap(keysym: int, down: int) -> None:
-        code = x11.XKeysymToKeycode(disp, keysym)
-        if not code:
-            log(f"no keycode for {keysym:#x}")
-            return
-        xtst.XTestFakeKeyEvent(disp, code, down, 0)
-        x11.XFlush(disp)
-        time.sleep(0.02)
-
     terminal = any(f'"{name}"' in cls for name in TERMINALS)
     log(f"focus {cls.strip() or 'unknown'} chord={'ctrl+shift+v' if terminal else 'ctrl+v'}")
-    if terminal:
-        tap(XK_CONTROL_L, 1)
-        tap(XK_SHIFT_L, 1)
-        tap(XK_V, 1)
-        tap(XK_V, 0)
-        tap(XK_SHIFT_L, 0)
-        tap(XK_CONTROL_L, 0)
-    else:
-        tap(XK_CONTROL_L, 1)
-        tap(XK_V, 1)
-        tap(XK_V, 0)
-        tap(XK_CONTROL_L, 0)
-    time.sleep(0.12)
-    if terminal and shell_only(cls):
-        log("only a shell in that terminal: pasted without Enter")
-    else:
-        tap(XK_RETURN, 1)
-        tap(XK_RETURN, 0)
-    x11.XCloseDisplay(disp)
+    try:
+        with x11.Display() as display:
+            display.press(*((x11.CONTROL, x11.SHIFT, x11.V) if terminal else (x11.CONTROL, x11.V)))
+            time.sleep(0.12)
+            if terminal and shell_only(cls):
+                log("only a shell in that terminal: pasted without Enter")
+            else:
+                display.press(x11.RETURN)
+    except OSError as exc:
+        log(str(exc))
+        return False
     return True
-
-
-def ding(cfg: dict) -> None:
-    if not cfg.get("chime", True):
-        return
-    sound = cfg.get(
-        "chime_sound", "/usr/share/sounds/freedesktop/stereo/complete.oga"
-    )
-    if not os.path.exists(sound):
-        return
-    subprocess.Popen(
-        ["pw-play", sound],
-        stdout=subprocess.DEVNULL,
-        stderr=subprocess.DEVNULL,
-        start_new_session=True,
-    )
 
 
 def hush() -> None:
@@ -386,9 +202,8 @@ def hush() -> None:
 
 def start_recording() -> subprocess.Popen:
     hush()
-    STATE.mkdir(parents=True, exist_ok=True)
-    if WAV.exists():
-        WAV.unlink()
+    PTT_WAV.parent.mkdir(parents=True, exist_ok=True)
+    PTT_WAV.unlink(missing_ok=True)
     return subprocess.Popen(
         [
             "pw-record",
@@ -398,7 +213,7 @@ def start_recording() -> subprocess.Popen:
             "1",
             "--format",
             "s16",
-            str(WAV),
+            str(PTT_WAV),
         ],
         stdout=subprocess.DEVNULL,
         stderr=subprocess.DEVNULL,
@@ -412,20 +227,20 @@ def stop_recording(proc: subprocess.Popen, started: float) -> Path | None:
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.wait(timeout=2)
-    if time.monotonic() - started < 0.35 or not WAV.exists() or WAV.stat().st_size < 1000:
+    if time.monotonic() - started < SHORTEST or not PTT_WAV.exists() or PTT_WAV.stat().st_size < 1000:
         return None
-    return WAV
+    return PTT_WAV
 
 
-def handle_text(model, path: Path, cfg: dict) -> None:
-    set_phase("transcribing")
+def handle_text(model, path: Path, cfg: Config) -> None:
+    set_phase(Phase.TRANSCRIBING)
     try:
-        text, rich = transcribe(model, path, cfg)
+        text, rich = transcribe(model, path, cfg, PTT_LOG)
     except Exception as exc:
         log(f"transcribe failed: {exc}")
         return
     finally:
-        set_phase("idle")
+        set_phase(Phase.IDLE)
     if not text:
         log("empty")
         return
@@ -435,19 +250,17 @@ def handle_text(model, path: Path, cfg: dict) -> None:
     PASTE.put((text, rich))
 
 
-def main(cfg: dict, stop: threading.Event) -> None:
+def main(cfg: Config, stop: threading.Event) -> None:
     single, chords = triggers(cfg)
-    names = cfg.get("keys", list(DEFAULT_KEYS))
-    chord_names = cfg.get("chords", [list(chord) for chord in DEFAULT_CHORDS])
     boards = open_keyboards()
     if not boards:
         raise SystemExit("no keyboard found")
     held: dict[int, set[int]] = {dev.fd: set() for dev in boards.values()}
     for dev in boards.values():
         log(f"keyboard {dev.name} {dev.path}")
-    log(f"keys {names} chords {chord_names}")
-    cuda = want_cuda(cfg)
-    model = load_model(cfg, cuda)
+    log(f"keys {cfg.keys} chords {cfg.chords}")
+    cuda = cfg.want_cuda()
+    model = load_model(cfg, cuda, PTT_LOG)
     log("ready")
     while True:
         if stop.is_set():
@@ -455,12 +268,12 @@ def main(cfg: dict, stop: threading.Event) -> None:
         fds = [dev.fd for dev in boards.values()]
         ready, _, _ = select.select(fds, [], [], 2.0)
         if not ready:
-            cuda_now = want_cuda(cfg)
+            cuda_now = cfg.want_cuda()
             if cuda_now != cuda:
                 log("power source changed; reloading model")
                 model = None
                 gc.collect()
-                model = load_model(cfg, cuda_now)
+                model = load_model(cfg, cuda_now, PTT_LOG)
                 cuda = cuda_now
             current = open_keyboards()
             for path, dev in current.items():
@@ -515,12 +328,12 @@ def main(cfg: dict, stop: threading.Event) -> None:
                             CAPTURE.gesture.clear()
                             CAPTURE.label = "Set hotkey"
                         if len(names) == 1:
-                            cfg["keys"] = list(dict.fromkeys(["F23", *names]))
-                            cfg["chords"] = []
+                            cfg.keys = list(dict.fromkeys([COPILOT_KEY, *names]))
+                            cfg.chords = []
                         else:
-                            cfg["keys"] = ["F23"]
-                            cfg["chords"] = [names]
-                        save_config(cfg)
+                            cfg.keys = [COPILOT_KEY]
+                            cfg.chords = [names]
+                        cfg.save()
                         log("hotkey " + "+".join(names))
                     continue
                 single, chords = triggers(cfg)
@@ -536,7 +349,7 @@ def main(cfg: dict, stop: threading.Event) -> None:
                     continue
                 label = ecodes.KEY.get(event.code, str(event.code))
                 log(f"record {label} on {dev.name}")
-                set_phase("recording")
+                set_phase(Phase.RECORDING)
                 proc = start_recording()
                 started = time.monotonic()
                 path = None
@@ -572,13 +385,13 @@ def main(cfg: dict, stop: threading.Event) -> None:
                         path = stop_recording(proc, started)
                 index = len(pending)
                 if path is None:
-                    set_phase("idle")
+                    set_phase(Phase.IDLE)
                     log("too short")
                 else:
                     handle_text(model, path, cfg)
 
 
-def ptt_icon(phase: str):
+def ptt_icon(phase: Phase):
     from PyQt5.QtCore import QPointF, Qt
     from PyQt5.QtGui import QColor, QIcon, QPainter, QPen, QPixmap
 
@@ -586,41 +399,38 @@ def ptt_icon(phase: str):
     pixmap.fill(Qt.transparent)
     painter = QPainter(pixmap)
     painter.setRenderHint(QPainter.Antialiasing)
-    color = {
-        "recording": QColor("#e24a4a"),
-        "transcribing": QColor("#e0a100"),
-    }.get(phase, QColor("#d8d8d8"))
+    color = QColor(PHASE_COLOURS.get(phase, "#d8d8d8"))
     pen = QPen(color)
     pen.setWidth(2)
     pen.setJoinStyle(Qt.RoundJoin)
     painter.setPen(pen)
-    painter.setBrush(Qt.NoBrush if phase == "idle" else color)
+    painter.setBrush(Qt.NoBrush if phase is Phase.IDLE else color)
     painter.drawRoundedRect(3, 3, 16, 11, 3, 3)
     painter.drawPolygon([QPointF(7, 14), QPointF(11, 14), QPointF(6, 19)])
     painter.end()
     return QIcon(pixmap)
 
 
-def run_tray(cfg: dict, stop: threading.Event) -> None:
+def run_tray(cfg: Config, stop: threading.Event) -> None:
     from PyQt5.QtCore import QTimer
     from PyQt5.QtWidgets import QAction, QApplication, QMenu, QSystemTrayIcon
 
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
-    tray = QSystemTrayIcon(ptt_icon("idle"))
+    tray = QSystemTrayIcon(ptt_icon(Phase.IDLE))
     tray.setToolTip("Push to talk")
     menu = QMenu()
 
     def choose(key: str, value: str, actions: dict) -> None:
-        cfg[key] = value
-        save_config(cfg)
+        setattr(cfg, key, value)
+        cfg.save()
         for code, action in actions.items():
             action.setChecked(code == value)
 
     def add_group(title: str, key: str, options: list[tuple[str, str]]) -> None:
         sub = menu.addMenu(title)
         actions: dict[str, QAction] = {}
-        current = cfg.get(key, options[0][1])
+        current = getattr(cfg, key)
         for label, code in options:
             action = QAction(label, sub)
             action.setCheckable(True)
@@ -648,11 +458,11 @@ def run_tray(cfg: dict, stop: threading.Event) -> None:
     menu.addAction(hotkey)
     chime = QAction("Chime", menu)
     chime.setCheckable(True)
-    chime.setChecked(bool(cfg.get("chime", True)))
+    chime.setChecked(cfg.chime)
 
     def toggle_chime(checked: bool) -> None:
-        cfg["chime"] = bool(checked)
-        save_config(cfg)
+        cfg.chime = bool(checked)
+        cfg.save()
 
     chime.toggled.connect(toggle_chime)
     menu.addAction(chime)
@@ -668,7 +478,7 @@ def run_tray(cfg: dict, stop: threading.Event) -> None:
     def poll() -> None:
         try:
             while True:
-                phase = PHASE.get_nowait()
+                phase = TRAY_PHASE.get_nowait()
                 tray.setIcon(ptt_icon(phase))
         except queue.Empty:
             pass
@@ -697,14 +507,8 @@ def run_tray(cfg: dict, stop: threading.Event) -> None:
 if __name__ == "__main__":
     try:
         ctypes.CDLL("libX11.so.6").XInitThreads()
-        cfg = load_config()
-        cfg.setdefault("model", "small")
-        cfg.setdefault("device", "auto")
-        cfg.setdefault("language", "en")
-        cfg.setdefault("chime", True)
-        cfg.setdefault("keys", ["F23"])
-        cfg.setdefault("chords", [["RIGHTCTRL", "RIGHTSHIFT"]])
-        save_config(cfg)
+        cfg = Config.load(PTT_LOG)
+        cfg.save()  # every setting in the file, so it can be edited
         stop = threading.Event()
         threading.Thread(target=main, args=(cfg, stop), daemon=True).start()
         run_tray(cfg, stop)

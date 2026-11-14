@@ -24,15 +24,16 @@ from pathlib import Path
 import numpy as np
 from openwakeword.model import Model
 
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
+from sensing import EC_SOURCE, RATE  # noqa: E402
+from routing import SAY  # noqa: E402
+from voice.spool import queued  # noqa: E402
+from voice.state import BY_HANDSFREE, PAUSE, PLAYING  # noqa: E402
+
 HOME = Path.home()
-STATE = HOME / ".local/state/ptt"
 DATA = HOME / ".local/share/handsfree"
 SAMPLES = DATA / "samples"
-PAUSE = STATE / "handsfree.pause"
-SAY = HOME / ".cursor/skills/talkback/scripts/say.py"
 CHIME = "/usr/share/sounds/freedesktop/stereo/message.oga"
-SOURCE = "talkback_ec_source"
-RATE = 16000
 THRESHOLD = 0.5
 POSITIONS = [
     ("desk", "at your desk, facing me"),
@@ -43,15 +44,15 @@ POSITIONS = [
 
 
 def say(text: str) -> None:
-    subprocess.run([str(SAY), "--agent", "handsfree", "--session", "handsfree", text])
+    subprocess.run([str(SAY), "--agent", BY_HANDSFREE, "--session", BY_HANDSFREE, text])
     time.sleep(0.5)
-    while (STATE / "talkback.playing").exists() or any((STATE / "talkback.queue").glob("*.json")):
+    while PLAYING.exists() or queued():
         time.sleep(0.2)
 
 
 def record(seconds: float) -> np.ndarray:
     proc = subprocess.run(
-        ["timeout", str(seconds), "parec", f"--device={SOURCE}", "--format=s16le",
+        ["timeout", str(seconds), "parec", f"--device={EC_SOURCE}", "--format=s16le",
          f"--rate={RATE}", "--channels=1", "--raw"],
         capture_output=True,
     )
