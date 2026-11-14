@@ -56,7 +56,7 @@ PAUSE = 0.25  # seconds between sentences
 PIECE = 0.1  # seconds of audio written between checks for a hold
 HOLD = 90  # seconds a held clip waits for its session before it is dropped
 VOICES = {"claude": "af_heart", "cursor": "af_bella", "codex": "bf_alice",
-          "handsfree": "af_heart"}  # system notices: no new voice to puzzle over
+          "handsfree": "bm_george"}  # system notices: the user's "Jarvis" voice, not an agent's
 DEFAULT_VOICE = "af_sky"  # any other agent
 NAMES = {"claude": "Claude", "cursor": "Cursor", "codex": "Codex"}
 # Agent processes, nearest ancestor first wins, when the environment says nothing
