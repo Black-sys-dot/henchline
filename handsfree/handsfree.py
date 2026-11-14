@@ -48,7 +48,7 @@ LAST = STATE / "talkback.last"
 PLAYING = STATE / "talkback.playing"
 QUEUE = STATE / "talkback.queue"
 TALKBACK_PID = STATE / "talkback.pid"
-SAY = Path.home() / ".cursor/skills/talkback/scripts/say.py"
+SAY = Path(__file__).resolve().parent.parent / "talkback/scripts/say.py"
 EC_CONF = Path.home() / ".config/pipewire/talkback-echo-cancel.conf"
 EC_SOURCE = "talkback_ec_source"
 UNIT = "handsfree.service"
@@ -143,7 +143,7 @@ def send(text: str, how: str) -> bool:
         command = Path(f"/proc/{fg}/cmdline").read_bytes().replace(b"\0", b" ").decode()
     except (OSError, ValueError):
         command = ""
-    if not re.search(r"claude|cursor-agent|/agent\b", command):
+    if not re.search(r"claude|cursor-agent|/agent\b|codex|gemini|opencode", command):
         log(f"no agent running in {session} ({command.split(' ')[0] or 'tab gone'})")
         say("I heard you, but the agent I was talking to isn't running any more, "
             "so I didn't type it anywhere.")

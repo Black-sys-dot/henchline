@@ -55,8 +55,13 @@ RATE = 24000
 PAUSE = 0.25  # seconds between sentences
 PIECE = 0.1  # seconds of audio written between checks for a hold
 HOLD = 90  # seconds a held clip waits for its session before it is dropped
-VOICES = {"claude": "af_heart", "cursor": "af_bella"}
-NAMES = {"claude": "Claude", "cursor": "Cursor"}
+VOICES = {"claude": "af_heart", "cursor": "af_bella", "codex": "bf_alice",
+          "handsfree": "af_heart"}  # system notices: no new voice to puzzle over
+DEFAULT_VOICE = "af_sky"  # any other agent
+NAMES = {"claude": "Claude", "cursor": "Cursor", "codex": "Codex"}
+# Agent processes, nearest ancestor first wins, when the environment says nothing
+AGENT_PROCESSES = [(r"(^|/)claude(/|$)", "claude"), (r"cursor-agent|(^|/)agent$", "cursor"),
+                   (r"(^|/)codex$", "codex"), (r"(^|/)gemini$", "gemini"), (r"(^|/)opencode$", "opencode")]
 SYSTEM = {"handsfree"}
 PLAYER = [
     "pacat", "--playback", "--raw", "--format=float32le", f"--rate={RATE}",
@@ -83,6 +88,23 @@ def write_json(path: Path, data: dict) -> None:
     tmp.replace(path)
 
 
+def agent_process() -> str:
+    """The agent we run under, from the nearest ancestor that looks like one."""
+    pid = os.getppid()
+    while pid > 1:
+        try:
+            command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")
+            words = [w.decode(errors="replace") for w in command[:2]]
+            pid = int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[1])
+        except (OSError, ValueError, IndexError):
+            return ""
+        for word in words:  # node-based CLIs run as "node /path/to/codex"
+            for pattern, name in AGENT_PROCESSES:
+                if re.search(pattern, word):
+                    return name
+    return ""
+
+
 def identity(args: list[str]) -> tuple[str, str]:
     """Which agent and session is calling: flags first, then the environment."""
     agent = session = ""
@@ -92,14 +114,16 @@ def identity(args: list[str]) -> tuple[str, str]:
         elif flag == "--session":
             session = value
     if not agent:
-        if os.environ.get("CLAUDECODE"):
+        if os.environ.get("TALKBACK_AGENT"):
+            agent = os.environ["TALKBACK_AGENT"].lower()
+        elif os.environ.get("CLAUDECODE"):
             agent = "claude"
         elif "cursor" in os.environ.get("AI_AGENT", "").lower() or any(
             key.startswith("CURSOR_") for key in os.environ
         ):
             agent = "cursor"
         else:
-            agent = "agent"
+            agent = agent_process() or "agent"
     if not session:
         session = (
             os.environ.get("CLAUDE_CODE_SESSION_ID")
@@ -160,7 +184,7 @@ def konsole_target() -> list[str]:
             command = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[0].decode()
         except OSError:
             continue
-        if re.search(r"(^|/)claude(/|$)|cursor-agent|/agent$", command):
+        if any(re.search(pattern, command) for pattern, _ in AGENT_PROCESSES):
             starts.append(Path(os.readlink(f"/proc/{pid}/cwd")))
             break
     starts.append(Path.cwd())
@@ -291,7 +315,7 @@ class Speaker:
                 sentences = [f"{name} here, from {clip['where']}."] + sentences
             write_json(LAST, {"session": clip["session"], "agent": clip["agent"],
                               "konsole": clip.get("konsole", ["", ""])})
-        voice = clip.get("voice") or VOICES.get(clip["agent"], "af_heart")
+        voice = clip.get("voice") or VOICES.get(clip["agent"], DEFAULT_VOICE)
         ready: queue.Queue = queue.Queue(maxsize=2)
         done = threading.Event()
 

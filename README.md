@@ -13,7 +13,7 @@ On some laptops the Copilot key sends the chord down and up immediately, so it c
 | `ptt/` | **Push-to-talk:** hold a key, speak, the words are typed into the focused window. Works on its own. | the rest of this page |
 | `talkback/` | **Talkback:** AI agents (Claude Code, Cursor) speak their replies through a local voice, one at a time. | `ptt/` only if you want it to go quiet while you talk |
 | `handsfree/` | **Hands-free:** talk with those agents without touching a key: a reply window after they speak, talking over them, and a personal wake word. | `ptt/` and `talkback/` |
-| `agents/` | What the agents need to be told (Claude Code snippet, Cursor rules and hook). | `talkback/` |
+| `agents/` | What the agents need to be told: one snippet for Claude Code, Cursor, Codex and anything reading `AGENTS.md`. | `talkback/` |
 
 ## Wayland
 
@@ -59,11 +59,10 @@ Install the voice once:
 python3 -m venv ~/.local/share/talkback/venv
 ~/.local/share/talkback/venv/bin/pip install kokoro-onnx soundfile
 # kokoro-v1.0.onnx and voices-v1.0.bin from the kokoro-onnx releases into ~/.local/share/talkback/
-ln -s "$PWD/talkback" ~/.claude/skills/talkback   # Claude Code
-ln -s "$PWD/talkback" ~/.cursor/skills/talkback   # Cursor
+./install.sh agents   # talkback command + instructions for Claude Code, Cursor, Codex
 ```
 
-`agents/` holds what the agents need to know: `CLAUDE-snippet.md` for `~/.claude/CLAUDE.md`, and for Cursor the rules in `agents/cursor/*.mdc` (to `~/.cursor/rules/`) and the stop hook `talkback_stop.py` (`~/.cursor/hooks/`, listed under `stop` in `~/.cursor/hooks.json`). Say "talk back" to an agent to turn it on.
+`agents/` holds what the agents need to know, in one text for all of them (`AGENTS-snippet.md`); `./install.sh agents` wires it into Claude Code, Cursor and Codex if they are installed, and `agents/README.md` shows where other agents look. Say "talk back" to an agent to turn it on.
 
 ## Hands-free
 

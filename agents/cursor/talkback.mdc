@@ -1,6 +1,0 @@
----
-description: Speak a conversational reply when talkback is on
-alwaysApply: true
----
-
-If the user says `/talkback`, "talk back", "start talkback", "stop talkback", or "stop talking", or if `~/.local/state/ptt/talkback` exists, read `~/.cursor/skills/talkback/SKILL.md` and follow it.

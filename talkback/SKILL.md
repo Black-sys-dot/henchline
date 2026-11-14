@@ -11,7 +11,7 @@ disable-model-invocation: true
 
 Talkback is off until the user turns it on. The chat reply stays the full answer. Speech runs alongside it, in the same voice you would use with them out loud: what you did, and, when you need something, talk through that ask. A few sentences is right. Do not speak the reasoning, the code, or the whole reply. Do not compress it down to a status line.
 
-This plays on the laptop's current default output (speakers, or Bluetooth headphones when those are selected) through local Kokoro voices, on the CPU only. Kokoro cannot laugh or sigh; write plain words (tags such as `[laugh]` are dropped). It does not play on the phone. Each agent has its own voice: Claude is `af_heart`, Cursor is `af_bella`. `say.py` works out which agent and session is calling from the environment (`--agent` / `--session` override it). When the speaker changes, the clip starts with "<Agent> here, from <workspace>." on its own, so do not introduce yourself.
+This plays on the laptop's current default output (speakers, or Bluetooth headphones when those are selected) through local Kokoro voices, on the CPU only. Kokoro cannot laugh or sigh; write plain words (tags such as `[laugh]` are dropped). It does not play on the phone. Each agent has its own voice (Claude `af_heart`, Cursor `af_bella`, Codex `bf_alice`, any other agent `af_sky`). `talkback` works out which agent and session is calling from its process and environment; `TALKBACK_AGENT=name` in your environment, or `--agent` / `--session`, override it. When the speaker changes, the clip starts with "<Agent> here, from <workspace>." on its own, so do not introduce yourself.
 
 ## On
 
@@ -27,8 +27,8 @@ touch ~/.local/state/ptt/talkback
 When the user says "stop talkback", "/talkback off", or "stop talking":
 
 ```bash
-rm -f ~/.local/state/ptt/talkback ~/.local/state/ptt/talkback.txt
-~/.cursor/skills/talkback/scripts/say.py --stop
+rm -f ~/.local/state/ptt/talkback
+talkback --stop
 ```
 
 ## While ~/.local/state/ptt/talkback exists
@@ -36,14 +36,14 @@ rm -f ~/.local/state/ptt/talkback ~/.local/state/ptt/talkback.txt
 Speak whenever it helps, as many times in a turn as the work calls for. You decide. On a quick answer, once at the end is enough. On longer work, say what you are starting, what you found, when something will take a while, and when you need them. Keep each clip to a few sentences. Do not narrate every tool call.
 
 ```bash
-~/.cursor/skills/talkback/scripts/say.py <<'EOF'
+talkback <<'EOF'
 What you want to say, in a few sentences.
 EOF
 ```
 
-It returns at once, so carry on working. Clips queue: each one starts only after the one before has finished, including clips from other agents. Nothing talks over anything else, so you never need to wait or pace yourself. `say.py --stop` cuts off everything and empties every queue; use it only when the user asks for quiet. Timings land in `~/.local/state/ptt/talkback.log`.
+It returns at once, so carry on working. Clips queue: each one starts only after the one before has finished, including clips from other agents. Nothing talks over anything else, so you never need to wait or pace yourself. `talkback --stop` cuts off everything and empties every queue; use it only when the user asks for quiet. Timings land in `~/.local/state/ptt/talkback.log`.
 
-**Warn before any other sound.** Before you play a test tone, a test clip, or anything else through the speakers, first speak a heads-up saying what is coming and why. A heads-up spoken through `say.py` always plays before the sound you queue after it. Do not play sounds some other way (`pacat`, `pw-play`): they skip the queue and ignore push-to-talk.
+**Warn before any other sound.** Before you play a test tone, a test clip, or anything else through the speakers, first speak a heads-up saying what is coming and why. A heads-up spoken through `talkback` always plays before the sound you queue after it. Do not play sounds some other way (`pacat`, `pw-play`): they skip the queue and ignore push-to-talk.
 
 ## When the user talks over you
 
@@ -54,17 +54,17 @@ Push-to-talk writes `~/.local/state/ptt/phase` (recording / transcribing / idle)
 When a new message from the user reaches you, your unspoken clips may be held:
 
 - Simply speaking again drops your older held clips and plays the new one. That is the usual case: you heard them, you answer.
-- If what you had not said yet still matters as is (they cut in by accident, "sorry, go on"), `say.py --release`: it carries on from the start of the sentence that was cut. `say.py --release "No worries."` says that first, then carries on. Do not resend the old text.
-- `say.py --drop` drops them without saying anything new.
+- If what you had not said yet still matters as is (they cut in by accident, "sorry, go on"), `talkback --release`: it carries on from the start of the sentence that was cut. `talkback --release "No worries."` says that first, then carries on. Do not resend the old text.
+- `talkback --drop` drops them without saying anything new.
 - Then carry on working, adjusting to what they said. Stop and wait only if they ask you to.
 
 Held clips nobody decides on are dropped after 90 seconds: nothing is spoken before its agent has heard the user. Decide at your very first step after their message arrives.
 
 **Never block a tool call on something only you can resolve.** Your messages only reach you between tool calls, so a command that waits for your own held clips to clear, or for a long timeout, keeps the user waiting in silence (52 s and 70 s in testing). When you must wait in hands-free mode, end the wait as soon as `~/.local/state/ptt/handsfree.log` gets a new "sent to" line.
 
-**Never use `say.py --wait` for your own speech.** If the user talks, your clip is held, `--wait` blocks your tool call, and you cannot read their message to decide about it. Play test sounds through `say.py` (`--voice` picks any Kokoro voice) so they queue behind the heads-up instead of playing raw.
+**Never use `talkback --wait` for your own speech.** If the user talks, your clip is held, `--wait` blocks your tool call, and you cannot read their message to decide about it. Play test sounds through `talkback` (`--voice` picks any Kokoro voice) so they queue behind the heads-up instead of playing raw.
 
-Do not write `talkback.txt`. The Cursor stop hook only speaks one if it is left behind, as a backup.
+`talkback` is `~/.local/bin/talkback`, a link to this skill's `scripts/say.py`; call the script by its full path if `talkback` is not on your PATH.
 
 Say what changed or what you found. If you need a decision, say what you need and why it matters, then ask. If you need nothing, say what you did and stop.
 
@@ -82,7 +82,7 @@ When a message starts with `[hands-free · HOW]`, HOW says how it was heard:
 - `over you`: they talked over your clip. Often meant for you ("actually, stop"), but it may be singing or talking to someone else.
 - `follow-on`: they kept talking just after their last message. Same caution as `over you`.
 
-For `over you` and `follow-on`, judge whether it was meant for you. If it is garbled or unrelated (singing, a phone call, talking to someone in the room), do not act on it: say briefly that you heard something that didn't seem to be for you, and carry on with `say.py --release "…"`. If you are not sure, ask. If they seem busy with something else and you need them, start your clip with their name to get their attention, like they use the wake word on you.
+For `over you` and `follow-on`, judge whether it was meant for you. If it is garbled or unrelated (singing, a phone call, talking to someone in the room), do not act on it: say briefly that you heard something that didn't seem to be for you, and carry on with `talkback --release "…"`. If you are not sure, ask. If they seem busy with something else and you need them, start your clip with their name to get their attention, like they use the wake word on you.
 
 For any hands-free message:
 - Answer out loud through talkback. The user may be across the room, so the spoken clip is the answer and the chat is the record.
