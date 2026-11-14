@@ -1,0 +1,13 @@
+[Unit]
+Description=Talkback hands-free conversation (echo-cancelled reply window)
+After=pipewire.service graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+ExecStart=%h/copilot-ptt/handsfree.py run
+# Talkback players it starts are shared with the agents; leave them running on stop
+KillMode=process
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=%h/.Xauthority
+Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
