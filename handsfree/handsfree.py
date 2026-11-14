@@ -62,6 +62,7 @@ LISTEN = STATE / "handsfree.listen"  # `handsfree listen N`: keep the window ope
 RATE = 16000
 FRAME = 480  # 30 ms
 WINDOW = 8.0  # seconds to answer after a clip
+WAIT_FOR_WORDS = 5.0  # after the wake word, seconds to start talking before it gives up
 FOLLOW = 6.0  # seconds to carry on after their own message (once, never chained)
 IDLE = 15 * 60
 START_DB = 12  # above the noise floor, sustained, to count as speech
@@ -479,6 +480,9 @@ class Listener:
         phase("recording")  # talkback goes quiet and holds
         self.state = "recording"
         since, quiet, peak = time.monotonic(), 0, -120.0
+        # After "hey Claude" people pause for the chime: the pause that ends the
+        # turn only counts once they have started speaking (up to WAIT_FOR_WORDS)
+        started = how != "woke"
         while quiet < END_FRAMES and time.monotonic() - since < MAX_SECONDS:
             data = reader.stdout.read(FRAME * 2)
             if len(data) < FRAME * 2:
@@ -492,6 +496,9 @@ class Listener:
             frames.append(frame)
             level = 20 * np.log10(np.sqrt((frame**2).mean()) + 1e-6)
             peak = max(peak, level)
+            if not started:
+                started = level > floor + START_DB or time.monotonic() - since > WAIT_FOR_WORDS
+                continue
             # Quiet = back near the room's floor, or far below how loud they spoke
             quiet = quiet + 1 if level < max(floor + END_DB, peak - 25) else 0
             if quiet == OVER_FRAMES and self.ends_with_over(frames):
