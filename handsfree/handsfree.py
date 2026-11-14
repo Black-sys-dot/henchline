@@ -357,6 +357,55 @@ class Wake:
         return bool(re.search(r"\bclaude\b", " ".join(seg.text for seg in segments), re.I))
 
 
+class EarbudButton(threading.Thread):
+    """Bluetooth earbud taps (AVRCP media keys) as a silent "hey Claude".
+
+    While hands-free runs it grabs every "… (AVRCP)" input device, so a tap
+    does not also pause music; when hands-free stops, the grab ends and the
+    button is the desktop's again. Earbuds come and go, so it rescans.
+    """
+
+    TAP = {"KEY_PLAYCD", "KEY_PAUSECD", "KEY_PLAYPAUSE"}
+
+    def __init__(self, stop: threading.Event) -> None:
+        super().__init__(daemon=True)
+        self.stop, self.tap = stop, threading.Event()
+
+    def run(self) -> None:
+        import select
+
+        from evdev import InputDevice, ecodes, list_devices
+
+        held: dict[str, InputDevice] = {}
+        while not self.stop.is_set():
+            for path in list_devices():
+                if path in held:
+                    continue
+                try:
+                    device = InputDevice(path)
+                    if device.name.endswith("(AVRCP)"):
+                        device.grab()
+                        held[path] = device
+                        log(f"earbud button: {device.name}")
+                except OSError:
+                    continue
+            ready, _, _ = select.select(list(held.values()), [], [], 3) if held else ([], [], [])
+            if not held:
+                self.stop.wait(3)
+            for device in ready:
+                try:
+                    for event in device.read():
+                        if event.type == ecodes.EV_KEY and event.value == 1:
+                            name = ecodes.KEY.get(event.code, "")
+                            if name in self.TAP:
+                                self.tap.set()
+                            else:
+                                log(f"earbud {name} ignored")
+                except OSError:  # disconnected
+                    held.pop(device.path, None)
+                    log("earbud button gone")
+
+
 class Listener:
     def __init__(self, cfg: dict, model, stop: threading.Event) -> None:
         self.cfg, self.model, self.stop = cfg, model, stop
@@ -365,6 +414,7 @@ class Listener:
         self.wake = Wake() if WAKE_MODEL.exists() else None
         self.on_cpu = False
         self.last_message: tuple[str, str] | None = None  # for "send that to …"
+        self.button = EarbudButton(stop)
         self.crashed = False
 
     @staticmethod
@@ -433,6 +483,17 @@ class Listener:
                     say("Hands-free is going to sleep.")
                     self.stop.set()
                     break
+                if self.button.tap.is_set():  # earbud tap: like "hey Claude", any time
+                    self.button.tap.clear()
+                    if not ptt_busy():
+                        log("earbud tap")
+                        ptt.ding(self.cfg)
+                        floor = np.percentile(room, 20) if len(room) > 30 else level
+                        extra = self.utterance(reader, [], floor, "woke")
+                        self.last_activity = time.monotonic()
+                        window_until, kind = time.monotonic() + (extra or FOLLOW), ("think" if extra else "follow-on")
+                        was_busy = talkback_busy()
+                        continue
                 playing = PLAYING.exists()
                 if playing and not play_started:
                     play_started = now
@@ -702,6 +763,7 @@ def run() -> int:
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     listener = Listener(cfg, model, stop)
+    listener.button.start()
     worker = threading.Thread(target=listener.run, daemon=True)
     worker.start()
     log("on")
