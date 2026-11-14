@@ -64,6 +64,7 @@ RATE = 16000
 FRAME = 480  # 30 ms
 WINDOW = 8.0  # seconds to answer after a clip
 WAIT_FOR_WORDS = 5.0  # after the wake word, seconds to start talking before it gives up
+AFTER_SWITCH = 30.0  # seconds to start talking after "Now talking to …"
 FOLLOW = 6.0  # seconds to carry on after their own message (once, never chained)
 IDLE = 15 * 60
 START_DB = 12  # above the noise floor, sustained, to count as speech
@@ -695,6 +696,7 @@ class Listener:
                 "It has to have spoken through talkback first.")
             return 0.0
         LAST.write_text(json.dumps({k: target[k] for k in ("session", "agent", "where", "konsole")}))
+        LISTEN.write_text(str(time.time() + AFTER_SWITCH))  # time to start talking to the new agent
         log(f"heard: route to {target['agent']} in {target.get('where', '?')}")
         if SEND_THAT.match(text):
             if not self.last_message:
@@ -802,6 +804,7 @@ def main() -> int:
             print(f"no {sys.argv[2]} has spoken through talkback in the last day")
             return 1
         LAST.write_text(json.dumps({k: target[k] for k in ("session", "agent", "where", "konsole")}))
+        LISTEN.write_text(str(time.time() + AFTER_SWITCH))
         log(f"switched by command to {target['agent']} in {target.get('where', '?')}")
         say(f"Now talking to {spoken(target)}.")
         print(f"now talking to {spoken(target)}")
