@@ -133,7 +133,7 @@ class Keyboards:
                 log(f"removed {path}")
 
     def read(self, dev: InputDevice, on_hold) -> None:
-        """Handle a keyboard's events; on_hold(dev, event, released) for each hotkey press."""
+        """Handle a keyboard's events; on_hold(dev, event, hold) for each hotkey press."""
         try:
             pending = list(dev.read())
         except OSError:

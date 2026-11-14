@@ -18,7 +18,6 @@ from __future__ import annotations
 import glob
 import pickle
 import re
-import subprocess
 import sys
 import wave
 from pathlib import Path
@@ -29,12 +28,15 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
+REPO = Path(__file__).resolve().parent.parent
+sys.path[:0] = [str(REPO), str(REPO / "talkback/scripts")]  # voice/, and the talkback worker
+from worker import MODELS as KOKORO  # noqa: E402
+
 DATA = Path.home() / ".local/share/handsfree"
 SAMPLES = DATA / "samples"
 OUT = DATA / "hey_claude_personal.pkl"
 RATE = 16000
 WIN = 2 * RATE  # 2 s of audio gives the 16 embedding frames a detector sees
-KOKORO = Path.home() / ".local/share/talkback"
 NEGATIVE_LINES = [
     "Okay, the build is done, and all the tests passed.",
     "Can you check the logs and tell me what happened?",
@@ -74,20 +76,16 @@ def hey_claude_ends(model, path: str) -> list[int]:
 
 def kokoro_negatives() -> list[np.ndarray]:
     """Ordinary sentences and near misses in a few voices, at 16 kHz."""
-    code = (
-        "import sys, numpy as np, onnxruntime as rt; from kokoro_onnx import Kokoro\n"
-        f"k = Kokoro('{KOKORO}/kokoro-v1.0.onnx', '{KOKORO}/voices-v1.0.bin')\n"
-        "out = []\n"
-        f"for line in {NEGATIVE_LINES!r}:\n"
-        "    for v in ['am_michael', 'af_sarah', 'bm_george', 'af_heart']:\n"
-        "        s, r = k.create(line, voice=v, lang='en-us')\n"
-        "        s = np.interp(np.arange(0, len(s) * 16000 / r) * r / 16000, np.arange(len(s)), s)\n"
-        "        out.append((s * 32767 * 0.3).astype(np.float32))\n"
-        "np.save(sys.argv[1], np.array(out, dtype=object), allow_pickle=True)\n"
-    )
-    target = DATA / "kokoro_negatives.npy"
-    subprocess.run([sys.executable, "-E", "-s", "-c", code, str(target)], check=True)
-    return list(np.load(target, allow_pickle=True))
+    from kokoro_onnx import Kokoro
+
+    kokoro = Kokoro(str(KOKORO / "kokoro-v1.0.onnx"), str(KOKORO / "voices-v1.0.bin"))
+    out = []
+    for line in NEGATIVE_LINES:
+        for voice in ["am_michael", "af_sarah", "bm_george", "af_heart"]:
+            samples, rate = kokoro.create(line, voice=voice, lang="en-us")
+            samples = np.interp(np.arange(0, len(samples) * RATE / rate) * rate / RATE, np.arange(len(samples)), samples)
+            out.append((samples * 32767 * 0.3).astype(np.float32))
+    return out
 
 
 def main() -> int:
@@ -95,7 +93,6 @@ def main() -> int:
 
     whisper = WhisperModel("small", device="cpu", compute_type="int8")
     features = AudioFeatures(inference_framework="onnx")
-    rng = np.random.default_rng(0)
 
     def embed(clips: list[np.ndarray]) -> np.ndarray:
         x = features.embed_clips(np.stack(clips).astype(np.int16), batch_size=64)

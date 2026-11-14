@@ -35,7 +35,7 @@ While the laptop is plugged in, Whisper small stays on the GPU. On battery it ru
 ```bash
 git clone https://github.com/NinjaTuna007/copilot-ptt
 cd copilot-ptt
-sudo apt install python3-pyqt5 python3-evdev
+sudo apt install python3-venv python3-pyqt5 python3-evdev curl
 ./install.sh ptt          # or: talkback, handsfree, agents, all
 ```
 

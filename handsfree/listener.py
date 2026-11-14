@@ -162,13 +162,13 @@ class Listener:
                         continue
                 if self.step(samples, frame):
                     was_busy = talkback_busy()
-                elif self.restart_due and not busy and self.mode is Mode.WAITING and not ptt_busy():
+                elif self.restart_due and not busy and not ptt_busy():  # between clips; a reply window may be open
                     self.restart_canceller()
         finally:
             self.stream.terminate()
 
     def restart_canceller(self) -> None:
-        """A fresh canceller, at a quiet moment: nothing playing, no window open."""
+        """A fresh canceller, between clips (about a second; a reply starting then loses its first words)."""
         log(HANDSFREE_LOG, "restarting the echo canceller before it drifts further")
         self.restart_due = False
         self.stream.terminate()
@@ -193,7 +193,7 @@ class Listener:
         db = level(frame)
         playing = PLAYING.exists()
         if self.play_started and not playing:
-            self.echo_watch.clip_over()
+            self.restart_due |= self.echo_watch.clip_over()
         self.play_started = (self.play_started or time.monotonic()) if playing else 0.0
         open_ = (playing or self.window.is_open()) and not ptt_busy() and not PAUSE.exists()
         self.mode = Mode.LISTENING if open_ else Mode.WAITING

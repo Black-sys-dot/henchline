@@ -87,13 +87,13 @@ def deliver(text: str, rich: str) -> bool:
     return True
 
 
-def paste() -> bool:
+def paste() -> None:
     os.environ.setdefault("DISPLAY", ":0")
     cls, role = active_window()
     set_target(agent_window(cls, role))
     if not can_type(cls, role):
         log(f"clipboard only, focus {cls.strip() or 'unknown'} role {role.strip() or 'none'}")
-        return False
+        return
     terminal = is_terminal(cls)
     log(f"focus {cls.strip() or 'unknown'} chord={'ctrl+shift+v' if terminal else 'ctrl+v'}")
     try:
@@ -106,5 +106,3 @@ def paste() -> bool:
                 display.press(x11.RETURN)
     except OSError as exc:
         log(str(exc))
-        return False
-    return True

@@ -79,10 +79,12 @@ class EchoWatch:
     percentile per clip stayed near 58 dB under while bursts that sounded like
     speech came within 19 dB (2026-11-15). So a burst that sounds like speech,
     was taken for echo, and came within EARLY of the playback is a near miss,
-    and a near miss asks for a fresh canceller before any cut happens.
+    and a near miss asks for a fresh canceller before any cut happens; so does
+    a clip whose loudest echo came that close (9 and 12 dB under, just before
+    two cuts on 2026-11-15).
     """
 
-    EARLY = -22.0  # dB: a near miss closer than this to the playback asks for a restart
+    EARLY = -22.0  # dB: a near miss, or a clip's closest echo, nearer the playback than this asks for a restart
     SPEAKING = -40.0  # dB: playback quieter than this is a pause, not a voice to compare against
     REST = 5 * 60.0  # seconds between restarts: if a fresh canceller does no better, restarting again won't help
 
@@ -107,10 +109,15 @@ class EchoWatch:
         """The user talked over this clip: it says nothing about the canceller."""
         self.closest = None
 
-    def clip_over(self) -> None:
-        if self.closest is not None:
-            log(HANDSFREE_LOG, f"clip echo: {-self.closest:.0f} dB under the playback at the closest")
-        self.closest = None
+    def clip_over(self) -> bool:
+        """The clip ended; True when its echo came close enough to ask for a restart."""
+        closest, self.closest = self.closest, None
+        if closest is None:
+            return False
+        drifting = closest > self.EARLY and self.may_restart()
+        log(HANDSFREE_LOG, f"clip echo: {-closest:.0f} dB under the playback at the closest"
+                           f"{', canceller drifting: restart when quiet' if drifting else ''}")
+        return drifting
 
 
 class Output:
