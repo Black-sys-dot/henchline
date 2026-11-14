@@ -17,7 +17,18 @@ if [ "${1:-}" = agents ]; then
     mkdir -p "$HOME/.cursor/rules" "$HOME/.cursor/skills"
     install -m 644 "$root/agents/cursor/voice.mdc" "$HOME/.cursor/rules/voice.mdc"
     ln -sfn "$root/talkback" "$HOME/.cursor/skills/talkback"
-    echo "Cursor: rule ~/.cursor/rules/voice.mdc"
+    keys="$HOME/.config/Cursor/User/keybindings.json"
+    if [ -f "$keys" ] && ! grep -q "composer.focusComposer" "$keys"; then
+      python3 - "$keys" <<'PYEOF'
+import sys
+path = sys.argv[1]
+text = open(path).read()
+entry = '    {\n        "key": "ctrl+alt+shift+f12",\n        "command": "composer.focusComposer"\n    },\n'
+i = text.index("[") + 1
+open(path, "w").write(text[:i] + "\n" + entry + text[i:].lstrip("\n"))
+PYEOF
+    fi
+    echo "Cursor: rule ~/.cursor/rules/voice.mdc, chat-focus key ctrl+alt+shift+f12"
   fi
   if [ -d "$HOME/.codex" ]; then
     if [ -e "$HOME/.codex/AGENTS.md" ] && [ ! -L "$HOME/.codex/AGENTS.md" ]; then
