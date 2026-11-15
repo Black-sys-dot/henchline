@@ -45,6 +45,10 @@ class CallService : Service() {
         @Volatile var listener: ((String) -> Unit)? = null  // JSON from the server, or {"closed": reason}
         @Volatile var connected = false
         @Volatile var service: CallService? = null  // set from Call until the call ends: also "connecting"
+        // The latest crew list and status: the server sends them only when they change, so a screen that
+        // wasn't listening then (answering from the ring screen) showed "nobody has spoken" (2026-11-15)
+        @Volatile var lastAgents: String? = null
+        @Volatile var lastMode: String? = null
     }
 
     // Written on the main and OkHttp threads, read on the mic thread
@@ -108,6 +112,8 @@ class CallService : Service() {
         wakeLock?.let { if (it.isHeld) it.release() }
         Bus.connected = false
         Bus.service = null
+        Bus.lastAgents = null
+        Bus.lastMode = null
         if (!ended) Bus.listener?.invoke("""{"closed": "Call ended"}""")
         super.onDestroy()
     }
@@ -176,6 +182,8 @@ class CallService : Service() {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (text.contains("\"agents\"")) Bus.lastAgents = text
+                else if (text.contains("\"mode\"")) Bus.lastMode = text
                 Bus.listener?.invoke(text)
             }
 

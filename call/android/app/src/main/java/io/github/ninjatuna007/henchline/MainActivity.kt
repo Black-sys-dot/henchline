@@ -126,6 +126,10 @@ class MainActivity : Activity() {
         super.onResume()
         CallService.Bus.listener = { message -> main.post { fromServer(message) } }
         showConnected(CallService.Bus.connected)
+        if (CallService.Bus.connected) {  // what was said while this screen wasn't looking
+            CallService.Bus.lastAgents?.let { fromServer(it) }
+            CallService.Bus.lastMode?.let { fromServer(it) }
+        }
         showServer()
     }
 

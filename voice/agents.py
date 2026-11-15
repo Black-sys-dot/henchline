@@ -106,6 +106,14 @@ def agent_folder() -> Path:
         return Path.cwd()
 
 
+def in_cursor_sandbox() -> bool:
+    """Cursor runs an agent's commands confined by an AppArmor profile named cursorsandbox."""
+    try:
+        return "cursorsandbox" in Path("/proc/self/attr/current").read_text()
+    except OSError:
+        return False
+
+
 def identity(agent: str = "", session: str = "") -> tuple[str, str]:
     """(agent kind, session key) of the caller; given values win."""
     if not agent:
@@ -117,6 +125,8 @@ def identity(agent: str = "", session: str = "") -> tuple[str, str]:
         elif os.environ.get("CLAUDECODE"):
             agent = "claude"
         elif "cursor" in os.environ.get("AI_AGENT", "").lower() or any(k.startswith("CURSOR_") for k in os.environ):
+            agent = "cursor"
+        elif in_cursor_sandbox():  # Cursor's sandbox hides its process tree and environment: "agent" before
             agent = "cursor"
         else:
             agent = "agent"

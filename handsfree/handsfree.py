@@ -42,8 +42,9 @@ from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import whisper  # noqa: E402
 from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_RING, CLOSE, HANDSFREE_LOG,  # noqa: E402
-                         HANDSFREE_ON, LISTEN, in_call, last_speaker, log, release_phase,
+                         HANDSFREE_ON, LISTEN, SPEAKERS, Speaker, in_call, last_speaker, log, release_phase,
                          turn_on_handsfree)
+from voice.agents import identity  # noqa: E402
 from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
 
 
@@ -76,7 +77,7 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
         topic = RING_TOPIC.read_text().strip()
     except OSError:
         topic = ""
-    speaker = last_speaker()
+    speaker = caller()
     who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
     reply = f"henchline-{secrets.token_urlsafe(16)}"  # this ring's own, used once
     since = int(time.time()) - 1  # before the push: the phone may say "rang" before the push call returns
@@ -96,6 +97,8 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
     deadline = time.time() + RING_WAIT
     while time.time() < deadline:
         if in_call():
+            if speaker and routing.reachable(speaker):  # the user answered this agent: their words go to it
+                routing.switch_to(speaker)
             return ring_ended(who, "answered", 0)
         if pushed:
             heard |= replies(reply, since)
@@ -110,6 +113,13 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
     if pushed and "rang" not in heard and "missed" not in heard:
         return ring_ended(who, "never reached the phone (offline?)", 5, topic, why)
     return ring_ended(who, "rang, not answered", 2, topic, why)
+
+
+def caller() -> Speaker | None:
+    """The agent running `handsfree ring`: its henchman, its name, and where the call goes. Not whoever
+    spoke last (a Cursor ring was announced and answered as Claude, 2026-11-15)."""
+    _, session = identity()
+    return Speaker.load(SPEAKERS / f"{session}.json") or last_speaker()
 
 
 def ring_ended(who: str, what: str, code: int, topic: str = "", why: str = "") -> int:
