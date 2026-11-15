@@ -5,6 +5,7 @@ speakers are playing, and the echo canceller that feeds the mic stream."""
 from __future__ import annotations
 
 import collections
+import difflib
 import pickle
 import re
 import select
@@ -140,9 +141,11 @@ class Detector:
     """One wake word's scores on openWakeWord speech embeddings (16 frames, 80 ms apart): it fires after RUN
     scores in a row above its threshold, then not again until a score drops below REARM."""
 
-    def __init__(self, word: str, threshold: float, score, run: int = 2, hint: bool = True) -> None:
+    def __init__(self, word: str, threshold: float, score, run: int = 2, hint: bool = True,
+                 settle: float = 0.0) -> None:
         self.word, self.threshold, self.score, self.need = word, threshold, score, run
         self.hint = hint  # whether Whisper is told to expect the word when confirming it
+        self.settle = settle  # seconds of audio after it fires before Whisper checks: the rest of the word
         self.rearm = min(0.3, threshold / 2)  # a score below this lets it fire again
         self.run, self.armed = 0, True
 
@@ -155,6 +158,12 @@ class Detector:
             self.armed = False
             return True
         return False
+
+
+def said(word: str, text: str) -> bool:
+    """The word, or a close spelling of it ("Jervis", "Javis"): without a hint Whisper spells a name its way."""
+    return any(difflib.SequenceMatcher(None, word.lower(), heard).ratio() >= 0.8
+               for heard in re.findall(r"[a-z]+", text.lower()))
 
 
 class Wake:
@@ -189,8 +198,11 @@ class Wake:
             score = lambda f: jarvis.run(None, {name: f.reshape(1, 16, 96)})[0][0, 0]  # noqa: E731
             # No hint for Whisper: told to expect "Jarvis", it heard it in 19 of 20 clips of plain noise; without,
             # 0 of 20, and every synthetic "hey Jarvis" still came out right ("Claude" with its hint: 0 of 20)
-            self.detectors.append(Detector("Jarvis", 0.25, score, run=1, hint=False))
+            # Eager, it fires on "hey Jar…": checked then, the half word was rejected and the detector not
+            # yet re-armed for the rest (2026-11-15: a miss in 4 of 7). Whisper waits for the whole word
+            self.detectors.append(Detector("Jarvis", 0.25, score, run=1, hint=False, settle=0.4))
         self.nominated: set[str] = set()  # words whose detector fired since the last confirm
+        self.due = 0  # 30 ms frames still to take in before the nominated words are checked
         self.word = ""  # the word Whisper confirmed last
 
     @classmethod
@@ -201,16 +213,19 @@ class Wake:
         """Add 30 ms of audio; True when a detector says "maybe hey Claude" (or Jarvis)."""
         self.ring.append(samples)
         self.pending = np.concatenate([self.pending, samples])
-        fired = False
         while len(self.pending) >= self.CHUNK:
             chunk, self.pending = self.pending[:self.CHUNK], self.pending[self.CHUNK:]
             self.features._streaming_features(chunk)
             features = self.features.get_features(n_feature_frames=16).astype(np.float32)
             for detector in self.detectors:  # all of them: "hey Claude"'s detector also likes "hey Jarvis"
                 if detector.step(features):
+                    self.due = max(self.due, round(detector.settle * PER_SECOND)) if self.nominated else \
+                        round(detector.settle * PER_SECOND)
                     self.nominated.add(detector.word)
-                    fired = True
-        return fired
+        if not self.nominated:
+            return False
+        self.due -= 1
+        return self.due < 0
 
     def confirm(self, whisper) -> bool:
         """Whether Whisper hears one of the nominated words; self.word says which."""
@@ -220,7 +235,7 @@ class Wake:
         audio = np.concatenate(self.ring).astype(np.float32) / 32768
         segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=False, hotwords=hints)
         text = " ".join(seg.text for seg in segments)
-        heard = next((word for word in words if re.search(rf"\b{word}\b", text, re.I)), "")
+        heard = next((word for word in words if said(word, text)), "")
         self.word = heard or self.word
         return bool(heard)
 
