@@ -7,9 +7,10 @@ import android.content.Intent
 import android.provider.Settings
 
 /**
- * Rings get through Do Not Disturb (the user's wish, 2026-11-15: HyperOS's Do Not Disturb has no list of
- * allowed apps). With Do Not Disturb access, the ring's channels keep "bypass Do Not Disturb", and the ring
- * plays as an alarm while it is on.
+ * Rings in Do Not Disturb: shown, silently (the user, 2026-11-15: "if it's do not disturb, it's probably do
+ * not disturb for a reason"), so a ring can still be seen and answered, and is otherwise a missed call. Showing
+ * at all needs Do Not Disturb access (HyperOS's Do Not Disturb has no list of allowed apps): with it, the
+ * ring's channels keep "bypass Do Not Disturb", and RingService posts them without sound or full screen.
  */
 object DoNotDisturb {
     fun on(context: Context) =
@@ -24,8 +25,8 @@ object DoNotDisturb {
         prefs.edit().putBoolean("asked_dnd", true).apply()
         AlertDialog.Builder(context)
             .setIcon(R.mipmap.ic_launcher)
-            .setTitle("Let your crew ring through Do Not Disturb")
-            .setMessage("Turn Henchline on in the list that opens. Only its calls get through; other notifications stay quiet.")
+            .setTitle("See your crew's calls in Do Not Disturb")
+            .setMessage("Turn Henchline on in the list that opens. In Do Not Disturb its calls then show, silently; they never ring.")
             .setPositiveButton("Open the list") { _, _ -> context.startActivity(Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)) }
             .setNegativeButton("Not now", null)
             .show()
