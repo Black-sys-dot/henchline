@@ -2,6 +2,7 @@
 """Guided "hey Claude" (or "hey Jarvis") recordings around the house, scored as they come in.
 
     wakeword_collect.py [--word jarvis] [POSITION ...]
+    wakeword_collect.py [--word jarvis] --confusers   (20 s of words that fooled it, as "not it")
 
 For each position talkback announces where to stand, gives the user time to
 get there, plays a short chime, and records a few seconds from the same
@@ -79,6 +80,8 @@ def save(folder: Path, name: str, audio: np.ndarray) -> None:
 def main() -> int:
     args = sys.argv[1:]
     word = "claude"
+    confusers = "--confusers" in args
+    args = [a for a in args if a != "--confusers"]
     if "--word" in args:  # anywhere: the rest are positions
         at = args.index("--word")
         word, args = (args[at + 1].lower() if at + 1 < len(args) else ""), args[:at] + args[at + 2:]
@@ -93,6 +96,17 @@ def main() -> int:
     PAUSE.touch()
     results = []
     try:
+        if confusers:  # "feather" woke "hey Jarvis" every time (2026-11-15): such words become negatives
+            say(f"After the chime, for twenty seconds, say the words that fooled {phrase}, a few times each, "
+                f"and anything else that sounds a bit like it. But not {phrase} itself.")
+            time.sleep(1)
+            subprocess.run(["pw-play", CHIME])
+            audio = record(20)
+            save(folder, "negative", audio)
+            count, best = wakes(model, audio)
+            print(f"confusers: published model woke {count}x, best {best:.2f}", flush=True)
+            say("Thank you, that's all.")
+            return 0
         say("Wake word recording. For each spot I'll say where to go, then play a chime. "
             f"After the chime, say {phrase} twice, with a short pause in between.")
         for name, where in positions:

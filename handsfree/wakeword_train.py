@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import difflib
 import glob
+import json
 import pickle
 import re
 import sys
@@ -43,6 +44,8 @@ from voice.state import JARVIS_PERSONAL, KOKORO_MODELS as KOKORO, WAKE_MODEL, WA
 
 RATE = 16000
 WIN = 2 * RATE  # 2 s of audio gives the 16 embedding frames a detector sees
+SHIFTS = (0, 1600, 3200, 4800)  # windows ending 0 .. 0.3 s after the word: never before it is out
+GAINS = (0.7, 1.0, 1.6)
 NEGATIVE_LINES = [
     "Okay, the build is done, and all the tests passed.",
     "Can you check the logs and tell me what happened?",
@@ -80,15 +83,15 @@ def is_word(heard: str, word: str) -> bool:
     return heard == word or (word != "claude" and difflib.SequenceMatcher(None, word, heard).ratio() >= 0.8)
 
 
-def hey_word_ends(model, path: str, word: str) -> list[int]:
-    """Sample index where each wake word (after "hey") ends."""
+def hey_word_spans(model, path: str, word: str) -> list[tuple[int, int]]:
+    """Sample indices where each wake word (after "hey") starts and ends."""
     segments, _ = model.transcribe(path, language="en", beam_size=1, word_timestamps=True)
     words = [w for s in segments for w in s.words]
-    ends = []
+    spans = []
     for prev, heard in zip(words, words[1:]):
         if is_word(heard.word, word) and re.sub(r"\W", "", prev.word).lower() == "hey":
-            ends.append(int(heard.end * RATE))
-    return ends
+            spans.append((int(heard.start * RATE), int(heard.end * RATE)))
+    return spans
 
 
 def kokoro_negatives(word: str) -> list[np.ndarray]:
@@ -111,7 +114,13 @@ def main() -> int:
     options = dict(zip(sys.argv[1::2], sys.argv[2::2]))
     word, finder = options.get("--word", "claude").lower(), options.get("--finder", "small")
     samples, out = (WAKE_SAMPLES, WAKE_MODEL) if word == "claude" else (WAKE_SAMPLES / word, JARVIS_PERSONAL)
-    others = sorted(glob.glob(str(WAKE_SAMPLES / "*.wav"))) if word != "claude" else []  # "hey Claude" takes
+    # The other wake words' takes are negatives: same voice and rooms, and the nearest thing to a confusion
+    others = sorted(glob.glob(str(WAKE_SAMPLES / ("*.wav" if word != "claude" else "*/*.wav"))))
+    # The user's ordinary speech (asr_collect.py's sentences, minus any that say the word): "feather" fooled
+    # a detector that had heard 10 s of it (2026-11-15)
+    if (asr := WAKE_SAMPLES.parent / "asr-set" / "set.json").exists():
+        others += [str(asr.parent / take) for take, text in sorted(json.loads(asr.read_text()).items())
+                   if word not in text.lower() and (asr.parent / take).exists()]
 
     whisper = (WhisperModel(finder, device="cpu", compute_type="int8") if finder == "small"
                else WhisperModel(finder, device="cuda", compute_type="float16"))
@@ -121,16 +130,26 @@ def main() -> int:
         x = features.embed_clips(np.stack(clips).astype(np.int16), batch_size=64)
         return x.reshape(len(clips), -1)
 
-    pos, neg = {}, {}
+    pos, neg, cut = {}, {}, {}
     for path in sorted(glob.glob(str(samples / "*.wav"))) + others:
         spot = "negative" if path in others else Path(path).name.rsplit("-", 1)[0]
         audio = load(path)
         audio = np.concatenate([np.zeros(RATE, np.float32), audio, np.zeros(RATE // 2, np.float32)])
-        ends = [e + RATE for e in hey_word_ends(whisper, path, word)] if spot != "negative" else []
-        for end in ends:
-            for shift in (-1600, 0, 1600, 3200, 4800):  # -0.1 .. +0.3 s after the word
-                for gain in (0.7, 1.0, 1.6):
+        spans = [(s + RATE, e + RATE) for s, e in hey_word_spans(whisper, path, word)] if spot != "negative" else []
+        ends = [e for _, e in spans]
+        for start, end in spans:
+            for shift in SHIFTS:
+                for gain in GAINS:
                     pos.setdefault(spot, []).append(window(audio, end + shift) * gain)
+            # The word cut off ("hey Jar", 2026-11-15: it woke on that): taught as "not it" at the cut. Taught
+            # with silence after it as well (as the detector then sees it), recall fell to 17-67%: this
+            # detector cannot tell "hey Jar." from "hey Jarvis." Cut here, it still took the false wakes
+            # of "hey Claude" on held-out room audio from 12 in 5.5 min to 0
+            for part in (0.3, 0.5, 0.65):
+                for gain in GAINS:
+                    clip = window(audio, start + int((end - start) * part)) * gain
+                    neg.setdefault(spot, []).append(clip)
+                    cut.setdefault(spot, []).append(clip)
         print(f"{Path(path).name}: {len(ends)} hey {word.capitalize()}", flush=True)
         if spot != "negative" and len(ends) < 2:  # asked for twice: an unfound one would be taught as "not it"
             continue
@@ -146,6 +165,7 @@ def main() -> int:
 
     X = {s: embed(c) for s, c in pos.items()}
     N = {s: embed(c) for s, c in neg.items()}
+    C = {s: embed(c) for s, c in cut.items()}
     S = embed(synthetic)
 
     def fit(pos_sets, neg_sets):
@@ -159,10 +179,13 @@ def main() -> int:
     half = len(S) // 2
     for spot in X:
         clf = fit([X[s] for s in X if s != spot], [N[s] for s in N if s != spot] + [S[:half]])
-        centre = X[spot][4::15] if len(X[spot]) >= 15 else X[spot]  # shift 0, gain 1.0 per utterance
+        per = len(SHIFTS) * len(GAINS)
+        centre = X[spot][1::per] if len(X[spot]) >= per else X[spot]  # shift 0, gain 1.0 per utterance
         hits = (clf.predict_proba(centre)[:, 1] > 0.5).mean()
         false = (clf.predict_proba(np.concatenate([N.get("negative", S[:0]), S[half:]]))[:, 1] > 0.5).mean()
-        print(f"  {spot:14s} recall {hits:.0%}  false wakes on held-out speech {false:.1%}")
+        halves = (clf.predict_proba(C[spot])[:, 1] > 0.5).mean() if spot in C else float("nan")
+        print(f"  {spot:14s} recall {hits:.0%}  false wakes on held-out speech {false:.1%}  "
+              f"cut-off word taken {halves:.0%}")
     clf = fit(list(X.values()), list(N.values()) + [S])
     out.write_bytes(pickle.dumps(clf))
     print(f"saved {out}")
