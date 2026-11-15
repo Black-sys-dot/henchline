@@ -187,8 +187,8 @@ class MainActivity : Activity() {
         if (CallService.Bus.connected) {  // what was said while this screen wasn't looking
             CallService.Bus.lastAgents?.let { fromServer(it) }
             CallService.Bus.lastMode?.let { fromServer(it) }
-            showHistory()  // the lines that came meanwhile, from the call's kept chat
         }
+        showHistory()  // what came meanwhile (a call's lines, a text): from the kept chat, on a call or off it
         showServer()
         showRinging()
     }
@@ -462,7 +462,8 @@ class MainActivity : Activity() {
         text.isEnabled = typing
         send.isEnabled = typing
         attach.isEnabled = typing
-        text.hint = if (on) "Message your crew…" else "Text ${names[current]?.substringBefore(",") ?: "this agent"}…"
+        val name = names[current] ?: prefs().getString("current_name", "")?.ifEmpty { null }
+        text.hint = if (on) "Message your crew…" else "Text ${name?.substringBefore(",") ?: "this agent"}…"
         // Off a call there is nothing to hold or type to: just the henchman and how to call
         val shown = if (on) View.VISIBLE else View.GONE
         talk.visibility = shown
