@@ -109,7 +109,9 @@ class RingService : PushService() {
                 .setOngoing(true)
                 .setTimeoutAfter(seconds * 1000)
                 .apply {
-                    if (android.os.Build.VERSION.SDK_INT >= 31) {  // a call's own banner: Android 12 and later
+                    // A call's own banner, Android 12 and later; Android allows it only with the full-screen ring
+                    // (posting it quietly or as a banner without one crashed the ring screen, 2026-11-15)
+                    if (android.os.Build.VERSION.SDK_INT >= 31 && !banner && !quiet) {
                         val caller = android.app.Person.Builder().setName(name).setImportant(true)
                             .setIcon(android.graphics.drawable.Icon.createWithResource(context, MainActivity.avatarOf(flavour))).build()
                         setStyle(Notification.CallStyle.forIncomingCall(caller, decline, answer))
@@ -120,7 +122,11 @@ class RingService : PushService() {
                 }
                 .build()
             if (inUse && !quiet) ring.flags = ring.flags or Notification.FLAG_INSISTENT  // the tone repeats until answered
-            manager.notify(NOTIFICATION, ring)
+            try {
+                manager.notify(NOTIFICATION, ring)
+            } catch (e: IllegalArgumentException) {  // a notification Android refuses must not take the ring screen down
+                android.util.Log.w("Henchline", "ring notification refused: ${e.message}")
+            }
         }
 
         /** A channel per agent whose sound is its ringtone: a banner's sound is its channel's. In Do Not
