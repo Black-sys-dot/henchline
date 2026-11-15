@@ -110,8 +110,16 @@ async def from_page(message: dict) -> None:
     """The talk button held or let go, or a typed chat message for the agent that spoke last."""
     if "push" in message:
         CALL_PUSH.touch() if message["push"] else CALL_PUSH.unlink(missing_ok=True)
-    elif message.get("chat", "").strip():
-        await asyncio.get_running_loop().run_in_executor(None, routing.deliver, message["chat"].strip(), Heard.TYPED)
+    elif words := message.get("chat", "").strip():
+        await asyncio.get_running_loop().run_in_executor(None, typed, words)
+
+
+def typed(words: str) -> None:
+    """A typed line: a switch ("switch me to Cursor", "who am I talking to") works as when spoken."""
+    if routing.meaning(words) is routing.Meaning.ROUTING:
+        routing.route(words, None)
+    else:
+        routing.deliver(words, Heard.TYPED)
 
 
 async def call(request: web.Request) -> web.WebSocketResponse:

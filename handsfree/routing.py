@@ -199,7 +199,9 @@ def deliver(text: str, heard: Heard) -> bool:
         ok = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "handsfree.py"),
                              "type-into-cursor", wid, message], timeout=20).returncode == 0
         log(HANDSFREE_LOG, f"sent to cursor window {speaker.where}" if ok else "Cursor delivery failed")
-        if not ok:
+        if not ok and desktop().locked():
+            say("The laptop's screen is locked, so I can't type into Cursor. Agents in a terminal still get your words.")
+        elif not ok:
             say("I couldn't bring Cursor's window to the front, so I didn't type that anywhere. "
                 "Click Cursor's window and say it again.")
         return ok

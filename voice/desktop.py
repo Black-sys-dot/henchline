@@ -9,6 +9,7 @@ Another desktop, or Wayland, is one new module that fills in these methods.
 from __future__ import annotations
 
 import os
+import subprocess
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
@@ -95,6 +96,22 @@ class Desktop(ABC):
     def prepare_threads(self) -> None:
         """Called once before threads use the desktop (Xlib needs it); nothing by default."""
 
+    def locked(self) -> bool:
+        """Is the screen locked? Then no key may be pressed: it would land in the lock screen.
+
+        From systemd-logind, which any desktop on a systemd system reports to.
+        """
+        session = os.environ.get("XDG_SESSION_ID", "")
+        command = ["loginctl", "show-session", session, "-p", "LockedHint", "--value"] if session else \
+                  ["loginctl", "show-user", str(os.getuid()), "-p", "Display", "--value"]
+        try:
+            if not session:  # a service has no session of its own: use the user's graphical one
+                display = subprocess.run(command, capture_output=True, text=True, timeout=5).stdout.strip()
+                command = ["loginctl", "show-session", display, "-p", "LockedHint", "--value"]
+            return subprocess.run(command, capture_output=True, text=True, timeout=5).stdout.strip() == "yes"
+        except (OSError, subprocess.SubprocessError):
+            return True  # unsure: press nothing
+
     def paste_into(self, window_id: str, text: str, *chords: tuple[str, ...]) -> bool:
         """Put text on the clipboard, bring the window forward, then press the chords in turn.
 
@@ -103,6 +120,8 @@ class Desktop(ABC):
         and keys then land in whatever has focus (a message once went into
         Telegram, 2026-11-15).
         """
+        if self.locked():  # keys would go into the lock screen's password box (they did, 2026-11-15)
+            return False
         if not self.set_clipboard(text):
             return False
         for _ in range(RAISE_TRIES):
