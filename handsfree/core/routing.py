@@ -36,7 +36,8 @@ class Heard(str, Enum):
     PUSHED = "call, held the talk button"  # on a phone call, while holding the page's talk button
     TYPED = "call, typed"  # typed into the call page's chat, not spoken
     SHARED = "shared from the phone"  # files or text shared to Henchline from another app
-    TEXTED = "texted from the phone"  # a reply typed into an agent's text notification on the phone
+    TEXTED = "texted from the phone"
+    VOICE_NOTE = "voice message from the phone"  # recorded in Henchline off a call, transcribed here  # a reply typed into an agent's text notification on the phone
 
 
 NAMES = "|".join(SPOKEN_TO)

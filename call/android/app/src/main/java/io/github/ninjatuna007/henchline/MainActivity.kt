@@ -125,6 +125,7 @@ class MainActivity : Activity() {
         showClear(prefs().getBoolean("clear", true))
         setUpTalkButton()
         send.setOnClickListener { sendTyped() }
+        setUpVoiceNotes()
         attach.setOnClickListener { pickFiles() }
         text.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_SEND).also { if (it) sendTyped() } }
         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS,
@@ -392,6 +393,9 @@ class MainActivity : Activity() {
             }
             status.has("chat") -> {
                 val line = status.getJSONObject("chat")
+                // On the chat list, an arriving line shows there at once: bold, with its unread count (a text
+                // reached the banner but not the list, 2026-11-16)
+                if (listScreen.visibility == View.VISIBLE) main.post { showCrew() }
                 val from = line.getString("from")
                 val file = line.optJSONObject("file")
                 if (from != "you" && line.optString("session") == current && file == null) {
@@ -547,6 +551,84 @@ class MainActivity : Activity() {
         }
     }
 
+    private var voiceNote: VoiceNote? = null  // recording while the mic is held
+
+    /** Off a call, with the box empty, the send button is a mic: hold to record a voice message, let go to send,
+     *  slide left to cancel (as in WhatsApp). The laptop transcribes it and types it to this chat's agent. */
+    private fun setUpVoiceNotes() {
+        val swap = { send.setImageResource(if (micMode()) R.drawable.ic_mic else R.drawable.ic_send) }
+        text.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) = swap()
+        })
+        swap()
+        send.setOnTouchListener { _, event ->
+            if (!micMode() && voiceNote == null) return@setOnTouchListener false  // a send: the click does it
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> startVoiceNote()
+                MotionEvent.ACTION_MOVE -> if (event.x < -dp(80)) endVoiceNote(keep = false, why = "Cancelled")
+                MotionEvent.ACTION_UP -> endVoiceNote(keep = true)
+                MotionEvent.ACTION_CANCEL -> endVoiceNote(keep = false, why = "Cancelled")
+            }
+            true
+        }
+    }
+
+    private fun micMode() = !CallService.Bus.connected && text.text.isNullOrBlank()
+
+    private fun startVoiceNote() {
+        if (current.isEmpty() || voiceNote != null) return
+        if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1)
+            return
+        }
+        val note = VoiceNote()
+        if (!note.start()) { say("", "The microphone is busy.", note = true); return }
+        voiceNote = note
+        send.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFFE24A4A.toInt())  // red while recording
+        text.hint = "Recording… let go to send, slide left to cancel"
+        send.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+    }
+
+    private fun endVoiceNote(keep: Boolean, why: String = "") {
+        val note = voiceNote ?: return
+        voiceNote = null
+        send.backgroundTintList = android.content.res.ColorStateList.valueOf(getColor(R.color.cyan))
+        showConnected(CallService.Bus.connected)  // the hint back
+        val short = System.currentTimeMillis() - note.started < 700
+        val wav = note.stop(keep && !short)
+        if (wav == null) {
+            android.widget.Toast.makeText(this, if (short && keep) "Hold to record" else why, android.widget.Toast.LENGTH_SHORT).show()
+            return
+        }
+        val id = java.util.UUID.randomUUID().toString()
+        val to = current
+        val waiting = "🎙 Voice message…"
+        Chats.add(this, to, JSONObject().put("from", "you").put("text", waiting).put("mine", true).put("id", id).put("status", "sent"))
+        val bubble = say("you", waiting, mine = true, session = to, keep = false, status = "sent")
+        sentBubbles[id] = bubble to waiting
+        Thread {
+            val (failed, heard) = VoiceNote.send(this, to, wav)
+            if (failed.isEmpty()) {
+                val words = "🎙 $heard"
+                Chats.setText(this, to, id, words)
+                Chats.setStatus(this, to, id, "delivered")
+                main.post {
+                    if (sentBubbles[id]?.first === bubble) sentBubbles[id] = bubble to words
+                    bubble.text = ticked(words, "delivered")  // in place: no redraw under you
+                }
+            } else {
+                Chats.setText(this, to, id, "🎙 Voice message (not sent)")
+                main.post {
+                    bubble.alpha = 0.5f
+                    bubble.paintFlags = bubble.paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+                    say("", failed, note = true)
+                }
+            }
+        }.start()
+    }
+
     private fun sendTyped() {
         val entered = text.text.toString().trim()
         if (entered.isEmpty()) return
@@ -610,6 +692,7 @@ class MainActivity : Activity() {
         text.isEnabled = typing
         send.isEnabled = typing
         attach.isEnabled = typing
+        send.setImageResource(if (micMode()) R.drawable.ic_mic else R.drawable.ic_send)  // off a call, empty: voice
         val name = names[current] ?: prefs().getString("current_name", "")?.ifEmpty { null }
         text.hint = if (on) "Message your crew…" else "Text ${name?.substringBefore(",") ?: "this agent"}…"
         // Off a call there is nothing to hold or type to: just the henchman and how to call

@@ -57,7 +57,8 @@ from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import files  # noqa: E402
 from voice.speech import whisper  # noqa: E402
 from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN, CALL_RING, CALL_RINGER,  # noqa: E402
-                         CLOSE, HANDSFREE_LOG, HANDSFREE_ON, TEXTS, read_json, LISTEN, SPEAKERS, Speaker, in_call, log,
+                         CLOSE, HANDSFREE_LOG, HANDSFREE_ON, TEXTS, VOICE_NOTES, read_json,
+                         LISTEN, SPEAKERS, Speaker, in_call, log,
                          release_phase, turn_on_handsfree, write_json)
 from voice.agents import identity  # noqa: E402
 from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
@@ -304,6 +305,7 @@ def run() -> int:
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
     listener = Listener(cfg, transcriber, stop, canceller_since)
     threading.Thread(target=listener.run, daemon=True).start()
+    threading.Thread(target=voice_notes, args=(transcriber, stop), daemon=True).start()
     log(HANDSFREE_LOG, "on")
     if ANNOUNCE.exists():  # only when the user turned it on, not on every restart
         ANNOUNCE.unlink(missing_ok=True)
@@ -316,6 +318,37 @@ def run() -> int:
         HANDSFREE_ON.unlink(missing_ok=True)
         log(HANDSFREE_LOG, "off")
     return 1 if listener.crashed else 0  # non-zero: systemd starts it again
+
+
+def voice_notes(transcriber: whisper.Transcriber, stop: threading.Event) -> None:
+    """Voice messages recorded in Henchline off a call (the call server keeps them in VOICE_NOTES): each one
+    transcribed with hands-free's own Whisper and typed into the agent whose chat it was recorded in, tagged
+    [hands-free · voice message from the phone]; what was heard, or why not, goes back for the phone to show."""
+    while not stop.wait(1.0):
+        for meta_path in sorted(VOICE_NOTES.glob("*.json")):
+            meta = read_json(meta_path)
+            if meta.get("status") != "waiting":
+                if time.time() - meta.get("at", 0) > 86400:  # the phone has long since asked: gone after a day
+                    meta_path.unlink(missing_ok=True)
+                continue
+            wav = meta_path.with_suffix(".wav")
+            try:
+                plain, rich = transcriber.file(wav)
+            except Exception as exc:  # a bad file, or Whisper failing: said, not left waiting
+                plain, rich = "", ""
+                log(HANDSFREE_LOG, f"voice message not transcribed: {exc}")
+            target = Speaker.load(SPEAKERS / f"{meta.get('session', '')}.json")
+            if not plain.strip():
+                result = {"status": "failed", "note": "Nothing heard in it."}
+            elif not target or not routing.reachable(target):
+                result = {"status": "failed", "text": plain, "note": "That agent isn't reachable."}
+            elif routing.deliver(rich or plain, routing.Heard.VOICE_NOTE, to=target):
+                result = {"status": "done", "text": plain}
+            else:
+                result = {"status": "failed", "text": plain, "note": "It couldn't be typed to the agent."}
+            write_json(meta_path, {**meta, **result}, private=True)
+            wav.unlink(missing_ok=True)
+            log(HANDSFREE_LOG, f"voice message: {result['status']}")
 
 
 def switch(words: list[str]) -> int:

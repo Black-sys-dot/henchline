@@ -65,6 +65,12 @@ object Chats {
         if (line.optString("id") == id && rank(status) > rank(line.optString("status"))) line.put("status", status) else line
     }
 
+    /** A line's words changed in place: a voice message once the laptop has heard it. */
+    @Synchronized
+    fun setText(context: Context, session: String, id: String, text: String) = rewrite(context, session) { line ->
+        if (line.optString("id") == id) line.put("text", text) else line
+    }
+
     /** The agent spoke in that chat: everything you sent it before is read. */
     @Synchronized
     fun readAll(context: Context, session: String) {

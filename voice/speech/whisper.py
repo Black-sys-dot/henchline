@@ -7,6 +7,7 @@ import gc
 import json
 import os
 import subprocess
+import threading
 import time
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
@@ -132,9 +133,14 @@ class Transcriber:
         self.model = load_model(cfg, not self.on_cpu, log_to)
         self.on_cpu = self.model.model.device == "cpu"
         self.looked = 0.0  # when settle() last looked at the GPU
+        self.lock = threading.RLock()  # one transcription at a time: hands-free's turns and voice messages share it
 
     def settle(self) -> None:
         """Between uses: back to the GPU if wanted and it has room; to the CPU on battery."""
+        with self.lock:
+            self._settle()
+
+    def _settle(self) -> None:
         if time.monotonic() - self.looked < RETRY_GPU:
             return
         self.looked = time.monotonic()
@@ -151,6 +157,10 @@ class Transcriber:
 
     def run(self, use):
         """use(model); if the GPU is full, move Whisper to the CPU and try again."""
+        with self.lock:
+            return self._run(use)
+
+    def _run(self, use):
         try:
             return use(self.model)
         except RuntimeError as exc:

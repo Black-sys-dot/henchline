@@ -55,6 +55,7 @@ CALL_BUTTON_ONLY = STATE / "call.button-only"  # in a noisy place: only the talk
 CALL_RING = STATE / "call.ring-endpoint"  # where Henchline can be rung (its UnifiedPush address): private, never logged
 CALL_RINGER = STATE / "call.ringer"  # who rang the user last (session, when): the call server routes the answer there
 CALL_HANGUP = STATE / "call.hangup"  # end the phone call once talkback is done: the user said so, or an agent
+VOICE_NOTES = STATE / "voicenotes"  # voice messages from the phone, waiting for hands-free to transcribe them
 TEXTS = STATE / "texts"  # each text an agent sent the phone (`handsfree text`): its id, who, and how far it got
 CALL_MIRROR = STATE / "call.mirror"  # a Claude Code session's terminal side, for the call's chat (call/hooks/mirror.py)
 CALL_ORIGIN = STATE / "call.origin"  # the call page's https address, as the phone reached it: links to files

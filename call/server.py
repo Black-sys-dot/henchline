@@ -40,7 +40,7 @@ from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
-                         TEXTS,
+                         TEXTS, VOICE_NOTES,
                          CALL_PORT, CALL_PUSH,
                          CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
                          PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SENT, SPEAKERS,
@@ -453,6 +453,46 @@ async def text_status(request: web.Request) -> web.Response:
     return web.json_response({"ok": True})
 
 
+VOICE_NOTE_MAX = 20 * 1024 * 1024  # bytes of one voice message: about ten minutes at 16 kHz
+
+
+async def voice_note(request: web.Request) -> web.Response:
+    """A voice message recorded in Henchline off a call (a WAV, the chat's agent session in the query): kept for
+    hands-free to transcribe and type to that agent. Its id, to ask after it."""
+    trusted(request)
+    session = request.query.get("session", "")
+    if not session:
+        return web.json_response({"note": "No agent named."}, status=400)
+    VOICE_NOTES.mkdir(parents=True, exist_ok=True)
+    nid = secrets.token_hex(8)
+    wav = VOICE_NOTES / f"{nid}.wav"
+    size = 0
+    with wav.open("wb") as out:
+        while chunk := await request.content.read(1 << 16):
+            size += len(chunk)
+            if size > VOICE_NOTE_MAX:
+                out.close()
+                wav.unlink(missing_ok=True)
+                return web.json_response({"note": "Too long."}, status=413)
+            out.write(chunk)
+    os.chmod(wav, 0o600)
+    write_json(VOICE_NOTES / f"{nid}.json", {"id": nid, "session": session, "status": "waiting", "at": time.time()},
+               private=True)
+    return web.json_response({"id": nid})
+
+
+async def voice_note_status(request: web.Request) -> web.Response:
+    """How a voice message is getting on: waiting, done (with what was heard) or failed (with why)."""
+    trusted(request)
+    nid = request.match_info["nid"]
+    if not re.fullmatch(r"[0-9a-f]{16}", nid):
+        raise web.HTTPNotFound()
+    meta = read_json(VOICE_NOTES / f"{nid}.json")
+    if not meta:
+        raise web.HTTPNotFound()
+    return web.json_response({k: meta.get(k, "") for k in ("status", "text", "note")})
+
+
 async def sent_file(request: web.Request) -> web.StreamResponse:
     """A file an agent sent (`handsfree send`): only its secret folder name finds it."""
     path = files.find(request.match_info["secret"], request.match_info["name"])
@@ -604,6 +644,8 @@ def main() -> int:
     app.router.add_post("/share/tell", share_tell)
     app.router.add_post("/text", texted)
     app.router.add_post("/text-status", text_status)
+    app.router.add_post("/voice-note", voice_note)
+    app.router.add_get("/voice-note/{nid}", voice_note_status)
     app.router.add_post("/crew", crew)  # it registers what it finds: a POST
     app.router.add_get("/files/{secret}/{name}", sent_file)
     proxied = False
