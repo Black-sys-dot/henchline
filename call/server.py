@@ -203,7 +203,9 @@ async def from_page(message: dict, ear: Ear) -> str:
             log(HANDSFREE_LOG, f"call: refused a ring address on {url.hostname or 'no host'} "
                                f"(not {', '.join(RING_HOSTS)})")
             return ""
-        with os.fdopen(os.open(CALL_RING, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as out:
+        fd = os.open(CALL_RING, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        os.fchmod(fd, 0o600)  # an older file keeps its mode through O_CREAT
+        with os.fdopen(fd, "w") as out:
             out.write(url.geturl())
     elif "sound" in message:  # the app's sound mode: turns after this line ran in it, for comparing them
         log(HANDSFREE_LOG, f"call: phone sound {message['sound']}")
