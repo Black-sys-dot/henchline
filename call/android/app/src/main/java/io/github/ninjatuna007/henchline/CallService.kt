@@ -264,7 +264,7 @@ class CallService : Service() {
                         file.optString("type", "application/octet-stream"), file.optLong("size"))
                 }
                 message?.optString("delivered")?.takeIf { it.isNotEmpty() }?.let { id ->  // typed into the agent
-                    Chats.setStatus(this@CallService, lastSession, id, "delivered")
+                    Chats.setStatus(this@CallService, message.optString("session").ifEmpty { lastSession }, id, "delivered")
                 }
                 Bus.listener?.invoke(text)
             }

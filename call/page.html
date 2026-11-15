@@ -190,6 +190,7 @@ async function start() {
       return;
     }
     if (status.agents) { showAgents(status.agents, status.current); return; }
+    if (status.delivered !== undefined) return;  // the app's ticks: nothing for the page to show
     if (status.note) {
       // The typed line it refers to was put in the chat when sent: mark it, so it doesn't look delivered
       const line = status.unsent && chat.querySelector(`[data-id="${status.unsent}"]`);

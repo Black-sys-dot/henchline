@@ -67,8 +67,13 @@ object Chats {
 
     /** The agent spoke in that chat: everything you sent it before is read. */
     @Synchronized
-    fun readAll(context: Context, session: String) = rewrite(context, session) { line ->
-        if (line.optBoolean("mine") && line.optString("status") == "delivered") line.put("status", "read") else line
+    fun readAll(context: Context, session: String) {
+        val chat = file(context, session)
+        // Nothing waiting to be read: no rewrite (this runs on every agent line)
+        if (session.isEmpty() || !chat.exists() || !chat.readText().contains("\"status\":\"delivered\"")) return
+        rewrite(context, session) { line ->
+            if (line.optBoolean("mine") && line.optString("status") == "delivered") line.put("status", "read") else line
+        }
     }
 
     private fun rank(status: String) = listOf("", "sent", "delivered", "read").indexOf(status)
@@ -80,7 +85,7 @@ object Chats {
         val aside = File(chat.path + ".new")
         aside.writeText(lines.joinToString("\n", postfix = "\n"))
         aside.renameTo(chat)
-        lasts.remove(session)  // its newest line may have changed (ticks): read again when wanted
+        lasts[session] = lines.lastOrNull { it.isNotBlank() }?.let { try { JSONObject(it) } catch (_: Exception) { null } }
     }
 
     @Synchronized

@@ -273,10 +273,12 @@ async def from_page(message: dict, ear: Ear) -> str:
     elif "switch" in message:
         await asyncio.get_running_loop().run_in_executor(None, switch, message["switch"])
     elif words := message.get("chat", "").strip():
-        note = await asyncio.get_running_loop().run_in_executor(None, typed, words, message.get("session", ""))
+        sent, note = await asyncio.get_running_loop().run_in_executor(None, typed, words, message.get("session", ""))
         if note:
             return json.dumps({"note": note, "unsent": message.get("id", "")})
-        return json.dumps({"delivered": message.get("id", "")})  # typed into the agent: the phone's two ticks
+        if sent:  # typed into the agent: the phone's two ticks, in the chat it was typed in
+            return json.dumps({"delivered": message.get("id", ""), "session": message.get("session", "")})
+        return ""
     return ""
 
 
@@ -297,12 +299,14 @@ def switch(session: str) -> None:
         routing.say(f"Now talking to {target.spoken()}.")
 
 
-def typed(words: str, session: str) -> str:
-    """A typed line, to the agent whose chat it was typed in; a switch ("switch me to Cursor") works as spoken."""
+def typed(words: str, session: str) -> tuple[bool, str]:
+    """A typed line, to the agent whose chat it was typed in; a switch ("switch me to Cursor") works as spoken.
+    (typed into an agent, a note why not): a switch is neither."""
     if routing.meaning(words) is routing.Meaning.ROUTING:
         routing.route(words, None)
-        return ""
-    return to_agent(words, session, Heard.TYPED)[1]
+        return False, ""
+    got, note = to_agent(words, session, Heard.TYPED)
+    return bool(got), note
 
 
 def to_agent(words: str, session: str, heard: Heard, switch: bool = True) -> tuple[str, str]:
