@@ -73,16 +73,7 @@ class MainActivity : Activity() {
         findViewById<ImageButton>(R.id.menu).setOnClickListener { drawer.openDrawer(Gravity.START) }
         callButton.setOnClickListener { if (CallService.Bus.connected) hangUp() else call() }
         findViewById<View>(R.id.serverRow).setOnClickListener { askServer { } }
-        clear.isChecked = prefs().getBoolean("clear", true)
-        clear.setOnCheckedChangeListener { switch, on ->
-            val service = CallService.Bus.service
-            if (service != null && service.clear != on && !service.switchSound(on)) {
-                switch.isChecked = !on  // still switching from the last flip
-                return@setOnCheckedChangeListener
-            }
-            prefs().edit().putBoolean("clear", on).apply()
-            if (service != null) say("", if (on) "Clear sound" else "Call sound", note = true)
-        }
+        showClear(prefs().getBoolean("clear", true))
         setUpTalkButton()
         send.setOnClickListener { sendTyped() }
         text.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_SEND).also { if (it) sendTyped() } }
@@ -116,6 +107,10 @@ class MainActivity : Activity() {
         super.onResume()
         CallService.Bus.listener = { message -> main.post { fromServer(message) } }
         showConnected(CallService.Bus.connected)
+        showServer()
+    }
+
+    private fun showServer() {
         findViewById<TextView>(R.id.server).text =
             prefs().getString("server", "")?.removePrefix("https://")?.trimEnd('/')?.ifEmpty { null }
                 ?: "Set the laptop's address"
@@ -161,7 +156,7 @@ class MainActivity : Activity() {
             .setView(LinearLayout(this).apply { setPadding(48, 16, 48, 0); addView(box) })
             .setPositiveButton("Save") { _, _ ->
                 prefs().edit().putString("server", box.text.toString().trim()).apply()
-                onResume()
+                showServer()
                 then()
             }
             .setNegativeButton("Cancel", null)
@@ -290,6 +285,21 @@ class MainActivity : Activity() {
         text.setText("")
     }
 
+    /** The clear-sound switch shows this, without counting as a flip. A flip switches the call too, if one is up. */
+    private fun showClear(on: Boolean) {
+        clear.setOnCheckedChangeListener(null)
+        clear.isChecked = on
+        clear.setOnCheckedChangeListener { _, flipped ->
+            val service = CallService.Bus.service
+            if (service != null && service.clear != flipped && !service.switchSound(flipped)) {
+                showClear(!flipped)  // still switching from the last flip
+                return@setOnCheckedChangeListener
+            }
+            prefs().edit().putBoolean("clear", flipped).apply()
+            if (service != null) say("", if (flipped) "Clear sound" else "Call sound", note = true)
+        }
+    }
+
     private fun showConnected(on: Boolean) {
         callButton.setImageResource(if (on) R.drawable.ic_call_end else R.drawable.ic_phone)
         callButton.setBackgroundResource(if (on) R.drawable.round_hang else R.drawable.round_call)
@@ -298,7 +308,7 @@ class MainActivity : Activity() {
         text.isEnabled = on
         send.isEnabled = on
         send.alpha = if (on) 1f else 0.4f
-        clear.isChecked = CallService.Bus.service?.clear ?: prefs().getBoolean("clear", true)
+        showClear(CallService.Bus.service?.clear ?: prefs().getBoolean("clear", true))
         if (!on) {
             state.text = "Not connected"
             showMode("waiting")
