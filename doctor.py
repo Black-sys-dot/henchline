@@ -203,11 +203,15 @@ def call() -> list[Check]:
     ok, err = venv_imports("aiohttp")
     enabled, active = unit_state("call.service")
     rc, ip = run("tailscale", "ip", "-4")
+    _, served = run("tailscale", "serve", "status")
     return [
         check("call", "web server package in the venv", ok, err, "./install.sh call"),
         check("call", "Tailscale up (the phone reaches the page through it)", rc == 0, ip.splitlines()[0] if ip else "",
               "sudo tailscale up"),
         check("call", "the page's certificate", (CALL_TLS / "cert.pem").exists(), str(CALL_TLS), "./install.sh call"),
+        check("call", "a proper address (tailscale serve, a real certificate)", "127.0.0.1:8790" in served,
+              next((line for line in served.splitlines() if line.startswith("https://")), "self-signed instead"),
+              "sudo tailscale set --operator=$USER; systemctl --user restart call", warn_only=True),
         check("call", "call page running", active == "active", f"{active}, {enabled} at login",
               "./install.sh call", warn_only=True),
     ]

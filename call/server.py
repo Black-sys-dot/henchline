@@ -1,12 +1,13 @@
 #!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
 """A phone call with the agents: a web page that streams the phone's mic in and talkback out.
 
-    call/server.py [--port 8790] [--host tailscale|ADDRESS] [--cert PEM --key PEM]
+    call/server.py [--port 8790] [--host serve|tailscale|ADDRESS] [--cert PEM --key PEM]
 
-It listens on this machine's Tailscale address, with its own certificate
-(install.sh call makes one; the phone accepts it once), so only your own
-devices reach it; or on 127.0.0.1 behind `tailscale serve`, once Tailscale
-lets this user configure it. Open the https address on the phone and tap
+It sits behind `tailscale serve`, at https://<this machine's Tailscale name>/
+with a real certificate, once Tailscale lets this user configure it (`sudo
+tailscale set --operator=$USER`, once); until then on this machine's Tailscale
+address, with its own certificate (install.sh call makes one; the phone
+accepts it once). Only your own devices reach it. Open the address and tap
 Call. While a call is up, two virtual sinks exist: the phone's mic is played
 into PHONE_MIC, whose monitor hands-free listens to, and talkback plays into
 PHONE_SPEAKER, whose monitor is streamed back to the phone. The phone's
@@ -298,16 +299,32 @@ async def call(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
+def serve(port: int) -> str:
+    """Put the page behind `tailscale serve` (https on this machine's Tailscale name, a real certificate):
+    the address to listen on, or "tailscale" when Tailscale won't (`sudo tailscale set --operator=$USER`
+    lets this user configure it, once)."""
+    done = subprocess.run(["tailscale", "serve", "--bg", "--https=443", f"http://127.0.0.1:{port}"],
+                          capture_output=True, text=True)
+    if done.returncode != 0:
+        log(HANDSFREE_LOG, f"tailscale serve refused ({done.stderr.strip()[:120]}): the Tailscale address instead")
+        return "tailscale"
+    return "127.0.0.1"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=CALL_PORT)
     parser.add_argument("--cert", type=Path, help="serve https with this certificate (and --key): a self-signed one\n"
                         "works when `tailscale serve` is not available; the phone accepts it once")
     parser.add_argument("--key", type=Path)
-    parser.add_argument("--host", default="tailscale",
-                        help="tailscale (default): this machine's Tailscale address, so only your own devices "
-                             "reach it; 127.0.0.1 behind `tailscale serve`")
+    parser.add_argument("--host", default="serve",
+                        help="serve (default): 127.0.0.1 behind `tailscale serve`, at https://<this machine's "
+                             "Tailscale name>/ with a real certificate, falling back to `tailscale` when this user "
+                             "may not configure Tailscale; tailscale: this machine's Tailscale address, with --cert; "
+                             "either way only your own devices reach it")
     args = parser.parse_args()
+    if args.host == "serve":
+        args.host = serve(args.port)
     if not in_call():  # leftovers from a crash: the marker, and the call's sinks (never a live call's)
         CALL.unlink(missing_ok=True)
         for line in pactl("list", "short", "modules").splitlines():
@@ -319,7 +336,7 @@ def main() -> int:
     app.router.add_get("/call", call)
     if args.host == "tailscale":
         args.host = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True).stdout.split()[0]
-    if args.cert is None and (CALL_TLS / "cert.pem").exists():
+    if args.cert is None and args.host != "127.0.0.1" and (CALL_TLS / "cert.pem").exists():
         args.cert, args.key = CALL_TLS / "cert.pem", CALL_TLS / "key.pem"
     tls = None
     if args.cert:

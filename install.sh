@@ -163,7 +163,12 @@ install_call() {
   systemctl --user enable call.service
   systemctl --user restart call.service
   # 8790 is voice/state.py's CALL_PORT (a shell script cannot read it)
-  say "Call page: https://$(tailscale ip -4 | head -n 1):8790 on your phone (accept the certificate once), then Call."
+  if tailscale serve status 2>/dev/null | grep -q "127.0.0.1:8790"; then
+    say "Call page: https://$(tailscale status --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')/ on your phone, then Call."
+  else
+    say "Call page: https://$(tailscale ip -4 | head -n 1):8790 on your phone (accept the certificate once), then Call."
+    say "For a proper address and certificate: sudo tailscale set --operator=\$USER, then systemctl --user restart call"
+  fi
 }
 
 install_agents() {
