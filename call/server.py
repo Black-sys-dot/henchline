@@ -37,10 +37,10 @@ import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_PORT, CALL_PUSH,  # noqa: E402
-                         CALL_RING, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE, PHONE_MIC,
-                         PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SPOOL, Sent,
-                         in_call, last_speaker, log, phase_now, recent_speakers, turn_on_handsfree,
-                         write_json)
+                         CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
+                         PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SPEAKERS,
+                         SPOOL, Sent, Speaker, in_call, last_speaker, log, phase_now, read_json,
+                         recent_speakers, turn_on_handsfree, write_json)
 
 MIC_RATE = 16000  # what the page sends: what hands-free listens at
 SPEAKER_RATE = 24000  # what the page plays: Kokoro's own rate
@@ -50,6 +50,7 @@ CHUNK = SPEAKER_RATE // 50 * 2  # bytes of s16 mono sent to the phone at a time:
 STATUS_EVERY = 0.2  # seconds between looks at what hands-free and talkback are doing
 AGENTS_EVERY = 3.0  # seconds between looks at which agents can be switched to
 RING_HOSTS = ("ntfy.sh",)  # where Henchline's UnifiedPush addresses may live: the ntfy app's server
+RINGER_FRESH = 180  # seconds a ring stays the one a call answers (it rings 30; Answer may wait for an unlock)
 HANGUP_SAY, HANGUP_MAX = 0.5, 10.0  # a hang-up waits for talkback to finish (its queue empty, nothing playing),
 # at least this long for the goodbye to be queued, and at most this: past it the call ends even mid-sentence
 
@@ -188,6 +189,19 @@ async def keep_unmuted() -> None:
             await watch.wait()
 
 
+def route_to_ringer() -> None:
+    """A call answering an agent's ring goes to that agent (`handsfree ring` left its session), not to
+    whoever spoke last: before the call's first words are routed. A ring older than RINGER_FRESH is old news."""
+    ringer = read_json(CALL_RINGER)
+    CALL_RINGER.unlink(missing_ok=True)
+    if not ringer or time.time() - ringer.get("at", 0) > RINGER_FRESH:
+        return
+    speaker = Speaker.load(SPEAKERS / f"{ringer.get('session', '')}.json")
+    if speaker and routing.reachable(speaker):
+        routing.switch_to(speaker)
+        log(HANDSFREE_LOG, f"call: answering {speaker.agent}'s ring, so to {speaker.agent}")
+
+
 def flag(path: Path, on: bool) -> None:
     if on:
         path.touch()
@@ -279,6 +293,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             "parec", "--raw", f"--device={PHONE_SPEAKER_MONITOR}", "--format=s16le", f"--rate={SPEAKER_RATE}",
             "--channels=1", "--latency-msec=40", "--client-name=phone-call", stdout=asyncio.subprocess.PIPE)
         CALL_HANGUP.unlink(missing_ok=True)  # a hang-up asked for when no call was up is not for this one
+        route_to_ringer()
         write_json(CALL, {"from": request.remote or "", "pid": os.getpid(),
                           "cmdline": Path("/proc/self/cmdline").read_text()})
         await asyncio.get_running_loop().run_in_executor(None, turn_on_handsfree, False)  # with talkback

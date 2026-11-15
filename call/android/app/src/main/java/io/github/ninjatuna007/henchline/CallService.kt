@@ -182,8 +182,9 @@ class CallService : Service() {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
-                if (text.contains("\"agents\"")) Bus.lastAgents = text
-                else if (text.contains("\"mode\"")) Bus.lastMode = text
+                val message = try { org.json.JSONObject(text) } catch (_: Exception) { null }
+                if (message?.has("agents") == true) Bus.lastAgents = text
+                else if (message?.has("mode") == true) Bus.lastMode = text
                 Bus.listener?.invoke(text)
             }
 

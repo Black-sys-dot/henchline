@@ -41,9 +41,9 @@ import tray  # noqa: E402
 from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import whisper  # noqa: E402
-from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_RING, CLOSE, HANDSFREE_LOG,  # noqa: E402
-                         HANDSFREE_ON, LISTEN, SPEAKERS, Speaker, in_call, log, release_phase,
-                         turn_on_handsfree)
+from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_RING, CALL_RINGER, CLOSE,  # noqa: E402
+                         HANDSFREE_LOG, HANDSFREE_ON, LISTEN, SPEAKERS, Speaker, in_call, log,
+                         release_phase, turn_on_handsfree, write_json)
 from voice.agents import identity  # noqa: E402
 from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
 
@@ -89,6 +89,8 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
         return 1
     RANG.parent.mkdir(parents=True, exist_ok=True)
     RANG.touch()
+    if speaker:  # whenever the user answers, even after this stops waiting: the call server routes it there
+        write_json(CALL_RINGER, {"session": speaker.session, "at": time.time()})
     log(HANDSFREE_LOG, f"rang the user ({who})")
     print("rang", flush=True)
     if not wait:
@@ -96,9 +98,7 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
     heard: set[str] = set()
     deadline = time.time() + RING_WAIT
     while time.time() < deadline:
-        if in_call():
-            if speaker and routing.reachable(speaker):  # the user answered this agent: their words go to it
-                routing.switch_to(speaker)
+        if in_call():  # the call server has routed the user's words to the caller (CALL_RINGER)
             return ring_ended(who, "answered", 0)
         if pushed:
             heard |= replies(reply, since)
