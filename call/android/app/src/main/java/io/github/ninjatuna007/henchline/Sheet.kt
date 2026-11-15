@@ -35,6 +35,7 @@ class Sheet(
     private val over: Boolean = false,  // over the app's own screen (the paperclip), not a share screen of its own
     private val note0: String = "",  // words already typed in the chat's box
     private val onSent: (String) -> Unit = {},  // the agent it went to
+    private val onClosed: () -> Unit = {},  // the chat behind it is in view again
 ) {
     private val dp = activity.resources.displayMetrics.density
     private fun px(v: Int) = (v * dp).toInt()
@@ -147,7 +148,7 @@ class Sheet(
     val isOpen get() = root?.parent != null
 
     fun close() {
-        val done: () -> Unit = { if (over) { (root?.parent as? ViewGroup)?.removeView(root) } else activity.finish() }
+        val done: () -> Unit = { if (over) { (root?.parent as? ViewGroup)?.removeView(root); onClosed() } else activity.finish() }
         val s = sheet ?: return done()
         s.animate().translationY(s.height.toFloat()).setDuration(200).withEndAction { done() }.start()
     }

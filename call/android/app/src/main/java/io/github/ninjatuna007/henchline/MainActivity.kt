@@ -174,7 +174,7 @@ class MainActivity : Activity() {
                     prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
                     showHistory(); showCrew()
                 }
-            }).also { it.show() }
+            }, onClosed = { showHistory() }).also { it.show() }  // closed: what came meanwhile is read now
     }
 
     /** What you attached, on your side of the chat: a picture small, anything else its name. */

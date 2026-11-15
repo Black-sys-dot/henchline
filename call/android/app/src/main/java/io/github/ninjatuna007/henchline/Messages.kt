@@ -99,7 +99,7 @@ object Messages {
         val prefs = context.getSharedPreferences("call", Context.MODE_PRIVATE)
         val key = "pending_$status"
         synchronized(this) {
-            val pending = (prefs.getStringSet(key, emptySet()) ?: emptySet()) + ids
+            val pending = ((prefs.getStringSet(key, emptySet()) ?: emptySet()) + ids).toList().takeLast(300).toSet()  // bounded
             prefs.edit().putStringSet(key, pending).apply()
         }
         Thread {
