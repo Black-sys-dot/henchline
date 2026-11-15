@@ -98,9 +98,11 @@ class CallService : Service() {
         recorder?.interrupt()
         player?.interrupt()
         heard.clear()
-        focus?.let { audio.abandonAudioFocusRequest(it) }
-        if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
-        audio.mode = AudioManager.MODE_NORMAL
+        synchronized(audioLock) {  // after any sound switch under way, so it can't set call mode again after this
+            focus?.let { audio.abandonAudioFocusRequest(it) }
+            if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
+            audio.mode = AudioManager.MODE_NORMAL
+        }
         wakeLock?.let { if (it.isHeld) it.release() }
         Bus.connected = false
         Bus.service = null
@@ -123,8 +125,10 @@ class CallService : Service() {
                     generation.incrementAndGet()  // the running threads see this and stop
                     mic?.join(1000)
                     speaker?.join(1000)
-                    applySound()
-                    if (running) startAudio()
+                    if (running) {  // the call may have ended meanwhile: leave the phone's audio as onDestroy set it
+                        applySound()
+                        startAudio()
+                    }
                 }
             } finally {
                 switching.set(false)
