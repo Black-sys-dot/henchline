@@ -1,7 +1,7 @@
 #!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
-"""Guided "hey Claude" recordings around the house, scored as they come in.
+"""Guided "hey Claude" (or "hey Jarvis") recordings around the house, scored as they come in.
 
-    wakeword_collect.py [POSITION ...]
+    wakeword_collect.py [--word jarvis] [POSITION ...]
 
 For each position talkback announces where to stand, gives the user time to
 get there, plays a short chime, and records a few seconds from the same
@@ -9,8 +9,8 @@ echo-cancelled mic hands-free uses. Each take is scored with the wake-word
 model at once, and talkback says how many "hey Claude"s it caught; a miss
 is repeated. Hands-free listening is paused meanwhile, so the samples are
 not sent to an agent. Clips land in ~/.local/share/handsfree/samples/ for
-a later custom verifier. A last "just talk normally" take checks for false
-wakes.
+a later custom verifier (another word's in a folder of its own). A last
+"just talk normally" take checks for false wakes.
 """
 
 from __future__ import annotations
@@ -27,9 +27,12 @@ from openwakeword.model import Model
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
 from collect import CHIME, speak as say  # noqa: E402
 from sensing import RATE  # noqa: E402
-from voice.state import EC_SOURCE, HANDSFREE_DATA, PAUSE, WAKE_SAMPLES as SAMPLES  # noqa: E402
+from voice.state import EC_SOURCE, HANDSFREE_DATA, JARVIS_MODEL, PAUSE, WAKE_SAMPLES  # noqa: E402
 
 THRESHOLD = 0.5
+# The published model each word is scored with while recording, and where its takes go
+WORDS = {"claude": (HANDSFREE_DATA / "hey_claude.onnx", WAKE_SAMPLES),
+         "jarvis": (JARVIS_MODEL, WAKE_SAMPLES / "jarvis")}
 POSITIONS = [
     ("desk", "at your desk, facing me"),
     ("dining", "at the dining table next to me"),
@@ -52,7 +55,7 @@ def wakes(model: Model, audio: np.ndarray) -> tuple[int, float]:
     model.reset()
     count, best, armed = 0, 0.0, True
     for start in range(0, len(audio) - 1280, 1280):
-        score = model.predict(audio[start:start + 1280])["hey_claude"]
+        score = max(model.predict(audio[start:start + 1280]).values())
         best = max(best, score)
         if score > THRESHOLD and armed:
             count, armed = count + 1, False
@@ -61,9 +64,9 @@ def wakes(model: Model, audio: np.ndarray) -> tuple[int, float]:
     return count, best
 
 
-def save(name: str, audio: np.ndarray) -> None:
-    SAMPLES.mkdir(parents=True, exist_ok=True)
-    with wave.open(str(SAMPLES / f"{name}-{time.strftime('%H%M%S')}.wav"), "wb") as out:
+def save(folder: Path, name: str, audio: np.ndarray) -> None:
+    folder.mkdir(parents=True, exist_ok=True)
+    with wave.open(str(folder / f"{name}-{time.strftime('%H%M%S')}.wav"), "wb") as out:
         out.setnchannels(1)
         out.setsampwidth(2)
         out.setframerate(RATE)
@@ -71,14 +74,20 @@ def save(name: str, audio: np.ndarray) -> None:
 
 
 def main() -> int:
-    wanted = set(sys.argv[1:])
+    args = sys.argv[1:]
+    word = "claude"
+    if args[:1] == ["--word"]:
+        word, args = args[1].lower(), args[2:]
+    published, folder = WORDS[word]
+    wanted = set(args)
     positions = [p for p in POSITIONS if not wanted or p[0] in wanted]
-    model = Model(wakeword_models=[str(HANDSFREE_DATA / "hey_claude.onnx")], inference_framework="onnx")
+    model = Model(wakeword_models=[str(published)], inference_framework="onnx")
+    phrase = f"hey {word.capitalize()}"
     PAUSE.touch()
     results = []
     try:
         say("Wake word recording. For each spot I'll say where to go, then play a chime. "
-            "After the chime, say hey Claude twice, with a short pause in between.")
+            f"After the chime, say {phrase} twice, with a short pause in between.")
         for name, where in positions:
             for attempt in range(3):
                 say(f"Next: {where}. Chime in ten seconds." if attempt == 0
@@ -86,7 +95,7 @@ def main() -> int:
                 time.sleep(10 if attempt == 0 else 3)
                 subprocess.run(["pw-play", CHIME])
                 audio = record(6)
-                save(name, audio)
+                save(folder, name, audio)
                 count, best = wakes(model, audio)
                 results.append((name, attempt, count, best))
                 print(f"{name} try {attempt + 1}: woke {count}x, best {best:.2f}", flush=True)
@@ -95,11 +104,11 @@ def main() -> int:
                     break
                 say(f"I only caught {count} of 2." if count else "I didn't catch either.")
         say("Last one, from wherever you are: after the chime, talk normally for ten seconds "
-            "about anything, but don't say hey Claude.")
+            f"about anything, but don't say {phrase}.")
         time.sleep(1)
         subprocess.run(["pw-play", CHIME])
         audio = record(10)
-        save("negative", audio)
+        save(folder, "negative", audio)
         count, best = wakes(model, audio)
         print(f"negative: woke {count}x, best {best:.2f}", flush=True)
         say("No false wakes. That's all, thank you." if not count

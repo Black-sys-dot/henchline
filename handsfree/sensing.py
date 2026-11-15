@@ -16,7 +16,8 @@ import time
 import numpy as np
 from faster_whisper.vad import VadOptions
 
-from voice.state import EC_SOURCE, EC_UNIT, HANDSFREE_LOG, JARVIS_MODEL, WAKE_MODEL, log, speaker_monitor
+from voice.state import (EC_SOURCE, EC_UNIT, HANDSFREE_LOG, JARVIS_MODEL, JARVIS_PERSONAL, WAKE_MODEL, log,
+                         speaker_monitor)
 
 RATE = 16000
 FRAME = 480  # 30 ms at 16 kHz
@@ -196,20 +197,21 @@ class Wake:
         if WAKE_MODEL.exists():
             clf = pickle.loads(WAKE_MODEL.read_bytes())
             self.detectors.append(Detector("Claude", 0.9, lambda f: clf.predict_proba(f.reshape(1, -1))[0, 1]))
-        if JARVIS_MODEL.exists():
+        # No hint for Whisper with "Jarvis": told to expect it, Whisper heard it in 19 of 20 clips of plain
+        # noise; without, 0 of 20, and every synthetic "hey Jarvis" still came out right (2026-11-15)
+        if JARVIS_PERSONAL.exists():  # the user's own, trained like "hey Claude": it fires at the word's end
+            personal = pickle.loads(JARVIS_PERSONAL.read_bytes())
+            self.detectors.append(Detector("Jarvis", 0.9, lambda f: personal.predict_proba(f.reshape(1, -1))[0, 1],
+                                           hint=False))
+        elif JARVIS_MODEL.exists():
             import onnxruntime
 
             jarvis = onnxruntime.InferenceSession(str(JARVIS_MODEL), providers=["CPUExecutionProvider"])
             name = jarvis.get_inputs()[0].name
-            # The published model scores the user's voice low from across the room (2026-11-15: hit or miss
-            # beyond arm's length at 0.5 twice): one score over 0.25 nominates, and Whisper still confirms
             score = lambda f: jarvis.run(None, {name: f.reshape(1, 16, 96)})[0][0, 0]  # noqa: E731
-            # No hint for Whisper: told to expect "Jarvis", it heard it in 19 of 20 clips of plain noise; without,
-            # 0 of 20, and every synthetic "hey Jarvis" still came out right ("Claude" with its hint: 0 of 20)
-            # Eager, it fires on "hey Jar…": checked then, the half word was rejected and the detector not
-            # yet re-armed for the rest (2026-11-15: a miss in 4 of 7). Whisper waits for the whole word
-            # Live it still fired on "hey" before "Jarvis" was out (nearest heard word 0.18): 0.7 s, and a
-            # rejected nomination re-arms the detector so the real "Jarvis" right after still counts
+            # The published model scores the user low from across the room (hit or miss beyond arm's length
+            # at 0.5 twice): one score over 0.25 nominates. That fires on "hey" before "Jarvis" is out, so
+            # Whisper waits 0.7 s for the word, and a checked nomination re-arms for the "Jarvis" after it
             self.detectors.append(Detector("Jarvis", 0.25, score, run=1, hint=False, settle=0.7))
         self.nominated: set[str] = set()  # words whose detector fired since the last confirm
         self.due = 0  # 30 ms frames still to take in before the nominated words are checked

@@ -1,5 +1,11 @@
 #!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
-"""Train a personal "hey Claude" detector from wakeword_collect.py recordings.
+"""Train a personal "hey Claude" (or "hey Jarvis") detector from wakeword_collect.py recordings.
+
+    wakeword_train.py [--word jarvis] [--finder large-v3-turbo]
+
+--finder: the Whisper model that finds the wake words in the takes (on the
+GPU when it is not "small"): small missed 6 of 20 "hey Jarvis" from across
+the room (2026-11-15).
 
 The published openWakeWord model missed most of the user's own "hey Claude"s,
 so this fits a small classifier on openWakeWord's speech embeddings instead
@@ -10,11 +16,14 @@ so this fits a small classifier on openWakeWord's speech embeddings instead
   and Kokoro voices saying ordinary sentences and near misses.
 It reports leave-one-position-out recall (train on three spots, test on the
 fourth) and the false-wake rate on held-out speech, then saves the model to
-~/.local/share/handsfree/hey_claude_personal.pkl.
+~/.local/share/handsfree/hey_claude_personal.pkl (hey_jarvis_personal.pkl).
+For "hey Jarvis" the "hey Claude" takes count as negatives too: the same
+voice, the same rooms, and the other wake word.
 """
 
 from __future__ import annotations
 
+import difflib
 import glob
 import pickle
 import re
@@ -30,7 +39,7 @@ from sklearn.preprocessing import StandardScaler
 
 REPO = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO))  # voice/
-from voice.state import KOKORO_MODELS as KOKORO, WAKE_MODEL as OUT, WAKE_SAMPLES as SAMPLES  # noqa: E402
+from voice.state import JARVIS_PERSONAL, KOKORO_MODELS as KOKORO, WAKE_MODEL, WAKE_SAMPLES  # noqa: E402
 
 RATE = 16000
 WIN = 2 * RATE  # 2 s of audio gives the 16 embedding frames a detector sees
@@ -46,6 +55,11 @@ NEGATIVE_LINES = [
     "Okay cloud, play some music.",
     "He clawed at the door until somebody let him in.",
 ]
+NEAR_MISSES = {  # per word: what sounds closest without being it
+    "claude": [],
+    "jarvis": ["Hey Travis, how are you doing?", "The jar is on the top shelf.", "Harvest season starts soon.",
+               "Hey Davis, come over here.", "Hey, service was really slow today.", "Charlie is coming over."],
+}
 
 
 def load(path: str) -> np.ndarray:
@@ -60,24 +74,30 @@ def window(audio: np.ndarray, end: int) -> np.ndarray:
     return np.concatenate([np.zeros(WIN - len(clip), np.float32), clip])
 
 
-def hey_claude_ends(model, path: str) -> list[int]:
-    """Sample index where each "Claude" (after "hey") ends."""
+def is_word(heard: str, word: str) -> bool:
+    """Whisper's word is the wake word: "Claude" exactly; a name Whisper spells its own way ("Jervis") closely."""
+    heard = re.sub(r"\W", "", heard).lower()
+    return heard == word or (word != "claude" and difflib.SequenceMatcher(None, word, heard).ratio() >= 0.8)
+
+
+def hey_word_ends(model, path: str, word: str) -> list[int]:
+    """Sample index where each wake word (after "hey") ends."""
     segments, _ = model.transcribe(path, language="en", beam_size=1, word_timestamps=True)
     words = [w for s in segments for w in s.words]
     ends = []
-    for prev, word in zip(words, words[1:]):
-        if re.sub(r"\W", "", word.word).lower() == "claude" and re.sub(r"\W", "", prev.word).lower() == "hey":
-            ends.append(int(word.end * RATE))
+    for prev, heard in zip(words, words[1:]):
+        if is_word(heard.word, word) and re.sub(r"\W", "", prev.word).lower() == "hey":
+            ends.append(int(heard.end * RATE))
     return ends
 
 
-def kokoro_negatives() -> list[np.ndarray]:
+def kokoro_negatives(word: str) -> list[np.ndarray]:
     """Ordinary sentences and near misses in a few voices, at 16 kHz."""
     from kokoro_onnx import Kokoro
 
     kokoro = Kokoro(str(KOKORO / "kokoro-v1.0.onnx"), str(KOKORO / "voices-v1.0.bin"))
     out = []
-    for line in NEGATIVE_LINES:
+    for line in NEGATIVE_LINES + NEAR_MISSES[word]:
         for voice in ["am_michael", "af_sarah", "bm_george", "af_heart"]:
             samples, rate = kokoro.create(line, voice=voice, lang="en-us")
             samples = np.interp(np.arange(0, len(samples) * RATE / rate) * rate / RATE, np.arange(len(samples)), samples)
@@ -88,7 +108,13 @@ def kokoro_negatives() -> list[np.ndarray]:
 def main() -> int:
     from faster_whisper import WhisperModel
 
-    whisper = WhisperModel("small", device="cpu", compute_type="int8")
+    options = dict(zip(sys.argv[1::2], sys.argv[2::2]))
+    word, finder = options.get("--word", "claude").lower(), options.get("--finder", "small")
+    samples, out = (WAKE_SAMPLES, WAKE_MODEL) if word == "claude" else (WAKE_SAMPLES / word, JARVIS_PERSONAL)
+    others = sorted(glob.glob(str(WAKE_SAMPLES / "*.wav"))) if word != "claude" else []  # "hey Claude" takes
+
+    whisper = (WhisperModel(finder, device="cpu", compute_type="int8") if finder == "small"
+               else WhisperModel(finder, device="cuda", compute_type="float16"))
     features = AudioFeatures(inference_framework="onnx")
 
     def embed(clips: list[np.ndarray]) -> np.ndarray:
@@ -96,21 +122,24 @@ def main() -> int:
         return x.reshape(len(clips), -1)
 
     pos, neg = {}, {}
-    for path in sorted(glob.glob(str(SAMPLES / "*.wav"))):
-        spot = Path(path).name.rsplit("-", 1)[0]
+    for path in sorted(glob.glob(str(samples / "*.wav"))) + others:
+        spot = "negative" if path in others else Path(path).name.rsplit("-", 1)[0]
         audio = load(path)
         audio = np.concatenate([np.zeros(RATE, np.float32), audio, np.zeros(RATE // 2, np.float32)])
-        ends = [e + RATE for e in hey_claude_ends(whisper, path)] if spot != "negative" else []
+        ends = [e + RATE for e in hey_word_ends(whisper, path, word)] if spot != "negative" else []
         for end in ends:
-            for shift in (-1600, 0, 1600, 3200, 4800):  # -0.1 .. +0.3 s after "Claude"
+            for shift in (-1600, 0, 1600, 3200, 4800):  # -0.1 .. +0.3 s after the word
                 for gain in (0.7, 1.0, 1.6):
                     pos.setdefault(spot, []).append(window(audio, end + shift) * gain)
+        print(f"{Path(path).name}: {len(ends)} hey {word.capitalize()}", flush=True)
+        if spot != "negative" and len(ends) < 2:  # asked for twice: an unfound one would be taught as "not it"
+            continue
         for end in range(WIN, len(audio), RATE // 4):  # every 0.25 s, away from any wake word
             if all(abs(end - e) > RATE for e in ends):
                 neg.setdefault(spot, []).append(window(audio, end))
-        print(f"{Path(path).name}: {len(ends)} hey Claude", flush=True)
+
     synthetic = []
-    for audio in kokoro_negatives():
+    for audio in kokoro_negatives(word):
         audio = np.concatenate([np.zeros(RATE, np.float32), audio])
         synthetic += [window(audio, end) for end in range(WIN, len(audio), RATE // 4)]
     print(f"positives {sum(map(len, pos.values()))}, negatives {sum(map(len, neg.values()))} + {len(synthetic)} synthetic")
@@ -135,8 +164,8 @@ def main() -> int:
         false = (clf.predict_proba(np.concatenate([N.get("negative", S[:0]), S[half:]]))[:, 1] > 0.5).mean()
         print(f"  {spot:14s} recall {hits:.0%}  false wakes on held-out speech {false:.1%}")
     clf = fit(list(X.values()), list(N.values()) + [S])
-    OUT.write_bytes(pickle.dumps(clf))
-    print(f"saved {OUT}")
+    out.write_bytes(pickle.dumps(clf))
+    print(f"saved {out}")
     return 0
 
 
