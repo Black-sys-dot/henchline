@@ -269,7 +269,12 @@ class Listener:
         return speech
 
     def woke(self, samples: np.ndarray, floor: float) -> bool:
-        if not self.wake or PAUSE.exists() or ptt_busy() or not self.wake.feed(samples):
+        if not self.wake:
+            return False
+        if PAUSE.exists() or ptt_busy():
+            self.wake.forget()  # a nomination from before must not be checked against audio from after
+            return False
+        if not self.wake.feed(samples):
             return False
         if not self.transcriber.run(self.wake.confirm):
             log(HANDSFREE_LOG, f"wake candidate rejected ({self.wake.word})")

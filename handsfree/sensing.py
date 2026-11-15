@@ -227,6 +227,11 @@ class Wake:
         self.due -= 1
         return self.due < 0
 
+    def forget(self) -> None:
+        """Drop a nomination: the listener stopped feeding (paused, push-to-talk), so its audio is gone."""
+        self.nominated.clear()
+        self.due = 0
+
     def confirm(self, whisper) -> bool:
         """Whether Whisper hears one of the nominated words; self.word says which."""
         words, self.nominated = sorted(self.nominated), set()
@@ -235,7 +240,9 @@ class Wake:
         audio = np.concatenate(self.ring).astype(np.float32) / 32768
         segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=False, hotwords=hints)
         text = " ".join(seg.text for seg in segments)
-        heard = next((word for word in words if said(word, text)), "")
+        close = {d.word for d in self.detectors if not d.hint}  # unhinted names are spelled freely; "Claude" exact
+        heard = next((word for word in words
+                      if (said(word, text) if word in close else re.search(rf"\b{word}\b", text, re.I))), "")
         self.word = heard or self.word
         return bool(heard)
 
