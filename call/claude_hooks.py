@@ -10,7 +10,8 @@ import sys
 from pathlib import Path
 
 SETTINGS = Path.home() / ".claude/settings.json"
-MIRROR = str(Path(__file__).resolve().parent / "mirror.py")
+MIRROR = str(Path(__file__).resolve().parent / "mirror.sh")
+OLD = (str(Path(__file__).resolve().parent / "mirror.py"),)  # what earlier versions added
 EVENTS = ("UserPromptSubmit", "Stop")
 
 
@@ -22,7 +23,7 @@ def main() -> int:
     hooks = settings.setdefault("hooks", {})
     for event in EVENTS:
         kept = [group for group in hooks.get(event, [])
-                if not any(h.get("command") == MIRROR for h in group.get("hooks", []))]
+                if not any(h.get("command") in (MIRROR, *OLD) for h in group.get("hooks", []))]
         if sys.argv[1] == "add":
             kept.append({"hooks": [{"type": "command", "command": MIRROR, "timeout": 5}]})
         if kept:
@@ -31,10 +32,13 @@ def main() -> int:
             hooks.pop(event, None)
     if not hooks:
         settings.pop("hooks")
-    SETTINGS.parent.mkdir(parents=True, exist_ok=True)
-    tmp = SETTINGS.with_suffix(".json.tmp")
+    target = SETTINGS.resolve()  # a linked settings file stays linked: its target is what changes
+    target.parent.mkdir(parents=True, exist_ok=True)
+    tmp = target.with_name(target.name + ".tmp")
     tmp.write_text(json.dumps(settings, indent=2) + "\n")
-    tmp.replace(SETTINGS)
+    if target.exists():
+        tmp.chmod(target.stat().st_mode & 0o777)  # it can hold tokens: as private as it was
+    tmp.replace(target)
     return 0
 
 
