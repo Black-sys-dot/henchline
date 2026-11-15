@@ -138,9 +138,10 @@ class IncomingActivity : Activity() {
         if (!isFinishing) finish()
     }
 
-    /** Backed out of the ring without a button: seen and dismissed, so a decline (no missed call). */
+    /** Backed out of the ring without a button: seen and dismissed, so a decline (no missed call). Only a
+     *  real leaving: a screen rebuilt (rotation, dark mode) is not the user saying no. */
     override fun onDestroy() {
-        tell("declined")
+        if (isFinishing) tell("declined")
         stop()
         super.onDestroy()
     }
