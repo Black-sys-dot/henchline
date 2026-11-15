@@ -190,7 +190,7 @@ install_agents() {
   if [ -d "$HOME/.cursor" ]; then
     mkdir -p "$HOME/.cursor/rules" "$HOME/.cursor/skills"
     # The Cursor rule is the same snippet under Cursor's header, made here so there is one copy of the text
-    { printf -- '---\ndescription: Talkback, tone marks and hands-free messages (from copilot-ptt/agents/AGENTS-snippet.md)\nalwaysApply: true\n---\n\n'
+    { printf -- '---\ndescription: Talkback, tone marks, hands-free messages and calling the user (from copilot-ptt/agents/AGENTS-snippet.md)\nalwaysApply: true\n---\n\n'
       cat "$snippet"; } > "$HOME/.cursor/rules/voice.mdc"
     ln -sfn "$root/talkback" "$HOME/.cursor/skills/talkback"
     keys="$HOME/.config/Cursor/User/keybindings.json"

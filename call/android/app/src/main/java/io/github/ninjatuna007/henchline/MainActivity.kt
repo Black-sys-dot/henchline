@@ -90,7 +90,10 @@ class MainActivity : Activity() {
         if (code != MIC_FOR_CALL) return
         val reply = pendingReply.also { pendingReply = null }
         if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) call(reply)
-        else say("", "The call needs the microphone: allow it, then call again.", note = true)
+        else {
+            Reply.send(reply, "unreachable")  // answered, but no microphone: the call can't be made
+            say("", "The call needs the microphone: allow it, then call again.", note = true)
+        }
     }
 
     override fun onNewIntent(intent: Intent) {

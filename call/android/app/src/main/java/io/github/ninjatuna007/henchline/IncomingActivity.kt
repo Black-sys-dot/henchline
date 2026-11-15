@@ -26,6 +26,7 @@ class IncomingActivity : Activity() {
     private var ring: MediaPlayer? = null
     private var phrase: MediaPlayer? = null
     private var reply: String? = null  // where the laptop hears how this ring went
+    private var told = false  // the laptop was told how it ended: answered, declined or missed
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -74,9 +75,10 @@ class IncomingActivity : Activity() {
             contentDescription = what
             setOnClickListener { then() }
         }
-        buttons.addView(round(R.drawable.ic_call_end, R.drawable.round_hang, "Decline") { Reply.send(reply, "declined"); stop() },
+        buttons.addView(round(R.drawable.ic_call_end, R.drawable.round_hang, "Decline") { tell("declined"); stop() },
             LinearLayout.LayoutParams((76 * dp).toInt(), (76 * dp).toInt()).apply { marginEnd = (88 * dp).toInt() })
         buttons.addView(round(R.drawable.ic_phone, R.drawable.round_call, "Answer") {
+            told = true  // the call tells the laptop the rest (answered, or couldn't connect)
             startActivity(Intent(this, MainActivity::class.java).setAction(MainActivity.ANSWER)
                 .putExtra(REPLY, reply).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
             stop()
@@ -87,7 +89,7 @@ class IncomingActivity : Activity() {
         ring = player(resourceId("ring_$agent"), loop = true, volume = 0.45f)  // started by sayAgain's first beat
         phrase = player(resourceId("phrase_${agent}_$pick"), loop = false, volume = 1f)
         sayAgain()
-        main.postDelayed({ Reply.send(reply, "missed"); stop() }, RingService.RING_SECONDS * 1000)
+        main.postDelayed({ tell("missed"); stop() }, RingService.RING_SECONDS * 1000)
     }
 
     /** The phrase over the ringtone, on the ringtone's beat: it starts with the tone's loop and again on
@@ -126,19 +128,27 @@ class IncomingActivity : Activity() {
         }
     }
 
-    private fun stop() {
+    private fun stop() {  // safe to call more than once, and with no sound loaded
         main.removeCallbacksAndMessages(null)
         ring?.release()
         phrase?.release()
         ring = null
         phrase = null
         getSystemService(NotificationManager::class.java).cancel(RingService.NOTIFICATION)
-        finish()
+        if (!isFinishing) finish()
     }
 
+    /** Backed out of the ring without a button: seen and dismissed, so a decline (no missed call). */
     override fun onDestroy() {
-        if (ring != null) stop()
+        tell("declined")
+        stop()
         super.onDestroy()
+    }
+
+    private fun tell(what: String) {
+        if (told) return
+        told = true
+        Reply.send(reply, what)
     }
 
     private fun resourceId(name: String) = resources.getIdentifier(name, "raw", packageName)
