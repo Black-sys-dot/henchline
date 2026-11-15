@@ -17,6 +17,8 @@
          height: 100dvh; display: flex; flex-direction: column; }
   header { display: flex; align-items: center; gap: .75rem; padding: .8rem 16px; border-bottom: 1px solid var(--line); }
   header h1 { font-size: 1.05rem; margin: 0; flex: 1; }
+  #agent { font: inherit; font-size: .9rem; max-width: 45vw; padding: .45rem .5rem; border-radius: 10px;
+           border: 1px solid var(--line); background: var(--card); color: var(--fg); }
   #call { border: 0; border-radius: 999px; padding: .55rem 1.1rem; font-size: 1rem; color: #fff; background: var(--call); }
   #call.on { background: var(--hang); }
   #chat { flex: 1; overflow-y: auto; padding: 1rem 16px; display: flex; flex-direction: column; gap: .5rem; }
@@ -44,6 +46,7 @@
 <body>
 <header>
   <h1>Call the agents</h1>
+  <select id="agent" aria-label="Talking to" disabled><option>No agent yet</option></select>
   <button id="call">Call</button>
 </header>
 <div id="chat"><div class="msg note">Tap Call. Then just talk, hold the round button to talk, or type below.</div></div>
@@ -104,6 +107,15 @@ function say(who, words, kind = '') {
   chat.scrollTop = chat.scrollHeight;
 }
 
+// Who the call talks to: the agents heard lately and still running; picking one switches, as saying it would
+const agentMenu = $('agent');
+function showAgents(list, current) {
+  agentMenu.replaceChildren(...list.map((a) => new Option(a.name, a.session, false, a.session === current)));
+  if (!list.length) agentMenu.append(new Option('No agent yet'));
+  agentMenu.disabled = !list.length || !ws;
+}
+agentMenu.onchange = () => send({switch: agentMenu.value});
+
 function send(message) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(message)); }
 
 async function start() {
@@ -127,6 +139,7 @@ async function start() {
     if (typeof e.data !== 'string') { speaker.port.postMessage(e.data, [e.data]); return; }
     const status = JSON.parse(e.data);
     if (status.chat) { say(status.chat.from, status.chat.text, status.chat.from === 'you' ? 'you' : ''); return; }
+    if (status.agents) { showAgents(status.agents, status.current); return; }
     state.textContent = status.state;
     talk.dataset.mode = status.mode || 'waiting';
   };
@@ -142,7 +155,7 @@ function stop() {
   if (wakeLock) wakeLock.release();
   ws = ctx = stream = wakeLock = null;
   callButton.textContent = 'Call'; callButton.classList.remove('on');
-  talk.disabled = text.disabled = true; talk.dataset.mode = 'waiting'; state.textContent = 'Not connected';
+  talk.disabled = text.disabled = agentMenu.disabled = true; talk.dataset.mode = 'waiting'; state.textContent = 'Not connected';
 }
 
 callButton.onclick = () => (ws ? stop() : start().catch((err) => { stop(); say('', err.message, 'note'); }));

@@ -19,6 +19,7 @@ import asyncio
 import ssl
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 from aiohttp import WSMsgType, web
@@ -27,8 +28,10 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
+from voice.desktop import current as desktop  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_PORT, CALL_PUSH, CALL_TLS, HANDSFREE_MODE,  # noqa: E402
-                         HANDSFREE_ON, PHONE_MIC, PHONE_SPEAKER, Phase, Playing, log, phase_now, write_json)
+                         HANDSFREE_ON, PHONE_MIC, PHONE_SPEAKER, Phase, Playing, last_speaker, log, phase_now,
+                         recent_speakers, write_json)
 from voice.state import HANDSFREE_LOG  # noqa: E402  (calls are logged with hands-free, which they drive)
 
 MIC_RATE = 16000  # what the page sends: what hands-free listens at
@@ -37,6 +40,7 @@ CHUNK = SPEAKER_RATE // 50 * 2  # bytes of s16 mono sent to the phone at a time:
 
 
 STATUS_EVERY = 0.2  # seconds between looks at what hands-free and talkback are doing
+AGENTS_EVERY = 3.0  # seconds between looks at which agents can be switched to
 
 
 class Status:
@@ -116,8 +120,26 @@ async def from_page(message: dict) -> None:
         CALL_PUSH.touch() if message["push"] else CALL_PUSH.unlink(missing_ok=True)
     elif "button_only" in message:
         CALL_BUTTON_ONLY.touch() if message["button_only"] else CALL_BUTTON_ONLY.unlink(missing_ok=True)
+    elif "switch" in message:
+        await asyncio.get_running_loop().run_in_executor(None, switch, message["switch"])
     elif words := message.get("chat", "").strip():
         await asyncio.get_running_loop().run_in_executor(None, typed, words)
+
+
+def agents() -> dict:
+    """The agents a call can switch to: heard lately and still running, and the one replies go to now."""
+    current, locked = last_speaker(), desktop().locked()
+    return {"agents": [{"session": s.session, "name": s.spoken() + (" (laptop locked)" if s.in_editor and locked else "")}
+                       for s in recent_speakers() if routing.reachable(s)],
+            "current": current.session if current else ""}
+
+
+def switch(session: str) -> None:
+    """The page's agent menu: replies go to that agent now, announced as when spoken."""
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    if target and routing.reachable(target):
+        routing.switch_to(target)
+        routing.say(f"Now talking to {target.spoken()}.")
 
 
 def typed(words: str) -> None:
@@ -156,7 +178,14 @@ async def call(request: web.Request) -> web.WebSocketResponse:
         async def show_status() -> None:
             status, shown = Status(), None
             try:
+                listed, shown_agents = 0.0, None
                 while not ws.closed:
+                    if time.monotonic() - listed > AGENTS_EVERY:  # the menu: who is reachable, who is current
+                        listed = time.monotonic()
+                        now_agents = await asyncio.get_running_loop().run_in_executor(None, agents)
+                        if now_agents != shown_agents:
+                            await ws.send_json(now_agents)
+                            shown_agents = now_agents
                     for event in status.events():
                         await ws.send_json(event)
                     now = status.now()
