@@ -21,6 +21,7 @@ from voice.desktop import current as desktop
 from voice.state import BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, Speaker, last_speaker, log, recent_speakers
 
 SAY = Path(__file__).resolve().parent.parent / "talkback/scripts/say.py"
+RAISE_TRIES = 3  # attempts to bring Cursor's window to the front before giving up
 AFTER_SWITCH = 30.0  # seconds to start talking after "Now talking to …"
 
 
@@ -177,14 +178,29 @@ def type_into_cursor(wid: str, message: str) -> bool:
     screen = desktop()
     if not screen.set_clipboard(message):
         return False
-    screen.raise_window(wid)
-    time.sleep(0.4)
+    for _ in range(RAISE_TRIES):
+        screen.raise_window(wid)
+        time.sleep(0.4)
+        if in_front(screen, wid):
+            break
+    else:
+        # KWin can refuse a background program's raise; keys pressed now would land in the focused
+        # window instead (a message once went into Telegram, 2026-11-15), so press nothing
+        log(HANDSFREE_LOG, f"Cursor's window did not come to the front (focus: {screen.focused().app.strip()})")
+        return False
     screen.press("ctrl", "alt", "shift", "f12")
     time.sleep(0.3)
+    if not in_front(screen, wid):  # the user switched away meanwhile
+        return False
     screen.press("ctrl", "v")
     time.sleep(0.2)
     screen.press("return")
     return True
+
+
+def in_front(screen, wid: str) -> bool:
+    focused = screen.focused().id
+    return bool(focused) and int(focused, 16) == int(wid, 16)
 
 
 def deliver(text: str, heard: Heard) -> bool:
@@ -205,6 +221,9 @@ def deliver(text: str, heard: Heard) -> bool:
         ok = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "handsfree.py"),
                              "type-into-cursor", wid, message], timeout=20).returncode == 0
         log(HANDSFREE_LOG, f"sent to cursor window {speaker.where}" if ok else "Cursor delivery failed")
+        if not ok:
+            say("I couldn't bring Cursor's window to the front, so I didn't type that anywhere. "
+                "Click Cursor's window and say it again.")
         return ok
     if not tab:
         log(HANDSFREE_LOG, f"no terminal tab for {speaker.agent}")

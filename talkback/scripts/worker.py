@@ -89,6 +89,8 @@ class Voice:
                 name = clip.agent.capitalize()
                 sentences, intro = [f"{name} here, from {clip.where}."] + sentences, 1
             Speaker(clip.session, clip.agent, clip.where, clip.konsole).remember()
+        # The words too: hands-free checks what it hears over a clip against them (its own echo)
+        write_json(PLAYING, {"clip": path.name, "session": clip.session, "text": " ".join(sentences)})
         voice = clip.voice or VOICES.get(clip.agent, DEFAULT_VOICE)
         ready: queue.Queue = queue.Queue(maxsize=2)
         done = threading.Event()

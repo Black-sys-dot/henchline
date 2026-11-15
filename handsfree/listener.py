@@ -50,12 +50,8 @@ OVER_TAIL = 4 * PER_SECOND  # frames Whisper looks at for "over"
 PTT_CHECK = 10  # frames between checks that push-to-talk has not taken the mic
 PREROLL = 15  # frames kept from before speech started
 MAX_SECONDS = 120  # the user talks in long stretches; 60 s cut them off
-SUSTAIN = 0.8  # seconds of voice, added up, before talking over stops a clip (0.5 let echo slips through at 80%, 2026-11-15)
-WARY_SUSTAIN = 2  # times as much voice while wary: an echo slip at 0.5 s cut a clip then (2026-11-15)
-CLIP_START = 4.0  # seconds: our echo slipped through mostly at the start of a clip ("You're right", "Hands free",
-# "Welcome back", "came to me as a message" were each a clip's first words), so talking over needs more there.
-# The start is when our voice is heard after a silence, not when talkback begins a clip: rendering takes seconds
-ONSET_QUIET = 1.0  # seconds of silent playback before our voice counts as starting again
+SUSTAIN = 0.6  # seconds of voice, added up, before talking over is checked (echo_of_clip) and stops a clip
+ONSET_QUIET = 1.0  # seconds of silent playback before our voice counts as starting again (for the log)
 AUDIBLE_DB = -45  # playback louder than this is our voice
 GAP = 1.5  # seconds without a voice that end a talk-over attempt: the user spoke in 1.5 s phrases with pauses
 STEP = CHECK_EVERY * FRAME / RATE  # seconds of voice one positive check stands for
@@ -67,6 +63,7 @@ SPEECH = VadOptions(threshold=0.6, min_speech_duration_ms=250, min_silence_durat
 SPEECH_OVER = VadOptions(threshold=0.5, min_speech_duration_ms=300, min_silence_duration_ms=100, speech_pad_ms=0)
 WAKE_PREFIX = re.compile(r"^\W*((hey|hi|okay|ok)\W+)?claude\W*", re.I)
 OVER = re.compile(r"[\s,.!?]*\bover\b[\s.!?]*$", re.I)
+OWN_WORDS = 0.6  # share of what was heard over a clip that must be the clip's own words, in order, to call it echo
 TONE_NOTE = re.compile(r"\s*\[tone: [^\]]*\]$")
 
 
@@ -110,6 +107,7 @@ class Overlap:
     last: float  # last time it still sounded like speech
     frames: list
     first: str  # how the first check looked, for the log
+    clip_text: str = ""  # what we were saying, to tell our own echo from the user
     voiced: float = STEP  # seconds that sounded like speech, added up
 
     def speaking_for(self) -> float:
@@ -126,6 +124,26 @@ def ptt_busy() -> bool:
     return phase is not Phase.IDLE and by != BY_HANDSFREE
 
 
+def our_own_words(heard: str, said: str) -> bool:
+    """Is what stopped a clip mostly that clip's own words, in order? Then it was our echo.
+
+    The canceller sometimes lets our voice through for two or three seconds,
+    long enough for any loudness rule; Whisper then writes out our own words
+    ("Your Cursor test worked", 2026-11-15). The user talking over us says
+    something else. A single word is too little to tell.
+    """
+    heard_words, said_words = re.findall(r"[a-z0-9']+", heard.lower()), re.findall(r"[a-z0-9']+", said.lower())
+    if len(heard_words) < 2 or not said_words:
+        return False
+    # longest common subsequence of words
+    row = [0] * (len(said_words) + 1)
+    for word in heard_words:
+        prev = 0
+        for j, other in enumerate(said_words, 1):
+            prev, row[j] = row[j], prev + 1 if word == other else max(row[j], row[j - 1])
+    return row[-1] / len(heard_words) >= OWN_WORDS
+
+
 def floor_of(history: collections.deque, fallback: float) -> float:
     return float(np.percentile(history, 20)) if len(history) > FLOOR_MIN else fallback
 
@@ -137,6 +155,7 @@ class Listener:
         self.stream, self.opened, self.frames_read = None, 0.0, 0
         self.over: Overlap | None = None  # talking over a clip, not yet long enough to stop it
         self.last_check = ""
+        self.talked_over = ""  # the clip's words when the user last talked over it
         self.mode = Mode.WAITING
         self.window = Window()
         self.wake = Wake.available()
@@ -307,7 +326,8 @@ class Listener:
             history.append(db)
             if speech or self.still_speaking():  # a quiet voice starts it too: SUSTAIN keeps our echo bursts out
                 into = f"{now - self.onset:.1f}s after our voice started" if self.play_started else "after the clip"
-                self.over = Overlap(now, now, list(self.preroll), self.last_check if speech else f"a voice, quieter, {into}")
+                self.over = Overlap(now, now, list(self.preroll), self.last_check if speech else f"a voice, quieter, {into}",
+                                    read_json(PLAYING).get("text", ""))
             return False
         self.over.frames.append(frame)
         if speech or self.still_speaking():
@@ -318,14 +338,32 @@ class Listener:
                                f"then quiet: kept playing (first: {self.over.first})")
             self.over = None
             return False
-        early = self.over.started - self.onset < CLIP_START
-        if self.over.voiced < SUSTAIN * (WARY_SUSTAIN if self.wary() or early else 1):
+        if self.over.voiced < SUSTAIN:
             return False
         over, self.over = self.over, None
+        if self.echo_of_clip(over):
+            log(HANDSFREE_LOG, f"talking over: {over.voiced:.1f}s of voice, but the clip's own words: "
+                               f"our echo, kept playing (first: {over.first})")
+            self.restart_due |= self.echo_watch.may_restart()
+            self.wary_until = time.monotonic() + WARY
+            return False
+        self.talked_over = over.clip_text
         log(HANDSFREE_LOG, f"talking over: {over.voiced:.1f}s of voice in {over.speaking_for():.1f}s: "
                            f"stopping the clip (first: {over.first})")
         self.turn(over.frames, Heard.OVER_YOU, floor)
         return True
+
+    def echo_of_clip(self, over: Overlap) -> bool:
+        """Before stopping a clip: are the words heard over it the clip's own? Then keep playing.
+
+        Checking after the stop let the resumed clip's echo cut it again, over and over.
+        """
+        if not over.clip_text:
+            return False
+        audio = np.concatenate(over.frames)
+        text = self.whisper(lambda model: " ".join(
+            seg.text for seg in model.transcribe(audio, language="en", beam_size=1, vad_filter=False)[0]))
+        return our_own_words(text, over.clip_text)
 
     def talking(self, frame: np.ndarray, db: float, floor: float, playing: bool) -> bool:
         """Is the user speaking now (and, over a clip, not just our own echo)?"""
@@ -450,6 +488,13 @@ class Listener:
             note = tone.group(0) if tone else ""
             rich = rich[: len(rich) - len(note)] if note else rich
             text, rich = WAKE_PREFIX.sub("", OVER.sub("", text)), WAKE_PREFIX.sub("", OVER.sub("", rich)) + note
+            if heard is Heard.OVER_YOU and our_own_words(text, self.talked_over):
+                log(HANDSFREE_LOG, f"what stopped the clip was its own words ({len(text.split())}): "
+                                   "our echo; the clip plays on, nothing sent")
+                self.restart_due |= self.echo_watch.may_restart()
+                self.wary_until = time.monotonic() + WARY
+                set_target(False)
+                return None
             return self.act(text, rich, heard)
         finally:
             release_phase(BY_HANDSFREE)  # act() normally has already, before anything is sent
