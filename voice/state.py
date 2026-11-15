@@ -46,6 +46,25 @@ CLOSE = STATE / "handsfree.close"  # end the reply window now
 HANDSFREE_LOG = STATE / "handsfree.log"
 HANDSFREE_WAV = STATE / "handsfree.wav"  # a turn being transcribed, deleted after
 
+# A phone call (call/): while CALL exists, hands-free hears PHONE_MIC and talkback plays into PHONE_SPEAKER
+CALL = STATE / "call"
+PHONE_MIC = "phone_mic"  # a virtual sink the call page writes the phone's mic into; listened to as its monitor
+PHONE_SPEAKER = "phone_speaker"  # a virtual sink talkback plays into during a call; streamed to the phone
+
+
+def in_call() -> bool:
+    return CALL.exists()
+
+
+def mic_source() -> str:
+    """Where hands-free listens: the phone during a call, the echo-cancelled laptop mic otherwise."""
+    return f"{PHONE_MIC}.monitor" if in_call() else EC_SOURCE
+
+
+def speaker_sink() -> str:
+    """Where talkback plays: the phone during a call, the default output otherwise."""
+    return PHONE_SPEAKER if in_call() else "@DEFAULT_SINK@"
+
 # Data, not state: models, settings and recordings
 SHARE = Path.home() / ".local/share"
 VENV = SHARE / "copilot-ptt/venv"  # the private Python every tool runs on (its path is also in each shebang)

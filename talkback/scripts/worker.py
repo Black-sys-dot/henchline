@@ -21,7 +21,7 @@ from pathlib import Path
 
 from voice import spool
 from voice.state import (BY_HANDSFREE, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing, Speaker,
-                         last_speaker, log, mic_busy, read_json, target_since)
+                         last_speaker, log, mic_busy, read_json, speaker_sink, target_since)
 
 THREADS = int(os.environ.get("TALKBACK_THREADS", "4"))  # CPU threads: 4 measured best (latency vs load)
 RATE = 24000
@@ -108,7 +108,7 @@ class Voice:
                 ready.put(None)
 
         threading.Thread(target=make, daemon=True).start()
-        player = subprocess.Popen(PLAYER, stdin=subprocess.PIPE)
+        player = subprocess.Popen([*PLAYER, f"--device={speaker_sink()}"], stdin=subprocess.PIPE)  # the phone, in a call
         piece = int(RATE * PIECE)
         spoken, cut, self.skip = 0, False, False
         try:

@@ -17,15 +17,15 @@ from dataclasses import dataclass
 import numpy as np
 
 from routing import Heard
-from sensing import (EC_SOURCE, FRAME, PER_SECOND, RATE, EarbudButton, EchoWatch, Output, Playback, Wake, level,
+from sensing import (FRAME, PER_SECOND, RATE, EarbudButton, EchoWatch, Output, Playback, Wake, level,
                      mic_stream, read_frame, start_canceller)
 from talkover import TalkOver, Verdict
 from turn import Mode, Turn
 from voicegate import VoiceGate
 from voice import whisper
 from voice.spool import queued
-from voice.state import (BY_HANDSFREE, CLOSE, HANDSFREE_LOG, LISTEN, PAUSE, PLAYING, WORKER_PID, log, ptt_busy,
-                         release_phase)
+from voice.state import (BY_HANDSFREE, CLOSE, HANDSFREE_LOG, LISTEN, PAUSE, PLAYING, WORKER_PID, log, mic_source,
+                         ptt_busy, release_phase)
 
 WINDOW = 8.0  # seconds to answer after a clip
 FOLLOW = 6.0  # seconds to carry on after their own message (once, never chained)
@@ -68,7 +68,7 @@ class Listener:
         self.cfg, self.stop = cfg, stop
         self.canceller_since = canceller_since
         self.transcriber = transcriber
-        self.stream, self.opened, self.frames_read = None, 0.0, 0
+        self.stream, self.source, self.opened, self.frames_read = None, "", 0.0, 0
         self.talkover = TalkOver(self.transcriber.quick_text)
         self.turns = Turn(cfg, self.transcriber, self.talkover, self.read, self.show, self.echo_slipped, stop)
         self.last_check = ""
@@ -108,6 +108,7 @@ class Listener:
                     self.window.open(WINDOW, Heard.REPLY, never_shorter=True)
                 was_busy = busy
                 self.follow_requests()
+                self.follow_source()
                 if self.button.tap.is_set():
                     self.button.tap.clear()
                     if not ptt_busy():
@@ -128,8 +129,16 @@ class Listener:
         self.mode = mode
 
     def open_stream(self) -> None:
-        self.stream = mic_stream(EC_SOURCE)
+        self.source = mic_source()  # the phone's mic during a call
+        self.stream = mic_stream(self.source)
         self.opened, self.frames_read = time.monotonic(), 0
+        log(HANDSFREE_LOG, f"listening to {self.source}")
+
+    def follow_source(self) -> None:
+        """A call started or ended: listen to the phone, or to the laptop mic again."""
+        if self.frames_read % PER_SECOND == 0 and mic_source() != self.source:
+            self.stream.terminate()
+            self.open_stream()
 
     def read(self) -> np.ndarray | None:
         self.frames_read += 1

@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Call the agents</title>
+<style>
+  :root { --bg: #f6f5f2; --fg: #1d1d1b; --muted: #6b6a66; --go: #2e7d4f; --stop: #b3322b; --card: #ffffff; }
+  @media (prefers-color-scheme: dark) { :root { --bg: #141413; --fg: #ecebe6; --muted: #9a9892; --card: #1f1f1d; } }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.45 system-ui, sans-serif;
+         min-height: 100vh; display: flex; align-items: center; justify-content: center; }
+  main { width: min(420px, 100% - 32px); text-align: center; }
+  h1 { font-size: 1.4rem; margin: 0 0 .3rem; }
+  p { color: var(--muted); margin: .2rem 0 1.4rem; }
+  button { width: 100%; padding: 1.1rem; font-size: 1.2rem; border: 0; border-radius: 14px; color: #fff;
+           background: var(--go); }
+  button.on { background: var(--stop); }
+  #state { margin-top: 1rem; min-height: 1.5em; }
+  meter { width: 100%; height: 10px; margin-top: .8rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Call the agents</h1>
+  <p>Talk the way you do at home: hands-free hears you, and the agent that spoke last answers out loud here.</p>
+  <button id="call">Call</button>
+  <meter id="level" min="0" max="1" value="0"></meter>
+  <div id="state">Not connected</div>
+</main>
+<script>
+// Two small audio worklets: one sends the mic as 16 kHz 16-bit, one plays what the laptop sends (24 kHz 16-bit)
+const worklets = `
+class Mic extends AudioWorkletProcessor {
+  constructor() { super(); this.step = sampleRate / 16000; this.pos = 0; this.buf = []; }
+  process([input]) {
+    const ch = input[0]; if (!ch) return true;
+    let peak = 0;
+    for (; this.pos < ch.length; this.pos += this.step) {
+      const s = Math.max(-1, Math.min(1, ch[Math.floor(this.pos)])); this.buf.push(s * 32767); peak = Math.max(peak, Math.abs(s));
+    }
+    this.pos -= ch.length;
+    if (this.buf.length >= 320) { this.port.postMessage({pcm: Int16Array.from(this.buf).buffer, peak}); this.buf = []; }
+    return true;
+  }
+}
+class Speaker extends AudioWorkletProcessor {
+  constructor() {
+    super(); this.step = 24000 / sampleRate; this.queue = []; this.cur = null; this.pos = 0;
+    this.port.onmessage = (e) => { this.queue.push(new Int16Array(e.data)); if (this.queue.length > 50) this.queue.splice(0, 25); };
+  }
+  process(_, [output]) {
+    const out = output[0];
+    for (let i = 0; i < out.length; i++) {
+      if (!this.cur || this.pos >= this.cur.length) { this.cur = this.queue.shift(); this.pos = 0; }
+      out[i] = this.cur ? this.cur[Math.floor(this.pos)] / 32768 : 0;
+      if (this.cur) this.pos += this.step;
+    }
+    return true;
+  }
+}
+registerProcessor('mic', Mic); registerProcessor('speaker', Speaker);`;
+
+const button = document.getElementById('call'), state = document.getElementById('state'), meter = document.getElementById('level');
+let ws = null, ctx = null, stream = null, wakeLock = null;
+
+async function start() {
+  state.textContent = 'Starting…';
+  stream = await navigator.mediaDevices.getUserMedia(
+    {audio: {echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1}});
+  ctx = new AudioContext();
+  await ctx.audioWorklet.addModule(URL.createObjectURL(new Blob([worklets], {type: 'application/javascript'})));
+  const mic = new AudioWorkletNode(ctx, 'mic'), speaker = new AudioWorkletNode(ctx, 'speaker');
+  ctx.createMediaStreamSource(stream).connect(mic);
+  speaker.connect(ctx.destination);
+  ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/call`);
+  ws.binaryType = 'arraybuffer';
+  ws.onopen = () => { state.textContent = 'Connected: talk any time'; button.textContent = 'Hang up'; button.classList.add('on'); };
+  ws.onmessage = (e) => speaker.port.postMessage(e.data, [e.data]);
+  ws.onclose = (e) => { stop(); state.textContent = e.reason || 'Call ended'; };
+  mic.port.onmessage = (e) => { meter.value = e.data.peak; if (ws.readyState === 1) ws.send(e.data.pcm); };
+  try { wakeLock = await navigator.wakeLock.request('screen'); } catch (_) {}
+}
+
+function stop() {
+  if (ws && ws.readyState <= 1) ws.close();
+  if (stream) stream.getTracks().forEach((t) => t.stop());
+  if (ctx) ctx.close();
+  if (wakeLock) wakeLock.release();
+  ws = ctx = stream = wakeLock = null;
+  button.textContent = 'Call'; button.classList.remove('on'); meter.value = 0;
+}
+
+button.onclick = () => (ws ? (stop(), state.textContent = 'Call ended') : start().catch((err) => { stop(); state.textContent = err.message; }));
+</script>
+</body>
+</html>
