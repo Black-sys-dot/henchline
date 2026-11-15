@@ -1,6 +1,15 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
+}
+
+// A release is signed with a key kept outside the repository: ~/.config/henchline/signing.properties
+// (storeFile, storePassword, keyAlias, keyPassword). Without it, only debug builds are signed.
+val signing = Properties().apply {
+    val file = File(System.getProperty("user.home"), ".config/henchline/signing.properties")
+    if (file.exists()) file.inputStream().use { load(it) }
 }
 
 android {
@@ -11,8 +20,20 @@ android {
         applicationId = "io.github.ninjatuna007.henchline"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = 2
+        versionName = "1.0"
+    }
+    signingConfigs {
+        if (signing.getProperty("storeFile") != null) create("release") {
+            storeFile = File(signing.getProperty("storeFile"))
+            storePassword = signing.getProperty("storePassword")
+            keyAlias = signing.getProperty("keyAlias")
+            keyPassword = signing.getProperty("keyPassword")
+        }
+    }
+    buildTypes {
+        // A release has the default (generated) henchman phrases: your own voice is in src/debug only
+        getByName("release") { signingConfig = signingConfigs.findByName("release") }
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
