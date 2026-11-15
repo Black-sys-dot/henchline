@@ -49,6 +49,13 @@ class Mode(str, Enum):
     TRANSCRIBING = "transcribing"
 
 
+def only_hint_words(text: str, hotwords: list[str]) -> bool:
+    """Whisper given noise writes out the names it was told to expect ("Cursor, Codex, Kokoro",
+    2026-11-15): a transcript of nothing but those is not the user talking."""
+    words = re.findall(r"[a-z']+", text.lower())
+    return bool(words) and set(words) <= {w.lower() for w in hotwords}
+
+
 class Turn:
     def __init__(self, cfg: whisper.Config, transcriber: whisper.Transcriber, talkover: TalkOver,
                  read: Callable[[], np.ndarray | None], show: Callable[[Mode], None],
@@ -68,6 +75,10 @@ class Turn:
             note = tone.group(0) if tone else ""
             rich = rich[: len(rich) - len(note)] if note else rich
             text, rich = WAKE_PREFIX.sub("", OVER.sub("", text)), WAKE_PREFIX.sub("", OVER.sub("", rich)) + note
+            if only_hint_words(text, self.cfg.hotwords):
+                log(HANDSFREE_LOG, "only Whisper's hint words: a noise, nothing sent")
+                set_target(False)
+                return None
             taken = self.talkover.taken
             if heard is Heard.OVER_YOU and taken and our_own_words(text, taken.clip_text):
                 self.echo_slipped(f"what stopped the clip was its own words ({len(text.split())}): "
