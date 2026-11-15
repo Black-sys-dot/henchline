@@ -114,13 +114,16 @@ def main() -> int:
     options = dict(zip(sys.argv[1::2], sys.argv[2::2]))
     word, finder = options.get("--word", "claude").lower(), options.get("--finder", "small")
     samples, out = (WAKE_SAMPLES, WAKE_MODEL) if word == "claude" else (WAKE_SAMPLES / word, JARVIS_PERSONAL)
-    # The other wake words' takes are negatives: same voice and rooms, and the nearest thing to a confusion
+    # The other wake words' takes are negatives: same voice and rooms, and the nearest thing to a confusion.
+    # For "claude" that is every word folder under samples/, any future one included
     others = sorted(glob.glob(str(WAKE_SAMPLES / ("*.wav" if word != "claude" else "*/*.wav"))))
     # The user's ordinary speech (asr_collect.py's sentences, minus any that say the word): "feather" fooled
     # a detector that had heard 10 s of it (2026-11-15)
-    if (asr := WAKE_SAMPLES.parent / "asr-set" / "set.json").exists():
-        others += [str(asr.parent / take) for take, text in sorted(json.loads(asr.read_text()).items())
-                   if word not in text.lower() and (asr.parent / take).exists()]
+    asr = [str(index.parent / take) for index in sorted((WAKE_SAMPLES.parent / "asr-set").glob("**/set.json"))
+           for take, text in sorted(json.loads(index.read_text()).items())
+           if word not in text.lower() and (index.parent / take).exists()]  # both rounds: loose and --strict
+    print(f"{len(asr)} takes of ordinary speech as negatives", flush=True)
+    others += asr
 
     whisper = (WhisperModel(finder, device="cpu", compute_type="int8") if finder == "small"
                else WhisperModel(finder, device="cuda", compute_type="float16"))
