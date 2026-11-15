@@ -66,6 +66,7 @@ OVER = re.compile(r"[\s,.!?]*\bover\b[\s.!?]*$", re.I)
 OWN_WORDS_MIN = 2  # words heard before telling our echo from the user
 UNSURE_LIMIT = 2.0  # seconds of voice after which it stops the clip even if the words stayed too few
 RECHECK = 0.3  # more seconds of voice before looking at the words again
+OWN_RUN, OWN_SHARE = 3, 0.3  # or at least this many of the clip's words, in order, making up this share
 OWN_WORDS = 0.6  # share of what was heard over a clip that must be the clip's own words, in order, to call it echo
 TONE_NOTE = re.compile(r"\s*\[tone: [^\]]*\]$")
 
@@ -156,7 +157,10 @@ def our_own_words(heard: str, said: str) -> bool:
         prev = 0
         for j, other in enumerate(said_words, 1):
             prev, row[j] = row[j], prev + 1 if word == other else max(row[j], row[j - 1])
-    return row[-1] / len(heard_words) >= OWN_WORDS
+    shared = row[-1]
+    # Whisper adds words of its own to echo ("That was a pretty good question, slowly, while nobody wa-":
+    # all ours, 2026-11-15), so a run of our words counts even among others
+    return shared / len(heard_words) >= OWN_WORDS or (shared >= OWN_RUN and shared / len(heard_words) >= OWN_SHARE)
 
 
 def floor_of(history: collections.deque, fallback: float) -> float:
