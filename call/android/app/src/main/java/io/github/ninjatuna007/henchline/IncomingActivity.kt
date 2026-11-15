@@ -27,6 +27,8 @@ class IncomingActivity : Activity() {
     private var phrase: MediaPlayer? = null
     private var reply: String? = null  // where the laptop hears how this ring went
     private var told = false  // the laptop was told how it ended: answered, declined or missed
+    private var agent = "handsfree"
+    private var why = ""
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -34,8 +36,9 @@ class IncomingActivity : Activity() {
         setTurnScreenOn(true)
         // Opened from a ringing banner (the phone was in use): this screen rings now, so the banner's tone stops
         getSystemService(NotificationManager::class.java).cancel(RingService.NOTIFICATION)
-        val agent = (intent.getStringExtra(AGENT) ?: "").takeIf { it in FLAVOURS } ?: "handsfree"
-        val why = intent.getStringExtra(WHY) ?: ""
+        showing = java.lang.ref.WeakReference(this)
+        agent = (intent.getStringExtra(AGENT) ?: "").takeIf { it in FLAVOURS } ?: "handsfree"
+        why = intent.getStringExtra(WHY) ?: ""
         reply = intent.getStringExtra(REPLY)
         val lines = phrasesOf(agent)
         val pick = lines.indices.random()
@@ -77,10 +80,11 @@ class IncomingActivity : Activity() {
             contentDescription = what
             setOnClickListener { then() }
         }
-        buttons.addView(round(R.drawable.ic_call_end, R.drawable.round_hang, "Decline") { tell("declined"); stop() },
+        buttons.addView(round(R.drawable.ic_call_end, R.drawable.round_hang, "Decline") { tell("declined"); Ringing.end(this); stop() },
             LinearLayout.LayoutParams((76 * dp).toInt(), (76 * dp).toInt()).apply { marginEnd = (88 * dp).toInt() })
         buttons.addView(round(R.drawable.ic_phone, R.drawable.round_call, "Answer") {
             told = true  // the call tells the laptop the rest (answered, or couldn't connect)
+            ended = true
             startActivity(Intent(this, MainActivity::class.java).setAction(MainActivity.ANSWER)
                 .putExtra(REPLY, reply).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
             stop()
@@ -91,7 +95,7 @@ class IncomingActivity : Activity() {
         ring = player(resourceId("ring_$agent"), loop = true, volume = 0.45f)  // started by sayAgain's first beat
         phrase = player(resourceId("phrase_${agent}_$pick"), loop = false, volume = 1f)
         sayAgain()
-        main.postDelayed({ tell("missed"); stop() }, RingService.RING_SECONDS * 1000)
+        main.postDelayed({ tell("missed"); Ringing.end(this); stop() }, maxOf(1, Ringing.secondsLeft(this)) * 1000)
     }
 
     /** The phrase over the ringtone, on the ringtone's beat: it starts with the tone's loop and again on
@@ -115,7 +119,9 @@ class IncomingActivity : Activity() {
         val sound = MediaPlayer()
         return try {
             sound.apply {
-                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                // In Do Not Disturb a ringtone is silenced: the ring plays as an alarm, which gets through
+                val usage = if (DoNotDisturb.on(this@IncomingActivity)) AudioAttributes.USAGE_ALARM else AudioAttributes.USAGE_NOTIFICATION_RINGTONE
+                setAudioAttributes(AudioAttributes.Builder().setUsage(usage)
                     .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
                 resources.openRawResourceFd(id).use { setDataSource(it.fileDescriptor, it.startOffset, it.length) }
                 isLooping = loop
@@ -136,16 +142,32 @@ class IncomingActivity : Activity() {
         phrase?.release()
         ring = null
         phrase = null
-        getSystemService(NotificationManager::class.java).cancel(RingService.NOTIFICATION)
         if (!isFinishing) finish()
     }
 
-    /** Backed out of the ring without a button: seen and dismissed, so a decline (no missed call). Only a
-     *  real leaving: a screen rebuilt (rotation, dark mode) is not the user saying no. */
+    /** Left without a button (back, home, another app): the call keeps ringing as a banner with Answer and
+     *  Decline until it times out, as a phone call does (2026-11-15: leaving counted as declining, and the
+     *  call was gone). A screen rebuilt (rotation, dark mode) is not leaving either. */
     override fun onDestroy() {
-        if (isFinishing) tell("declined")
+        val left = isFinishing && !told && !ended && Ringing.now(this) != null
         stop()
+        if (left) RingService.ringNow(this, agent, why, reply, banner = true, seconds = Ringing.secondsLeft(this))
+        if (showing?.get() === this) showing = null
         super.onDestroy()
+    }
+
+    override fun onUserLeaveHint() {  // home or recents: leaving the ring, not answering it
+        super.onUserLeaveHint()
+        if (!isFinishing) finish()
+    }
+
+    private var ended = false  // stopped by Ringing.end: answered elsewhere, or over
+
+    /** Ended from outside (answered from the app, or a call made by hand): no banner after it. */
+    fun quietly() {
+        ended = true
+        told = true
+        stop()
     }
 
     private fun tell(what: String) {
@@ -163,6 +185,7 @@ class IncomingActivity : Activity() {
     }
 
     companion object {
+        @Volatile var showing: java.lang.ref.WeakReference<IncomingActivity>? = null  // the ring screen, while up
         const val AGENT = "agent"
         const val WHY = "why"
         const val REPLY = "reply"

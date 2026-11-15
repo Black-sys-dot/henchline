@@ -82,6 +82,8 @@ def main() -> int:
         if problem:
             out.unlink(missing_ok=True)  # the app's default phrase, rather than a broken one
         print(take.stem, problem or "ok", flush=True)
+    import banner_mix  # the banner's ring: tone and phrases in one file
+    banner_mix.main()
     return 0
 
 

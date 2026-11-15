@@ -1,6 +1,5 @@
 package io.github.ninjatuna007.henchline
 
-import android.app.NotificationManager
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
@@ -10,7 +9,7 @@ import android.content.Intent
 class RingActions : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != DECLINE) return
-        context.getSystemService(NotificationManager::class.java).cancel(RingService.NOTIFICATION)
+        Ringing.end(context)
         Reply.send(intent.getStringExtra(IncomingActivity.REPLY), "declined")
     }
 

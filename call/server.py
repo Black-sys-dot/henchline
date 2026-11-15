@@ -39,7 +39,8 @@ import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
-from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_ORIGIN, CALL_PORT, CALL_PUSH,  # noqa: E402
+from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
+                         CALL_PORT, CALL_PUSH,
                          CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
                          PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SENT, SPEAKERS,
                          SPOOL, Sent, Speaker, in_call, last_speaker, log, phase_now, read_json,
@@ -91,6 +92,12 @@ class Status:
             self.clip = playing.clip
             lines.append({"chat": {"from": playing.agent.capitalize(), "text": playing.text,
                                    "session": playing.session}})
+        for line in sorted(CALL_MIRROR.glob("*.json")):  # typed in the terminal, or written there (call/mirror.py)
+            mirrored = read_json(line)
+            line.unlink(missing_ok=True)
+            if mirrored.get("text"):
+                lines.append({"chat": {"from": mirrored.get("from", "Claude"), "session": mirrored.get("session", ""),
+                                       "text": ("⌨ " if mirrored.get("from") == "you" else "") + mirrored["text"]}})
         for meta in files.undelivered():  # `handsfree send`: a file in the chat, or one that never reached the phone
             files.delivered(meta)
             lines.append({"chat": {"from": meta["agent"].capitalize(), "text": meta["text"], "session": meta["session"],
@@ -216,7 +223,8 @@ def route_to_ringer(reply: str) -> None:
         log(HANDSFREE_LOG, f"call: answering {speaker.agent}'s ring, so to {speaker.agent}")
         return
     name, now = str(ringer.get("agent", "the agent")).capitalize(), last_speaker()
-    where = f"so your words go to {now.spoken()}. Say switch me to, to change" if now else "so pick someone: say switch me to"
+    where = (f"so your words go to {now.spoken()}. Say switch me to, to change" if now
+             else "so pick someone: say switch me to")
     routing.say(f"{name} rang, but I can't type to it yet, {where}.")
     log(HANDSFREE_LOG, f"call: answering {name}'s ring, but it can't be reached yet")
 
@@ -406,6 +414,8 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             "--channels=1", "--latency-msec=40", "--client-name=phone-call", stdout=asyncio.subprocess.PIPE)
         CALL_HANGUP.unlink(missing_ok=True)  # a hang-up asked for when no call was up is not for this one
         blank_words()  # words a killed server never blanked
+        for stale in CALL_MIRROR.glob("*.json"):  # terminal lines from before this call
+            stale.unlink(missing_ok=True)
         write_json(CALL, {"from": request.remote or "", "pid": os.getpid(),
                           "cmdline": Path("/proc/self/cmdline").read_text()})
         await asyncio.get_running_loop().run_in_executor(None, turn_on_handsfree, False)  # with talkback

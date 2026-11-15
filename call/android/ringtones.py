@@ -111,6 +111,8 @@ def main() -> int:
             write(RAW / f"phrase_{agent}_{n}.wav", henchify(samples, rate), rate)
         print(agent, "ok", flush=True)
     (RAW / "phrases.json").write_text(json.dumps(PHRASES, indent=1))
+    import banner_mix  # the banner's ring: tone and phrases in one file
+    banner_mix.main()
     return 0
 
 

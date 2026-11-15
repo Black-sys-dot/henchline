@@ -87,6 +87,7 @@ class MainActivity : Activity() {
         showHistory()
         RingService.register(this)  // so agents can ring this phone
         askFullScreen()
+        DoNotDisturb.ask(this)
         answer(intent)
     }
 
@@ -153,7 +154,7 @@ class MainActivity : Activity() {
         }
         if (intent?.action == ANSWER) {  // Answer on IncomingActivity or the ring's banner: the user's own tap
             intent.action = null
-            getSystemService(android.app.NotificationManager::class.java).cancel(RingService.NOTIFICATION)  // stop ringing
+            Ringing.end(this)  // stop ringing, everywhere
             call(intent.getStringExtra(IncomingActivity.REPLY))
             return
         }
@@ -178,7 +179,24 @@ class MainActivity : Activity() {
             CallService.Bus.lastMode?.let { fromServer(it) }
         }
         showServer()
+        showRinging()
     }
+
+    /** Opened while an agent's ring still sounds: say so, with Answer and Decline. */
+    private fun showRinging() {
+        val ring = Ringing.now(this) ?: return
+        if (CallService.Bus.service != null || ringingShown?.isShowing == true) return
+        val reply = ring.optString("reply").ifEmpty { null }
+        ringingShown = AlertDialog.Builder(this)
+            .setIcon(avatarOf(ring.optString("agent")))
+            .setTitle("${IncomingActivity.nameOf(ring.optString("agent"))} is calling")
+            .setMessage(ring.optString("why").ifEmpty { "Your crew wants to talk." })
+            .setPositiveButton("Answer") { _, _ -> call(reply) }
+            .setNegativeButton("Decline") { _, _ -> Reply.send(reply, "declined"); Ringing.end(this) }
+            .show()
+    }
+
+    private var ringingShown: AlertDialog? = null
 
     private fun showServer() {
         findViewById<TextView>(R.id.server).text =
@@ -191,7 +209,10 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
-    private fun call(reply: String? = null) {
+    private fun call(given: String? = null) {
+        // A call made by hand while a ring sounds answers that ring: the laptop routes it to the agent that rang
+        val reply = given ?: Ringing.now(this)?.optString("reply")?.ifEmpty { null }
+        Ringing.end(this)
         if (CallService.Bus.service != null) {  // already connecting: one call at a time
             state.text = "Connecting…"
             return
