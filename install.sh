@@ -233,3 +233,4 @@ for piece in "$@"; do
   esac
 done
 for piece in "$@"; do "${action}_$piece"; done
+if [ "$action" = install ]; then say "Check anything that is still missing: $root/doctor.py $*"; fi
