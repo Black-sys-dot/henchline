@@ -742,6 +742,8 @@ class MainActivity : Activity() {
     private fun show(screen: View) {
         for (s in listOf(listScreen, chatScreen, settingsScreen)) s.visibility = if (s === screen) View.VISIBLE else View.GONE
         if (screen === listScreen) showCrew()
+        // A chat opens at its newest message, as a messaging app's does (it opened at the oldest, 2026-11-16)
+        if (screen === chatScreen) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
     /** Into an agent's chat from the list: on a call the laptop switches to it (and says so); off one, its chat
@@ -846,6 +848,7 @@ class MainActivity : Activity() {
                 status = line.optString("status"))
         }
         if (!CallService.Bus.connected) showConnected(false)  // off a call: the chat if there is one, else the henchman
+        chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
     /** A file an agent sent: a picture shown small (tap for it whole), audio with its own play button, anything
