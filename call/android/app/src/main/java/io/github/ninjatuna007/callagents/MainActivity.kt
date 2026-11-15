@@ -89,6 +89,10 @@ class MainActivity : Activity() {
     }
 
     private fun call() {
+        if (CallService.Bus.service != null) {  // already connecting: one call at a time
+            state.text = "Connecting…"
+            return
+        }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             say("", "The call needs the microphone: allow it, then tap Call again.", note = true)
             requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1)

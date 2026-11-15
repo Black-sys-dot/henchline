@@ -116,7 +116,7 @@ echo "sdk.dir=$HOME/Android/Sdk" > local.properties   # where your SDK is
 ./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On first Call it asks for the page's address (`https://<laptop's Tailscale name>/`); long-press Call to change it.
+On first Call it asks for the page's address (`https://<laptop's Tailscale name>/`); long-press Call to change it. The app trusts only real certificates, so it needs the `tailscale serve` address, not the self-signed fallback (`--host tailscale`).
 
 ## License
 

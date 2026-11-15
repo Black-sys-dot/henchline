@@ -9,6 +9,7 @@ import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.media.AudioAttributes
 import android.media.AudioDeviceInfo
+import android.media.AudioFocusRequest
 import android.media.AudioFormat
 import android.media.AudioManager
 import android.media.AudioRecord
@@ -41,12 +42,14 @@ class CallService : Service() {
     object Bus {
         @Volatile var listener: ((String) -> Unit)? = null  // JSON from the server, or {"closed": reason}
         @Volatile var connected = false
-        @Volatile var service: CallService? = null
+        @Volatile var service: CallService? = null  // set from Call until the call ends: also "connecting"
     }
 
-    private var socket: WebSocket? = null
-    private var recorder: Thread? = null
-    private var player: Thread? = null
+    // Written on the main and OkHttp threads, read on the mic thread
+    @Volatile private var socket: WebSocket? = null
+    @Volatile private var recorder: Thread? = null
+    @Volatile private var player: Thread? = null
+    private var focus: AudioFocusRequest? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var running = false
     private val heard = LinkedBlockingDeque<ByteArray>()  // the agents' voices, waiting to be played
@@ -59,15 +62,22 @@ class CallService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
-        val server = intent?.getStringExtra(SERVER) ?: return START_NOT_STICKY
-        if (running) return START_NOT_STICKY
+        goForeground()  // first: a service started for the foreground must say so within seconds
+        val server = intent?.getStringExtra(SERVER)
+        if (server == null) {
+            if (!running) stopSelf()
+            return START_NOT_STICKY
+        }
+        if (running) return START_NOT_STICKY  // already calling or connecting
         running = true
         Bus.service = this
-        goForeground()
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "callagents:call").apply { acquire() }
         audio.mode = AudioManager.MODE_IN_COMMUNICATION  // the phone's echo cancelling, and call routing
         route()
+        // Music and other sound pause or duck for the call, as for a phone call
+        focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            .setAudioAttributes(VOICE).build().also { audio.requestAudioFocus(it) }
         connect(server)
         return START_NOT_STICKY
     }
@@ -79,6 +89,7 @@ class CallService : Service() {
         recorder?.interrupt()
         player?.interrupt()
         heard.clear()
+        focus?.let { audio.abandonAudioFocusRequest(it) }
         if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
         audio.mode = AudioManager.MODE_NORMAL
         wakeLock?.let { if (it.isHeld) it.release() }
@@ -94,6 +105,10 @@ class CallService : Service() {
 
     private fun connect(server: String) {
         val base = Uri.parse(server)
+        if (base.scheme != "https") {  // Android refuses plain http, and the call page needs https for the mic
+            fail("The address must start with https:// (the laptop's `tailscale serve` name). Long-press Call.")
+            return
+        }
         val origin = "${base.scheme}://${base.authority}"  // the server lets only its own page's origin in
         val url = origin.replaceFirst("http", "ws") + "/call"
         val client = OkHttpClient.Builder().pingInterval(15, TimeUnit.SECONDS).build()
@@ -121,53 +136,79 @@ class CallService : Service() {
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
-                Bus.listener?.invoke(org.json.JSONObject().put("closed", "Couldn't reach the call: ${t.message}").toString())
-                stopSelf()
+                // A self-signed certificate (call/server.py --host tailscale) fails here: the app trusts only
+                // real ones, so it needs the `tailscale serve` address
+                fail("Couldn't reach the call: ${t.message}")
             }
         })
     }
 
     private fun startAudio() {
         recorder = Thread {
-            val size = maxOf(AudioRecord.getMinBufferSize(MIC_RATE, AudioFormat.CHANNEL_IN_MONO,
-                AudioFormat.ENCODING_PCM_16BIT), FRAME * 2 * 4)
-            val mic = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, MIC_RATE,
-                AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, size)
-            val buffer = ByteArray(FRAME * 2)
-            mic.startRecording()
             try {
-                while (running) {
-                    val got = mic.read(buffer, 0, buffer.size)
-                    if (got > 0) socket?.send(buffer.toByteString(0, got))
+                val size = maxOf(AudioRecord.getMinBufferSize(MIC_RATE, AudioFormat.CHANNEL_IN_MONO,
+                    AudioFormat.ENCODING_PCM_16BIT), FRAME * 2 * 4)
+                val mic = AudioRecord(MediaRecorder.AudioSource.VOICE_COMMUNICATION, MIC_RATE,
+                    AudioFormat.CHANNEL_IN_MONO, AudioFormat.ENCODING_PCM_16BIT, size)
+                if (mic.state != AudioRecord.STATE_INITIALIZED) {
+                    mic.release()
+                    fail("The microphone isn't available (another app using it, or no permission).")
+                    return@Thread
                 }
-            } finally {
-                mic.stop()
-                mic.release()
+                val buffer = ByteArray(FRAME * 2)
+                try {
+                    mic.startRecording()
+                    while (running) {
+                        val got = mic.read(buffer, 0, buffer.size)
+                        if (got < 0) {
+                            fail("The microphone stopped working (error $got).")
+                            break
+                        }
+                        if (got > 0) socket?.send(buffer.toByteString(0, got))
+                    }
+                } finally {
+                    if (mic.recordingState == AudioRecord.RECORDSTATE_RECORDING) mic.stop()
+                    mic.release()
+                }
+            } catch (e: Exception) {  // never let the call take the app down with it
+                fail("The microphone failed: ${e.message}")
             }
         }.apply { name = "mic"; start() }
         player = Thread {
-            val track = AudioTrack.Builder()
-                .setAudioAttributes(AudioAttributes.Builder()
-                    .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
-                    .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build())
-                .setAudioFormat(AudioFormat.Builder().setSampleRate(SPEAKER_RATE)
-                    .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
-                    .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
-                .setTransferMode(AudioTrack.MODE_STREAM)
-                .setBufferSizeInBytes(SPEAKER_RATE / 5 * 2)
-                .build()
-            track.play()
             try {
-                while (running) {
-                    val chunk = heard.poll(200, TimeUnit.MILLISECONDS) ?: continue
-                    track.write(chunk, 0, chunk.size)
+                val track = AudioTrack.Builder()
+                    .setAudioAttributes(VOICE)
+                    .setAudioFormat(AudioFormat.Builder().setSampleRate(SPEAKER_RATE)
+                        .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
+                        .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
+                    .setTransferMode(AudioTrack.MODE_STREAM)
+                    .setBufferSizeInBytes(SPEAKER_RATE / 5 * 2)
+                    .build()
+                try {
+                    track.play()
+                    while (running) {
+                        val chunk = heard.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                        val written = track.write(chunk, 0, chunk.size)
+                        if (written < 0) {
+                            fail("The speaker stopped working (error $written).")
+                            break
+                        }
+                    }
+                } finally {
+                    if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.stop()
+                    track.release()
                 }
             } catch (_: InterruptedException) {
-            } finally {
-                track.stop()
-                track.release()
+            } catch (e: Exception) {
+                fail("The speaker failed: ${e.message}")
             }
         }.apply { name = "speaker"; start() }
+    }
+
+    /** End the call with a reason the screen shows; safe from any thread. */
+    private fun fail(why: String) {
+        Bus.listener?.invoke(org.json.JSONObject().put("closed", why).toString())
+        android.os.Handler(mainLooper).post { stopSelf() }
     }
 
     /** Earbuds or a headset when there are some, else the loudspeaker (a call would pick the earpiece). */
@@ -209,6 +250,9 @@ class CallService : Service() {
         const val MIC_RATE = 16000  // what hands-free listens at
         const val SPEAKER_RATE = 24000  // Kokoro's own rate
         const val FRAME = MIC_RATE / 50  // 20 ms of samples per message, as the page sends
-        const val MAX_BEHIND = 50  // chunks queued before the oldest are dropped: about a second
+        const val MAX_BEHIND = 50  // chunks queued before the oldest are dropped: the server sends 20 ms, so a second
+        val VOICE: AudioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
     }
 }
