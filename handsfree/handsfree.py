@@ -14,6 +14,10 @@
                                        Unless answered, a missed call with WHY is left in ntfy (the topic is
                                        read from ~/.config/ptt/ntfy-topic). --now: past the 2-minute limit,
                                        for a ring the user asked for. --no-wait: ring and return
+    handsfree text WORDS                a message to the user's phone, not a call: a notification they can
+                                       reply to from the notification itself (the reply comes back tagged
+                                       [hands-free · texted from the phone]); on a call it goes to the chat.
+                                       Exit 0 sent, 1 not
     handsfree send FILE [FILE ...] [WORDS]
                                        show the user files on their phone: in the call's chat while a call
                                        is up, else a Henchline notification (an ntfy one if Henchline can't
@@ -46,8 +50,8 @@ import tray  # noqa: E402
 from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import files, whisper  # noqa: E402
-from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_ORIGIN, CALL_RING, CALL_RINGER, CLOSE,  # noqa: E402
-                         HANDSFREE_LOG, HANDSFREE_ON, LISTEN, SPEAKERS, Speaker, in_call, log,
+from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN, CALL_RING, CALL_RINGER,  # noqa: E402
+                         CLOSE, HANDSFREE_LOG, HANDSFREE_ON, LISTEN, SPEAKERS, Speaker, in_call, log,
                          release_phase, turn_on_handsfree, write_json)
 from voice.agents import identity  # noqa: E402
 from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
@@ -181,6 +185,31 @@ def send(args: list[str]) -> int:
     return 0 if pushed == len(metas) else 2
 
 
+def text(words: str) -> int:
+    """A message for the user's phone from the agent running this: a notification with a reply box, or a line
+    in the call's chat when a call is up."""
+    if not words.strip():
+        print("usage: handsfree text WORDS")
+        return 1
+    speaker = caller()
+    agent, session = (speaker.agent, speaker.session) if speaker else identity()
+    if in_call():  # the chat shows it within a moment
+        write_json(CALL_MIRROR / f"{time.time_ns()}.json", {"session": session, "from": agent.capitalize(),
+                                                            "text": words}, private=True)
+        print("sent to the call's chat")
+        return 0
+    if CALL_RING.exists() and push(json.dumps({"agent": agent, "session": session, "text": words}).encode()):
+        log(HANDSFREE_LOG, f"{agent} texted the phone")
+        print("sent to the phone")
+        return 0
+    topic = RING_TOPIC.read_text().strip() if RING_TOPIC.exists() else ""
+    if topic and ntfy(topic, f"{agent.capitalize()}", words, {"Tags": "speech_balloon"}):
+        print("sent as an ntfy notification (no reply box: Henchline couldn't be pushed)")
+        return 0
+    print("couldn't reach the phone")
+    return 1
+
+
 def push(body: bytes) -> bool:
     """Henchline's own push address (the ntfy app wakes it): never printed."""
     try:
@@ -282,6 +311,8 @@ def main() -> int:
         return ring(" ".join(a for a in args if a not in ("--now", "--no-wait")), now, wait)
     if command == "send":
         return send(args)
+    if command == "text":
+        return text(" ".join(args))
     if command == "hangup":
         if not in_call():
             print("no phone call is up")

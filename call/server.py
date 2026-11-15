@@ -390,6 +390,22 @@ async def share_tell(request: web.Request) -> web.Response:
     return web.json_response({"to": got} if got else {"note": why})
 
 
+async def texted(request: web.Request) -> web.Response:
+    """A reply typed into an agent's text notification on the phone (`handsfree text`): to that agent.
+    {"session": the agent session that texted, "text": the reply}"""
+    trusted(request)
+    try:
+        message = await request.json()
+        words, session = str(message.get("text", "")).strip(), str(message.get("session", ""))
+    except (ValueError, AttributeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    if not words:
+        return web.json_response({"note": "Nothing to send."}, status=400)
+    got, why = await asyncio.get_running_loop().run_in_executor(
+        None, to_agent, " ".join(words.split()), session, Heard.TEXTED)
+    return web.json_response({"to": got} if got else {"note": why})
+
+
 async def sent_file(request: web.Request) -> web.StreamResponse:
     """A file an agent sent (`handsfree send`): only its secret folder name finds it."""
     path = files.find(request.match_info["secret"], request.match_info["name"])
@@ -539,6 +555,7 @@ def main() -> int:
     app.router.add_get("/call", call)
     app.router.add_post("/share/file", share_file)
     app.router.add_post("/share/tell", share_tell)
+    app.router.add_post("/text", texted)
     app.router.add_get("/files/{secret}/{name}", sent_file)
     proxied = False
     if args.host in ("serve", "tailscale"):

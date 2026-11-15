@@ -79,6 +79,10 @@ class CallService : Service() {
             stopSelf()
             return START_NOT_STICKY
         }
+        if (intent?.action == TALK) {  // the notification's Talk / Send button (the lock screen's too)
+            if (running) toggleTalk()
+            return START_NOT_STICKY
+        }
         goForeground()  // first: a service started for the foreground must say so within seconds
         val server = intent?.getStringExtra(SERVER)
         if (server == null) {
@@ -94,11 +98,52 @@ class CallService : Service() {
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "henchline:call").apply { acquire() }
         applySound()
         connect(server)
+        listenToButtons()
         return START_NOT_STICKY
+    }
+
+    // --- push-to-talk from earbuds and the notification ----------------------------------------------------
+
+    @Volatile var talking = false  // a tap on the earbuds (or the notification's Talk) started a turn
+        private set
+    private var buttons: android.media.session.MediaSession? = null
+    private val beeper by lazy { try { android.media.ToneGenerator(android.media.AudioManager.STREAM_MUSIC, 70) } catch (_: Exception) { null } }
+
+    /** Earbuds' button (play/pause, or a headset's hook) while a call is up: one tap starts talking, the next
+     *  sends; the phone can stay in a pocket. A media session that says it is playing gets those keys. */
+    private fun listenToButtons() {
+        buttons = android.media.session.MediaSession(this, "henchline-call").apply {
+            setCallback(object : android.media.session.MediaSession.Callback() {
+                override fun onMediaButtonEvent(intent: Intent): Boolean {
+                    @Suppress("DEPRECATION")
+                    val key = intent.getParcelableExtra<android.view.KeyEvent>(Intent.EXTRA_KEY_EVENT) ?: return false
+                    if (key.keyCode !in TALK_KEYS) return false
+                    if (key.action == android.view.KeyEvent.ACTION_DOWN && key.repeatCount == 0) toggleTalk()
+                    return true
+                }
+            })
+            setPlaybackState(android.media.session.PlaybackState.Builder()
+                .setActions(android.media.session.PlaybackState.ACTION_PLAY_PAUSE or
+                    android.media.session.PlaybackState.ACTION_PLAY or android.media.session.PlaybackState.ACTION_PAUSE)
+                .setState(android.media.session.PlaybackState.STATE_PLAYING, 0, 1f).build())
+            isActive = true
+        }
+    }
+
+    /** Start talking (a rising beep), or send what was said (a falling one): as holding the talk button. */
+    fun toggleTalk() {
+        talking = !talking
+        socket?.send(org.json.JSONObject().put("push", talking).toString())
+        beeper?.startTone(if (talking) android.media.ToneGenerator.TONE_PROP_ACK else android.media.ToneGenerator.TONE_PROP_PROMPT, 150)
+        Bus.listener?.invoke(org.json.JSONObject().put("talking", talking).toString())
+        goForeground()  // the notification's button says Send while talking
     }
 
     override fun onDestroy() {
         running = false
+        buttons?.release()
+        buttons = null
+        beeper?.release()
         socket?.close(1000, "hung up")
         socket = null
         recorder?.interrupt()
@@ -318,11 +363,15 @@ class CallService : Service() {
             PendingIntent.FLAG_IMMUTABLE)
         val hangUp = PendingIntent.getService(this, 1, Intent(this, CallService::class.java).setAction(STOP),
             PendingIntent.FLAG_IMMUTABLE)
+        val talk = PendingIntent.getService(this, 2, Intent(this, CallService::class.java).setAction(TALK),
+            PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(this, CHANNEL)
             .setSmallIcon(R.drawable.ic_notify)
-            .setContentTitle("Henchline: on a call with your crew")
+            .setContentTitle(if (talking) "Henchline: talking… tap Send when done" else "Henchline: on a call with your crew")
             .setContentIntent(open)
             .setOngoing(true)
+            .setVisibility(Notification.VISIBILITY_PUBLIC)  // its buttons on the lock screen too
+            .addAction(Notification.Action.Builder(null, if (talking) "Send" else "Talk", talk).build())
             .addAction(Notification.Action.Builder(null, "Hang up", hangUp).build())
             .build()
         startForeground(1, notification, ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE)
@@ -332,6 +381,9 @@ class CallService : Service() {
         const val SERVER = "server"
         const val CLEAR = "clear"
         const val STOP = "stop"
+        const val TALK = "talk"
+        val TALK_KEYS = setOf(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
+            android.view.KeyEvent.KEYCODE_MEDIA_PLAY, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)
         const val CHANNEL = "call"
         const val MIC_RATE = 16000  // what hands-free listens at
         const val SPEAKER_RATE = 24000  // Kokoro's own rate

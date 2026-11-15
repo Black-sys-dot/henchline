@@ -23,3 +23,7 @@ Ring only when it is worth interrupting them: a long job they are waiting on fin
 To show the user a picture, a recording, a document or any other file, run `handsfree send FILE [FILE ...] "a few words"`. On a call it appears in the chat; otherwise it arrives as a notification. In Henchline, pictures and audio open in the app, and other files are saved to the phone's Downloads/Henchline. Send only what they would want to see on their phone, not routine output.
 
 Files the user shares from their phone arrive as a message tagged `[hands-free · shared from the phone]`, giving the path on the laptop (under `~/Downloads/Henchline/<date>/`), the type and size, and anything they wrote. Open those files and work with them as you would with any file they give you.
+
+## Texting the user
+
+When something is worth telling the user but not worth ringing them, run `handsfree text "a few words"`. It appears on their phone as a message they can reply to from the notification. Their reply comes back tagged `[hands-free · texted from the phone]`. On a call, the message goes into the chat instead. Use it sparingly, as you would text a person.

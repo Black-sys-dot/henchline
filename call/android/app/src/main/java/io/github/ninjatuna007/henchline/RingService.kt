@@ -31,6 +31,10 @@ class RingService : PushService() {
         } catch (_: Exception) {
             JSONObject()
         }
+        if (ring.has("text")) {  // `handsfree text`: a message, not a call
+            Messages.show(this, ring.optString("agent", "handsfree"), ring.optString("session"), ring.optString("text"))
+            return
+        }
         ring.optJSONObject("file")?.let { file ->  // `handsfree send` while no call was up: kept in that agent's chat too
             val from = IncomingActivity.nameOf(ring.optString("agent"))
             val session = ring.optString("session")

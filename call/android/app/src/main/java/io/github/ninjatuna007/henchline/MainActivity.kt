@@ -148,6 +148,12 @@ class MainActivity : Activity() {
     /** Opened from henchline://call (an agent rang): ask, as a phone does. Any app or web page can open the
      *  link, so it never turns the mic on by itself: only Answer connects. */
     private fun answer(intent: Intent?) {
+        // The Quick Settings tile. Any app can open this screen, so only the tile's own key turns the mic on
+        if (intent?.action == CALL_NOW) {
+            intent.action = null
+            if (intent.getStringExtra(CALL_KEY) == callKey(this)) call()
+            return
+        }
         if (intent?.action == OPEN_FILE) {
             openFromNotification(intent)
             return
@@ -294,6 +300,9 @@ class MainActivity : Activity() {
                 if (file != null) fileCard(from, file, line.optString("session"))
             }
             status.has("agents") -> showAgents(status)
+            status.has("talking") ->  // the earbuds or the notification started or ended a turn
+                android.widget.Toast.makeText(this, if (status.getBoolean("talking")) "Talking: tap again to send" else "Sent",
+                    android.widget.Toast.LENGTH_SHORT).show()
             status.has("note") -> {
                 val id = status.optString("unsent")
                 chat.findViewWithTag<TextView>("typed-$id")?.apply {
@@ -676,6 +685,16 @@ class MainActivity : Activity() {
         const val ANSWER = "io.github.ninjatuna007.henchline.ANSWER"  // from IncomingActivity's Answer
         const val MIC_FOR_CALL = 2  // the permission request a call waits on
         const val PICK_FILES = 3  // the paperclip's picker
+        const val CALL_NOW = "io.github.ninjatuna007.henchline.CALL_NOW"  // the Quick Settings tile
+        const val CALL_KEY = "call_key"
+
+        /** A secret of this install's, which only the tile knows to send. */
+        fun callKey(context: android.content.Context): String {
+            val prefs = context.getSharedPreferences("call", MODE_PRIVATE)
+            return prefs.getString(CALL_KEY, null) ?: java.util.UUID.randomUUID().toString().also {
+                prefs.edit().putString(CALL_KEY, it).apply()
+            }
+        }
         const val OPEN_FILE = "io.github.ninjatuna007.henchline.OPEN_FILE"  // a file's notification, tapped
 
         /** Each agent's henchman, by its session (claude-…, cursor-…, codex-…) or its name. */
