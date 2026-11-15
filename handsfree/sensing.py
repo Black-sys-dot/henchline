@@ -208,7 +208,9 @@ class Wake:
             # 0 of 20, and every synthetic "hey Jarvis" still came out right ("Claude" with its hint: 0 of 20)
             # Eager, it fires on "hey Jar…": checked then, the half word was rejected and the detector not
             # yet re-armed for the rest (2026-11-15: a miss in 4 of 7). Whisper waits for the whole word
-            self.detectors.append(Detector("Jarvis", 0.25, score, run=1, hint=False, settle=0.4))
+            # Live it still fired on "hey" before "Jarvis" was out (nearest heard word 0.18): 0.7 s, and a
+            # rejected nomination re-arms the detector so the real "Jarvis" right after still counts
+            self.detectors.append(Detector("Jarvis", 0.25, score, run=1, hint=False, settle=0.7))
         self.nominated: set[str] = set()  # words whose detector fired since the last confirm
         self.due = 0  # 30 ms frames still to take in before the nominated words are checked
         self.word = ""  # the word Whisper confirmed last
@@ -244,6 +246,9 @@ class Wake:
     def confirm(self, whisper) -> bool:
         """Whether Whisper hears one of the nominated words; self.word says which."""
         words, self.nominated = sorted(self.nominated), set()
+        for detector in self.detectors:  # whatever Whisper says, the word may still be coming: fire again on it
+            if detector.word in words and detector.settle:
+                detector.armed, detector.run = True, 0
         self.word = "/".join(words)
         hints = " ".join(d.word for d in self.detectors if d.hint and d.word in words) or None
         audio = np.concatenate(self.ring).astype(np.float32) / 32768
