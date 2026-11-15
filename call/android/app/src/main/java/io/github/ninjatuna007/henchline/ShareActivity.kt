@@ -2,11 +2,9 @@ package io.github.ninjatuna007.henchline
 
 import android.app.Activity
 import android.app.AlertDialog
-import android.content.ClipData
 import android.content.Intent
 import android.net.Uri
 import android.os.Bundle
-import android.provider.OpenableColumns
 import android.widget.EditText
 import android.widget.LinearLayout
 import org.json.JSONObject
@@ -33,7 +31,7 @@ class ShareActivity : Activity() {
                 .setPositiveButton("OK", null).setOnDismissListener { finish() }.show()
             return
         }
-        val names = uris.map { nameOf(it) }
+        val names = uris.map { Files.nameOf(this, it) }
         val (session, agent) = current()
         val note = EditText(this).apply { hint = "Add a few words (optional)" }
         AlertDialog.Builder(this)
@@ -42,28 +40,12 @@ class ShareActivity : Activity() {
             .setMessage(if (uris.isEmpty()) text.take(300) else names.joinToString("\n").take(600))
             .setView(LinearLayout(this).apply { setPadding(48, 8, 48, 0); addView(note) })
             .setPositiveButton("Send") { _, _ ->
-                val upload = Intent(this, UploadService::class.java)
-                    .putStringArrayListExtra(UploadService.NAMES, ArrayList(names))
-                    .putExtra(UploadService.TEXT, text).putExtra(UploadService.NOTE, note.text.toString())
-                    .putExtra(UploadService.SESSION, session)
-                if (uris.isNotEmpty()) {  // the files' read permission goes with them to the service
-                    upload.clipData = ClipData.newRawUri("", uris[0]).apply { uris.drop(1).forEach { addItem(ClipData.Item(it)) } }
-                    upload.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                }
-                startForegroundService(upload)
+                startForegroundService(UploadService.intent(this, uris, names, text, note.text.toString(), session))
             }
             .setNegativeButton("Cancel", null)
             .setOnDismissListener { finish() }
             .show()
     }
-
-    private fun nameOf(uri: Uri): String = try {
-        contentResolver.query(uri, arrayOf(OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
-            if (it.moveToFirst()) it.getString(0) else null
-        }
-    } catch (_: Exception) {
-        null
-    } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file"
 
     /** On a call, the agent whose chat is showing; otherwise the laptop picks whoever you talked to last. */
     private fun current(): Pair<String, String> {

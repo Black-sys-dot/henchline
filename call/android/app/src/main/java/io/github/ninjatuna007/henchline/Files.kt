@@ -141,6 +141,15 @@ object Files {
             .build())
     }
 
+    /** A shared or picked file's name, as the app it came from gives it. */
+    fun nameOf(context: Context, uri: Uri): String = try {
+        context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {
+            if (it.moveToFirst()) it.getString(0) else null
+        }
+    } catch (_: Exception) {
+        null
+    } ?: uri.lastPathSegment?.substringAfterLast('/') ?: "file"
+
     fun sizeText(size: Long): String = when {
         size < 1024 -> "$size bytes"
         size < 1024 * 1024 -> "%.1f KB".format(size / 1024.0)

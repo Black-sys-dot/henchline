@@ -49,6 +49,7 @@ class UploadService : Service() {
             } catch (e: Exception) {
                 "Not shared: ${e.message ?: "the laptop couldn't be reached"} (is Tailscale on?)"
             }
+            CallService.Bus.listener?.invoke(JSONObject().put("note", result).toString())  // on the call screen too
             manager.notify(DONE + startId, Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_notify)
                 .setContentTitle("Henchline").setContentText(result)
                 .setStyle(Notification.BigTextStyle().bigText(result)).setAutoCancel(true).build())
@@ -128,6 +129,18 @@ class UploadService : Service() {
             .setOngoing(true).build()
 
     companion object {
+        /** What to share: the files' read permission goes with them to the service. */
+        fun intent(context: android.content.Context, uris: List<Uri>, names: List<String>, text: String, note: String,
+                   session: String): Intent {
+            val upload = Intent(context, UploadService::class.java).putStringArrayListExtra(NAMES, ArrayList(names))
+                .putExtra(TEXT, text).putExtra(NOTE, note).putExtra(SESSION, session)
+            if (uris.isNotEmpty()) {
+                upload.clipData = android.content.ClipData.newRawUri("", uris[0]).apply { uris.drop(1).forEach { addItem(android.content.ClipData.Item(it)) } }
+                upload.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            }
+            return upload
+        }
+
         const val NAMES = "names"
         const val TEXT = "text"
         const val NOTE = "note"

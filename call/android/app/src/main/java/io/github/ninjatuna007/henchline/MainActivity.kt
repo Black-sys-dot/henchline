@@ -42,6 +42,7 @@ class MainActivity : Activity() {
     private lateinit var chatScroll: ScrollView
     private lateinit var text: EditText
     private lateinit var send: ImageButton
+    private lateinit var attach: ImageButton
     private lateinit var crew: LinearLayout
     private lateinit var clear: Switch
 
@@ -66,6 +67,7 @@ class MainActivity : Activity() {
         chatScroll = findViewById(R.id.chatScroll)
         text = findViewById(R.id.text)
         send = findViewById(R.id.send)
+        attach = findViewById(R.id.attach)
         crew = findViewById(R.id.crew)
         clear = findViewById(R.id.clear)
         showMode("waiting")
@@ -77,6 +79,7 @@ class MainActivity : Activity() {
         showClear(prefs().getBoolean("clear", true))
         setUpTalkButton()
         send.setOnClickListener { sendTyped() }
+        attach.setOnClickListener { pickFiles() }
         text.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_SEND).also { if (it) sendTyped() } }
         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.BLUETOOTH_CONNECT), 1)
@@ -94,6 +97,43 @@ class MainActivity : Activity() {
             Reply.send(reply, "unreachable")  // answered, but no microphone: the call can't be made
             say("", "The call needs the microphone: allow it, then call again.", note = true)
         }
+    }
+
+    /** The paperclip: pictures or any files, for the agent whose chat is showing (the picker offers Photos too). */
+    private fun pickFiles() {
+        startActivityForResult(Intent(Intent.ACTION_GET_CONTENT).setType("*/*").addCategory(Intent.CATEGORY_OPENABLE)
+            .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), PICK_FILES)
+    }
+
+    @Deprecated("the platform Activity has no result API besides this")
+    override fun onActivityResult(code: Int, result: Int, data: Intent?) {
+        super.onActivityResult(code, result, data)
+        if (code != PICK_FILES || result != RESULT_OK || data == null) return
+        val uris = data.clipData?.let { clip -> (0 until clip.itemCount).map { clip.getItemAt(it).uri } }
+            ?: listOfNotNull(data.data)
+        if (uris.isEmpty()) return
+        val names = uris.map { Files.nameOf(this, it) }
+        val words = text.text.toString().trim()  // anything typed goes with them
+        text.setText("")
+        if (words.isNotEmpty()) say("you", words, mine = true, session = current)
+        uris.zip(names).forEach { (uri, name) -> attachedCard(uri, name) }
+        startForegroundService(UploadService.intent(this, uris, names, "", words, current))
+    }
+
+    /** What you attached, on your side of the chat: a picture small, anything else its name. */
+    private fun attachedCard(uri: android.net.Uri, name: String) {
+        val bubble = say("you", "📎 $name", mine = true, session = current)
+        if (contentResolver.getType(uri)?.startsWith("image/") != true) return
+        Thread {
+            val picture = try { contentResolver.loadThumbnail(uri, android.util.Size(dp(220), dp(220)), null) } catch (_: Exception) { null }
+            main.post {
+                if (picture != null) {
+                    bubble.text = ""
+                    bubble.setCompoundDrawablesWithIntrinsicBounds(null,
+                        android.graphics.drawable.BitmapDrawable(resources, picture), null, null)
+                }
+            }
+        }.start()
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -356,6 +396,7 @@ class MainActivity : Activity() {
         talk.isEnabled = on
         text.isEnabled = on
         send.isEnabled = on
+        attach.isEnabled = on
         // Off a call there is nothing to hold or type to: just the henchman and how to call
         val shown = if (on) View.VISIBLE else View.GONE
         talk.visibility = shown
@@ -596,6 +637,7 @@ class MainActivity : Activity() {
         const val HOLD_MS = 300L  // longer than this is a hold; shorter is a tap
         const val ANSWER = "io.github.ninjatuna007.henchline.ANSWER"  // from IncomingActivity's Answer
         const val MIC_FOR_CALL = 2  // the permission request a call waits on
+        const val PICK_FILES = 3  // the paperclip's picker
         const val OPEN_FILE = "io.github.ninjatuna007.henchline.OPEN_FILE"  // a file's notification, tapped
 
         /** Each agent's henchman, by its session (claude-…, cursor-…, codex-…) or its name. */
