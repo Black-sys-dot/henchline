@@ -37,7 +37,7 @@ NAMES = "|".join(SPOKEN_TO)
 AGENT = rf"({NAMES})"
 WHERE = r"(?:\s+(?:in|from|on)\s+(?:the\s+)?(.+?))?"
 SWITCH = re.compile(
-    rf"^\W*(?:(?:okay|ok|alright|right|so|no|actually)[\s,]+)?(?:(?:hey\s+)?(?:{NAMES})[\s,]+)?"
+    rf"^\W*(?:(?:okay|ok|alright|right|so|no|actually|hey)[\s,]+)?(?:(?:hey\s+)?(?:{NAMES})[\s,]+)?"
     rf"(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?(?:please\s+)?"
     rf"(?:switch(?:\s+me)?(?:\s+back)?|(?:hand|pass)(?:\s+(?:me|it|this))?(?:\s+(?:over|back))?|"
     rf"(?:give|send)(?:\s+(?:me|it|this))?\s+(?:over|back)|go\s+back|(?:let\s+me\s+)?talk|connect\s+me|"
@@ -128,6 +128,12 @@ def route(text: str, last_message: tuple[str, Heard] | None) -> bool:
         say(f"I can't find {agent.capitalize()}{' in ' + where if where else ''}. "
             "It has to have spoken through talkback first.")
         return False
+    if not reachable(target):
+        current = last_speaker()
+        log(HANDSFREE_LOG, f"heard: route to {target.agent} in {target.where or '?'}, not running any more")
+        say(f"{target.spoken()} isn't running any more, so I can't switch you there. "
+            + (f"You're still talking to {current.spoken()}." if current else ""))
+        return False
     switch_to(target)
     if not forward:
         say(f"Now talking to {target.spoken()}.")
@@ -137,6 +143,14 @@ def route(text: str, last_message: tuple[str, Heard] | None) -> bool:
         say(f"Sent to {target.spoken()}.")
         return True
     return False
+
+
+def reachable(speaker: Speaker) -> bool:
+    """Is that agent still running where its words would be typed: its Konsole tab, or its Cursor window?"""
+    service, session = speaker.konsole
+    if service and session:
+        return agent_in_tab(service, session)
+    return speaker.agent == "cursor" and bool(speaker.where) and bool(cursor_window(speaker.where))
 
 
 def cursor_window(where: str) -> str:
