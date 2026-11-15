@@ -23,7 +23,8 @@ from sensing import PER_SECOND, RATE, SPEECH, level
 from talkover import TalkOver, our_own_words
 from voicegate import START_DB
 from voice import whisper
-from voice.state import BY_HANDSFREE, HANDSFREE_LOG, HANDSFREE_WAV, Phase, log, phase_now, release_phase, set_phase, set_target
+from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, HANDSFREE_WAV, Phase, log, ptt_busy, release_phase, set_phase,
+                         set_target)
 
 THINK_WINDOW = 180  # seconds after "give me a minute"
 WAIT_FOR_WORDS = 5.0  # after the wake word, seconds to start talking before it gives up
@@ -45,12 +46,6 @@ class Mode(str, Enum):
     LISTENING = "listening"
     RECORDING = "recording"
     TRANSCRIBING = "transcribing"
-
-
-def ptt_busy() -> bool:
-    """Push-to-talk itself is recording: leave the mic to it."""
-    phase, by = phase_now()
-    return phase is not Phase.IDLE and by != BY_HANDSFREE
 
 
 class Turn:

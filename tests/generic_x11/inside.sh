@@ -10,7 +10,7 @@ openbox >/dev/null 2>&1 &
 sleep 1
 # The pretend agent: its program name is "claude"; it first records its own tab, then writes what it is typed
 xterm -T agent -xrm 'XTerm*VT100.translations: #override Shift Ctrl <Key>V: insert-selection(CLIPBOARD)' -e sh -c 'python3 -c "import sys; sys.path.insert(0, \"/repo\"); from voice.desktop import current; \
-t = current().terminals.tab_of_caller(); open(\"/tmp/agent-tab\", \"w\").write(f\"{t.service} {t.session}\")"; \
+t = current().terminals.tab_of_caller(); open(\"/tmp/agent-tab\", \"w\").write(f\"{t.owner} {t.address}\")"; \
 exec -a claude head -n 1 > /tmp/agent-heard.txt' &
 xterm -T shell -e sh -c 'tty > /tmp/shell-tty; exec bash' &
 sleep 3

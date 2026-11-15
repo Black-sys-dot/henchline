@@ -10,15 +10,12 @@ from __future__ import annotations
 
 import os
 import subprocess
-import time
 from pathlib import Path
 
 from voice import x11
 from voice.agents import SHELLS, ancestors, comm, process, terminal_foreground
 from voice.desktop import Desktop, Tab, Terminals, Window
 
-RAISE_SETTLE = 0.4  # seconds for the window manager to bring a window forward
-PASTE_SETTLE = 0.12  # seconds between the paste and Enter
 
 
 def tty_of(pid: int) -> str:
@@ -51,21 +48,12 @@ class AnyTerminal(Terminals):
         return Tab(hex(int(window)) if window.isdigit() else window, tty) if window and tty else Tab()
 
     def agent_running(self, tab: Tab) -> bool:
-        foreground = foreground_on(tab.session)
+        foreground = foreground_on(tab.address)
         return bool(foreground) and any(p.agent for p in [process(foreground)] if p)
 
     def type_line(self, tab: Tab, text: str) -> bool:
-        screen = self.desktop
-        if not screen.set_clipboard(text):
-            return False
-        screen.raise_window(tab.service)
-        time.sleep(RAISE_SETTLE)
-        if not screen.is_front(tab.service):  # keys now would land in whatever has focus
-            return False
-        screen.press("ctrl", "shift", "v")
-        time.sleep(PASTE_SETTLE)
-        screen.press("return")
-        return True
+        """Into the terminal's window: paste (Ctrl+Shift+V, as most terminals take it), then Enter."""
+        return self.desktop.paste_into(tab.owner, text, ("ctrl", "shift", "v"), ("return",))
 
     def only_a_shell(self, window: Window) -> bool:
         try:
@@ -97,7 +85,8 @@ class GenericX11(Desktop):
         """Through xclip, and checked."""
         try:
             subprocess.run(["xclip", "-selection", "clipboard", "-in"], input=text, text=True, check=True, timeout=5)
-            got = subprocess.run(["xclip", "-selection", "clipboard", "-out"], capture_output=True, text=True, timeout=5)
+            got = subprocess.run(["xclip", "-selection", "clipboard", "-out"], capture_output=True, text=True,
+                                 timeout=5)
         except (OSError, subprocess.SubprocessError):
             return False
         return got.stdout == text

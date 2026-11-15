@@ -22,14 +22,13 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE), str(HERE.parent)]  # hands-free's modules; voice/
-import talkover  # noqa: E402
-from listener import BARGE_GRACE, FLOOR_SPAN, floor_of  # noqa: E402
+from listener import BARGE_GRACE, FLOOR_SPAN, PREROLL, floor_of  # noqa: E402
 from sensing import FRAME, LEVEL_SPAN, RATE, level  # noqa: E402
-from talkover import TalkOver, Verdict  # noqa: E402
+from talkover import GAP, SUSTAIN, TalkOver, Verdict  # noqa: E402
 from voice import whisper  # noqa: E402
 from voicegate import VoiceGate  # noqa: E402
 
-PREROLL = 15  # as the listener keeps
+NO_LOG = Path("/dev/null")  # a replay must not write into hands-free's own log
 
 
 def load(folder: Path, name: str) -> np.ndarray:
@@ -38,11 +37,12 @@ def load(folder: Path, name: str) -> np.ndarray:
         return audio.reshape(-1, w.getnchannels())[:, 0]
 
 
-def replay(folder: Path, take: dict, transcriber: whisper.Transcriber) -> tuple[float | None, int]:
+def replay(folder: Path, take: dict, transcriber: whisper.Transcriber, sustain: float,
+           gap: float) -> tuple[float | None, int]:
     """(when the clip would have stopped, how often its echo was caught by its words)."""
     ec, play = load(folder, f"{take['take']}-ec.wav"), load(folder, f"{take['take']}-play.wav")
     clock = [0.0]
-    over = TalkOver(transcriber.quick_text, clock=lambda: clock[0])
+    over = TalkOver(transcriber.quick_text, clock=lambda: clock[0], sustain=sustain, gap=gap, log_to=NO_LOG)
     gate = VoiceGate()
     echo_floor = collections.deque(maxlen=FLOOR_SPAN)
     plays = collections.deque(maxlen=LEVEL_SPAN)
@@ -73,16 +73,14 @@ def replay(folder: Path, take: dict, transcriber: whisper.Transcriber) -> tuple[
 
 def main() -> int:
     folder = Path(sys.argv[1])
-    if len(sys.argv) > 2:
-        talkover.SUSTAIN = float(sys.argv[2])
-    if len(sys.argv) > 3:
-        talkover.GAP = float(sys.argv[3])
-    cfg = whisper.Config.load(Path("/dev/null"))
-    transcriber = whisper.Transcriber(cfg, whisper.load_model(cfg, cfg.want_cuda(), Path("/dev/null")), Path("/dev/null"))
+    sustain = float(sys.argv[2]) if len(sys.argv) > 2 else SUSTAIN
+    gap = float(sys.argv[3]) if len(sys.argv) > 3 else GAP
+    cfg = whisper.Config.load(NO_LOG)
+    transcriber = whisper.Transcriber(cfg, whisper.load_model(cfg, cfg.want_cuda(), NO_LOG), NO_LOG)
     false = miss = caught = 0
     lags = []
     for take in json.loads((folder / "trials.json").read_text()):
-        hit, echoes = replay(folder, take, transcriber)
+        hit, echoes = replay(folder, take, transcriber, sustain, gap)
         caught += echoes
         cue = take["cue"]
         if hit is not None and (cue is None or hit < cue):
@@ -97,7 +95,7 @@ def main() -> int:
         else:
             verdict = "kept playing (right)"
         print(f"  {take['take']:18s} {verdict}" + (f", echo caught by its words {echoes}x" if echoes else ""))
-    print(f"SUSTAIN {talkover.SUSTAIN} GAP {talkover.GAP}: false {false}, missed {miss}, "
+    print(f"SUSTAIN {sustain} GAP {gap}: false {false}, missed {miss}, "
           f"echo caught {caught}x, delays after the chime {lags}")
     return 0
 

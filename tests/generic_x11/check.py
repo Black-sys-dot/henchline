@@ -41,7 +41,7 @@ focused = screen.focused()
 check("focused window is a terminal running only a shell", screen.terminals.only_a_shell(focused), focused.app.strip())
 
 tab = Tab(*Path("/tmp/agent-tab").read_text().split())  # written by the pretend agent's terminal (tab_of_caller)
-check("the agent's own terminal found its tab", bool(tab), f"{tab.service} {tab.session}")
+check("the agent's own terminal found its tab", bool(tab), f"{tab.owner} {tab.address}")
 check("an agent is running in that tab", screen.terminals.agent_running(tab))
 check("the shell window is not an agent's tab", not screen.terminals.agent_running(
     Tab(shell_window.id, Path("/tmp/shell-tty").read_text().strip())))

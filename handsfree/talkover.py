@@ -12,6 +12,7 @@ import re
 import time
 from dataclasses import dataclass
 from enum import Enum
+from pathlib import Path
 from typing import Callable
 
 import numpy as np
@@ -60,8 +61,6 @@ def our_own_words(heard: str, said: str) -> bool:
     return shared / len(heard_words) >= OWN_WORDS or (shared >= OWN_RUN and shared / len(heard_words) >= OWN_SHARE)
 
 
-
-
 @dataclass
 class Overlap:
     """A voice over a clip, kept while it lasts, every frame since it began."""
@@ -96,6 +95,9 @@ class TalkOver:
     silent_since: float = 0.0
     read_at: float = 0.0  # when the playing marker was last read
     clock: Callable[[], float] = time.monotonic  # replaced by the recording's own time in echo_replay.py
+    sustain: float = SUSTAIN
+    gap: float = GAP
+    log_to: Path = HANDSFREE_LOG
 
     def track_onset(self, played_db: float | None) -> None:
         now = self.clock()
@@ -111,9 +113,12 @@ class TalkOver:
 
     def clip(self) -> Playing | None:
         """The clip playing now; the marker is read again only when talkback starts another."""
-        if not PLAYING_PATH.exists():
+        try:
+            changed = PLAYING_PATH.stat().st_mtime
+        except OSError:  # no clip, or talkback removed the marker just now
             self.playing = None
-        elif self.playing is None or PLAYING_PATH.stat().st_mtime > self.read_at:
+            return None
+        if self.playing is None or changed > self.read_at:
             self.playing, self.read_at = Playing.now(), time.time()
         return self.playing
 
@@ -137,12 +142,12 @@ class TalkOver:
         if voice:
             over.last = now
             over.voiced += STEP
-        if now - over.last > GAP:
-            log(HANDSFREE_LOG, f"talking over: {over.voiced:.1f}s of voice in {over.speaking_for():.1f}s, "
+        if now - over.last > self.gap:
+            log(self.log_to, f"talking over: {over.voiced:.1f}s of voice in {over.speaking_for():.1f}s, "
                                f"then quiet: kept playing (first: {over.first})")
             self.over = None
             return Verdict.WAITING
-        if over.voiced < max(SUSTAIN, over.next_check):
+        if over.voiced < max(self.sustain, over.next_check):
             return Verdict.WAITING
         echo = self.echo_of_clip(over)
         if echo is None and over.voiced < UNSURE_LIMIT:
@@ -151,7 +156,7 @@ class TalkOver:
         self.over = None
         if not echo:
             self.taken = over
-        log(HANDSFREE_LOG, f"talking over: {over.voiced:.1f}s of voice in {over.speaking_for():.1f}s: "
+        log(self.log_to, f"talking over: {over.voiced:.1f}s of voice in {over.speaking_for():.1f}s: "
                            + ("the clip's own words, our echo: kept playing" if echo else "stopping the clip")
                            + f" (first: {over.first})")
         return Verdict.ECHO if echo else Verdict.USER

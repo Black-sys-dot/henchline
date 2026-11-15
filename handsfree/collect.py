@@ -23,7 +23,8 @@ def ours_queued() -> bool:
 
 def speak(text: str, voice: str = "", wait: bool = True) -> None:
     """Speak in hands-free's voice (or another), and wait until it has been said."""
-    command = [str(SAY), "--agent", BY_HANDSFREE, "--session", BY_HANDSFREE, *(["--voice", voice] if voice else []), text]
+    command = [str(SAY), "--agent", BY_HANDSFREE, "--session", BY_HANDSFREE,
+               *(["--voice", voice] if voice else []), text]
     if not wait:
         subprocess.Popen(command)
         return

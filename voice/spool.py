@@ -43,7 +43,7 @@ class Clip:
         return cls(**{k: data[k] for k in cls.__dataclass_fields__ if k in data})
 
     def save(self, path: Path) -> None:
-        write_json(path, {**asdict(self), "tab": [self.tab.service, self.tab.session]})
+        write_json(path, {**asdict(self), "tab": [self.tab.owner, self.tab.address]})
 
 
 def add(clip: Clip, at_ns: int | None = None) -> Path:

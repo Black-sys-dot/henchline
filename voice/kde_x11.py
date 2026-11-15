@@ -12,6 +12,7 @@ from pathlib import Path
 from voice.agents import CLAUDE_DAEMON, SHELLS, ancestors, cmdline_has, comm, nearest_agent, process
 from voice.desktop import Tab, Window
 from voice.generic_x11 import AnyTerminal, GenericX11
+
 KLIPPER = ("org.kde.klipper", "/klipper")
 TYPE_PAUSE = 0.15  # seconds between the text and its Enter, so Konsole takes them in order
 
@@ -49,12 +50,12 @@ class Konsole(AnyTerminal):
 
     def agent_running(self, tab: Tab) -> bool:
         """If the agent quit, the tab is a plain shell, and Enter after typed words would run them."""
-        foreground = qdbus(tab.service, tab.session, "foregroundProcessId")
+        foreground = qdbus(tab.owner, tab.address, "foregroundProcessId")
         return foreground.isdigit() and any(p.agent for p in [process(int(foreground))] if p)
 
     def type_line(self, tab: Tab, text: str) -> bool:
         for chunk in (text, "\r"):
-            if subprocess.run(["qdbus", tab.service, tab.session, "sendText", chunk],
+            if subprocess.run(["qdbus", tab.owner, tab.address, "sendText", chunk],
                               capture_output=True).returncode != 0:
                 return False
             time.sleep(TYPE_PAUSE)

@@ -20,8 +20,8 @@ import time
 from pathlib import Path
 
 from voice import spool
-from voice.state import (BY_HANDSFREE, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing, Speaker, last_speaker,
-                         log, mic_busy, read_json, target_since)
+from voice.state import (BY_HANDSFREE, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing, Speaker,
+                         last_speaker, log, mic_busy, read_json, target_since)
 
 THREADS = int(os.environ.get("TALKBACK_THREADS", "4"))  # CPU threads: 4 measured best (latency vs load)
 RATE = 24000
@@ -78,7 +78,6 @@ class Voice:
         if clip is None:
             path.unlink(missing_ok=True)
             return
-        path.unlink(missing_ok=True)
         sentences = clip.sentences
         intro = 0
         if clip.agent not in SYSTEM:
@@ -87,8 +86,10 @@ class Voice:
                 name = clip.agent.capitalize()
                 sentences, intro = [f"{name} here, from {clip.where}."] + sentences, 1
             Speaker(clip.session, clip.agent, clip.where, clip.tab).remember()
-        # Once, with the words: hands-free checks what it hears over a clip against them (its own echo)
+        # Once, with the words, before the clip file goes: no moment when neither says a clip is under way.
+        # Hands-free checks what it hears over a clip against the words (its own echo)
         Playing(path.name, clip.session, clip.agent, " ".join(sentences)).save()
+        path.unlink(missing_ok=True)
         voice = clip.voice or VOICES.get(clip.agent, DEFAULT_VOICE)
         ready: queue.Queue = queue.Queue(maxsize=2)
         done = threading.Event()

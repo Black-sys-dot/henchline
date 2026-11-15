@@ -20,8 +20,6 @@ from voice.desktop import current as desktop
 from voice.state import BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, Speaker, last_speaker, log, recent_speakers
 
 SAY = Path(__file__).resolve().parent.parent / "talkback/scripts/say.py"
-RAISE_TRIES = 3  # attempts to bring Cursor's window to the front before giving up
-RAISE_SETTLE, CHAT_SETTLE, PASTE_SETTLE = 0.4, 0.3, 0.2  # seconds for the window, its chat box, the paste
 AFTER_SWITCH = 30.0  # seconds to start talking after "Now talking to …"
 
 
@@ -153,7 +151,7 @@ def route(text: str, last_message: tuple[str, Heard] | None) -> bool:
 
 
 def reachable(speaker: Speaker) -> bool:
-    """Is that agent still running where its words would be typed: its Konsole tab, or its Cursor window?"""
+    """Is that agent still running where its words would be typed: its terminal tab, or its Cursor window?"""
     if speaker.tab:
         return desktop().terminals.agent_running(speaker.tab)
     return speaker.in_editor and bool(cursor_window(speaker.where))
@@ -168,33 +166,16 @@ def cursor_window(where: str) -> str:
 
 
 def type_into_cursor(wid: str, message: str) -> bool:
-    """Raise the window, focus its agent chat, paste, Enter.
+    """Bring the window forward, focus its agent chat, paste, Enter.
 
     ctrl+alt+shift+F12 runs composer.focusComposer (a user keybinding that
     install.sh agents adds). Run in a child process: Xlib from the listening
     thread, beside the Qt tray thread, crashed hands-free (SIGSEGV).
     """
-    screen = desktop()
-    if not screen.set_clipboard(message):
-        return False
-    for _ in range(RAISE_TRIES):
-        screen.raise_window(wid)
-        time.sleep(RAISE_SETTLE)
-        if screen.is_front(wid):
-            break
-    else:
-        # KWin can refuse a background program's raise; keys pressed now would land in the focused
-        # window instead (a message once went into Telegram, 2026-11-15), so press nothing
-        log(HANDSFREE_LOG, f"Cursor's window did not come to the front (focus: {screen.focused().app.strip()})")
-        return False
-    screen.press("ctrl", "alt", "shift", "f12")
-    time.sleep(CHAT_SETTLE)
-    if not screen.is_front(wid):  # the user switched away meanwhile
-        return False
-    screen.press("ctrl", "v")
-    time.sleep(PASTE_SETTLE)
-    screen.press("return")
-    return True
+    if desktop().paste_into(wid, message, ("ctrl", "alt", "shift", "f12"), ("ctrl", "v"), ("return",)):
+        return True
+    log(HANDSFREE_LOG, f"Cursor's window did not stay in front (focus: {desktop().focused().app.strip()})")
+    return False
 
 
 def deliver(text: str, heard: Heard) -> bool:
@@ -224,13 +205,13 @@ def deliver(text: str, heard: Heard) -> bool:
         say("I heard you, but I don't know which terminal to type that into.")
         return False
     if not desktop().terminals.agent_running(tab):
-        log(HANDSFREE_LOG, f"no agent running in {tab.session}")
+        log(HANDSFREE_LOG, f"no agent running in {tab.address}")
         say("I heard you, but the agent I was talking to isn't running any more, so I didn't type it anywhere.")
         return False
     if not desktop().terminals.type_line(tab, message):
-        log(HANDSFREE_LOG, f"typing into {tab.session} failed")
+        log(HANDSFREE_LOG, f"typing into {tab.address} failed")
         say("I heard you, but that terminal is gone.")
         return False
-    log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.session}")
+    log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.address}")
     return True
 

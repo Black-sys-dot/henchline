@@ -1,16 +1,23 @@
 """What push-to-talk, talkback and hands-free need from the desktop, and nothing else.
 
-Every window, key, clipboard and terminal call goes through a Desktop. Today
-there is one: KDE on X11 (voice/kde_x11.py). Another desktop, or Wayland, is
-one new module that fills in these methods; no caller changes.
+Every window, key, clipboard and terminal call goes through a Desktop. There
+are two: any X11 desktop (voice/generic_x11.py) and KDE on X11, which adds
+Klipper and Konsole (voice/kde_x11.py); current() picks one by kde_session().
+Another desktop, or Wayland, is one new module that fills in these methods.
 """
 
 from __future__ import annotations
 
 import os
+import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from functools import cache
+
+
+RAISE_TRIES = 3  # attempts to bring a window to the front before giving up
+RAISE_SETTLE = 0.4  # seconds for the window manager to bring a window forward
+KEY_SETTLE = 0.25  # seconds after each chord, for the window to act on it (open a chat box, take a paste)
 
 
 @dataclass(frozen=True)
@@ -27,13 +34,17 @@ class Window:
 
 @dataclass(frozen=True)
 class Tab:
-    """Where an agent's terminal tab lives; empty when it has none (e.g. an editor's agent)."""
+    """Where an agent's terminal tab lives; empty when it has none (e.g. an editor's agent).
 
-    service: str = ""
-    session: str = ""
+    owner: the program that shows it (Konsole: its D-Bus service; plain X11: the window id);
+    address: the tab itself (Konsole: its session path; plain X11: its tty).
+    """
+
+    owner: str = ""
+    address: str = ""
 
     def __bool__(self) -> bool:
-        return bool(self.service and self.session)
+        return bool(self.owner and self.address)
 
 
 class Terminals(ABC):
@@ -84,9 +95,34 @@ class Desktop(ABC):
     def prepare_threads(self) -> None:
         """Called once before threads use the desktop (Xlib needs it); nothing by default."""
 
+    def paste_into(self, window_id: str, text: str, *chords: tuple[str, ...]) -> bool:
+        """Put text on the clipboard, bring the window forward, then press the chords in turn.
+
+        Nothing is pressed unless that window really is in front, checked before
+        every chord: a window manager can refuse a background program's raise,
+        and keys then land in whatever has focus (a message once went into
+        Telegram, 2026-11-15).
+        """
+        if not self.set_clipboard(text):
+            return False
+        for _ in range(RAISE_TRIES):
+            self.raise_window(window_id)
+            time.sleep(RAISE_SETTLE)
+            if self.is_front(window_id):
+                break
+        else:
+            return False
+        for chord in chords:
+            if not self.is_front(window_id):  # the user switched away meanwhile
+                return False
+            self.press(*chord)
+            time.sleep(KEY_SETTLE)
+        return True
+
 
 def kde_session() -> bool:
-    return "KDE" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":") or bool(os.environ.get("KDE_FULL_SESSION"))
+    desktops = os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":")
+    return "KDE" in desktops or bool(os.environ.get("KDE_FULL_SESSION"))
 
 
 @cache

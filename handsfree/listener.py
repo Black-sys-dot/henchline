@@ -20,11 +20,12 @@ from routing import Heard
 from sensing import (EC_SOURCE, FRAME, PER_SECOND, RATE, EarbudButton, EchoWatch, Output, Playback, Wake, level,
                      mic_stream, read_frame, start_canceller)
 from talkover import TalkOver, Verdict
-from turn import Mode, Turn, ptt_busy
+from turn import Mode, Turn
 from voicegate import VoiceGate
 from voice import whisper
 from voice.spool import queued
-from voice.state import BY_HANDSFREE, CLOSE, HANDSFREE_LOG, LISTEN, PAUSE, PLAYING, WORKER_PID, log, release_phase
+from voice.state import (BY_HANDSFREE, CLOSE, HANDSFREE_LOG, LISTEN, PAUSE, PLAYING, WORKER_PID, log, ptt_busy,
+                         release_phase)
 
 WINDOW = 8.0  # seconds to answer after a clip
 FOLLOW = 6.0  # seconds to carry on after their own message (once, never chained)
@@ -186,7 +187,8 @@ class Listener:
         self.gate.add(frame, db)
         if playing and time.monotonic() - self.play_started > BARGE_GRACE:
             self.echo_watch.add(max(self.gate.levels), self.playback.loudest())
-        if playing and (self.talkover.notice_playing() or (self.output.on_speakers() and self.playback.loudest() is None)):
+        unknown = self.output.on_speakers() and self.playback.loudest() is None
+        if playing and (self.talkover.notice_playing() or unknown):
             history.append(db)  # our own notice, or playback level unknown: only the wake word talks over it
             return self.woke(samples, turn_floor)
         speech = self.talking(frame, db, floor, playing)
@@ -258,7 +260,7 @@ class Listener:
         kept = self.window.until, self.window.kind
         LISTEN.unlink(missing_ok=True)  # they spoke: an earlier long window is used up (a switch writes a new one)
         extra = self.turns.take(frames, floor, heard)
-        self.loud.clear()
+        self.gate.clear()
         self.preroll.clear()
         if extra is None:  # no words in it (a noise): the window they had stays theirs
             self.window.until, self.window.kind = kept

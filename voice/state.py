@@ -129,6 +129,12 @@ def release_phase(by: str) -> None:
         set_phase(Phase.IDLE, by)
 
 
+def ptt_busy() -> bool:
+    """Push-to-talk itself has the mic (hands-free leaves it alone then)."""
+    phase, by = phase_now()
+    return phase is not Phase.IDLE and by != BY_HANDSFREE
+
+
 def mic_busy() -> bool:
     return phase_now()[0] is not Phase.IDLE
 
@@ -162,7 +168,7 @@ class Speaker:
         return cls(data["session"], data["agent"], data.get("where", ""), tab_from(data), data.get("at", 0.0))
 
     def save(self, path: Path) -> None:
-        write_json(path, {**asdict(self), "tab": [self.tab.service, self.tab.session]})
+        write_json(path, {**asdict(self), "tab": [self.tab.owner, self.tab.address]})
 
     @property
     def in_editor(self) -> bool:
