@@ -82,19 +82,25 @@ class IncomingActivity : Activity() {
         screen.addView(buttons)
         setContentView(screen)
 
-        ring = player(resourceId("ring_$agent"), loop = true, volume = 0.45f)
+        ring = player(resourceId("ring_$agent"), loop = true, volume = 0.45f)  // started by sayAgain's first beat
         phrase = player(resourceId("phrase_${agent}_$pick"), loop = false, volume = 1f)
         sayAgain()
         main.postDelayed({ stop() }, RingService.RING_SECONDS * 1000)
     }
 
-    /** The phrase over the ringtone, again a moment after it ends, as a ringtone repeats. A fixed six
-     *  seconds left a long gap after a short phrase (2026-11-15). */
+    /** The phrase over the ringtone, on the ringtone's beat: it starts with the tone's loop and again on
+     *  the first beat after it has ended, so voice and tone stay in step (the user's wish, 2026-11-15; a
+     *  fixed gap drifted against the tone). */
     private fun sayAgain() {
         val sound = phrase ?: return
-        sound.setOnCompletionListener { main.postDelayed({ sayAgain() }, SAY_GAP) }
+        // The tones play their motif twice a loop, so half a loop is a beat; the phrase comes back on the
+        // first beat after it ends (whole loops left 2.5 s gaps)
+        val beat = ring?.duration?.takeIf { it > 0 }?.toLong()?.div(2) ?: (sound.duration + SAY_GAP)
+        val every = beat * ((sound.duration + beat - 1) / beat).coerceAtLeast(1)
+        ring?.seekTo(0)  // the tone's loop starts with the phrase
         sound.seekTo(0)
         sound.start()
+        main.postDelayed({ sayAgain() }, every)
     }
 
     /** A sound that won't load just isn't played: the screen, its buttons and the time-out go on. */

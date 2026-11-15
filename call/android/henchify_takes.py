@@ -41,7 +41,7 @@ def clean(audio: np.ndarray, rate: int) -> np.ndarray:
     audio = sosfilt(butter(4, 90, "highpass", fs=rate, output="sos"), audio)
     level = 10 * np.log10(energy + 1e-12)
     voiced = np.percentile(level, 90)  # the performance's level, so one click can't set it (it fills >10 %)
-    loud = np.flatnonzero(level > voiced - 30)  # the performance, not the room
+    loud = np.flatnonzero(level > voiced - 18)  # the performance; 30 dB under kept the room (-42 dB) as a tail
     start, end = max(0, loud[0] * frame - int(EDGE * rate)), min(len(audio), (loud[-1] + 1) * frame + int(EDGE * rate))
     audio = audio[start:end]
     return audio / np.abs(audio).max() * 0.9  # by the loudest peak only: a soft clipper made it sound brittle
