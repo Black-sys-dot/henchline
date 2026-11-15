@@ -6,8 +6,11 @@
     handsfree listen [SECONDS]         keep listening that long (default 180)
     handsfree close                    stop listening until the wake word
     handsfree hangup                   end the phone call (call/), once talkback has finished speaking
-    handsfree ring [--now] [WHY]       ask the user to call: an ntfy notification whose Answer opens Henchline
-                                       and connects (the topic is read from ~/.config/ptt/ntfy-topic)
+    handsfree ring [--now] [--no-wait] [WHY]
+                                       ring the user's phone (Henchline full-screen, else an ntfy notification
+                                       whose Answer opens Henchline), and wait for the answer: exit 0 answered,
+                                       2 no answer (a missed call with WHY is left in ntfy), 1 not rung.
+                                       The ntfy topic is read from ~/.config/ptt/ntfy-topic
 
 The built-in mic runs through the echo canceller (sensing.py). The listener
 (listener.py) records a turn when the user talks after a clip, over a clip,
@@ -43,11 +46,14 @@ from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
 RING_TOPIC = Path.home() / ".config/ptt/ntfy-topic"  # the user's own ntfy topic: never printed or logged
 RING_SERVER = "https://ntfy.sh"
 RING_EVERY = 120  # seconds: an agent can't keep ringing
+RING_WAIT = 40  # seconds a ring waits for the answer: the phone rings for 30, and connecting takes a few
 RANG = Path.home() / ".local/state/ptt/call.rang"  # when the user was last rung
 
 
-def ring(why: str, now: bool = False) -> int:
-    """An agent wants to talk: a loud notification whose Answer button opens Henchline's call (henchline://call)."""
+def ring(why: str, now: bool = False, wait: bool = True) -> int:
+    """An agent wants to talk: the phone rings (Henchline full-screen, or an ntfy notification whose Answer
+    opens Henchline's call). Then it waits for the answer: 0 answered, 2 no answer (a "missed call" with
+    the reason is left in ntfy, so the user sees what it wanted), 1 not rung."""
     if in_call():
         print("a phone call is up already")
         return 1
@@ -61,34 +67,55 @@ def ring(why: str, now: bool = False) -> int:
         return 1
     speaker = last_speaker()
     who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
-    if CALL_RING.exists():  # Henchline's own push address: a full-screen call, the agent's henchman and ringtone
-        body = json.dumps({"agent": speaker.agent if speaker else "handsfree", "why": why}).encode()
-        try:
-            urllib.request.urlopen(urllib.request.Request(CALL_RING.read_text().strip(), data=body,
-                                                          headers={"Content-Type": "application/json"}),
-                                   timeout=10).close()
-            RANG.parent.mkdir(parents=True, exist_ok=True)
-            RANG.touch()
-            log(HANDSFREE_LOG, f"rang the user through Henchline ({who})")
-            print("rang")
-            return 0
-        except (OSError, ValueError) as exc:
-            print(f"Henchline's push address failed ({exc.__class__.__name__}): an ntfy notification instead")
-    request = urllib.request.Request(f"{RING_SERVER}/{topic}", data=(why or "Tap Answer to talk.").encode(),
-                                     headers={"Title": f"{who} is calling", "Priority": "high", "Tags": "telephone",
-                                              "Click": "henchline://call",
-                                              "Actions": "view, Answer, henchline://call, clear=true"})
-    try:
-        urllib.request.urlopen(request, timeout=10).close()
-    except (OSError, ValueError) as exc:
-        print(f"couldn't ring: {exc}")
+    if not (ring_henchline(speaker.agent if speaker else "handsfree", why, who)
+            or ntfy(topic, f"{who} is calling", why or "Tap Answer to talk.",
+                    {"Priority": "high", "Tags": "telephone", "Click": "henchline://call",
+                     "Actions": "view, Answer, henchline://call, clear=true"})):
+        print("couldn't ring")
         return 1
     RANG.parent.mkdir(parents=True, exist_ok=True)
     RANG.touch()
     log(HANDSFREE_LOG, f"rang the user ({who})")
-    print("rang")
-    return 0
+    print("rang", flush=True)
+    if not wait:
+        return 0
+    deadline = time.time() + RING_WAIT
+    while time.time() < deadline:
+        if in_call():
+            log(HANDSFREE_LOG, f"the user answered {who}'s call")
+            print("answered")
+            return 0
+        time.sleep(1)
+    ntfy(topic, f"Missed call from {who}", why or "They wanted to talk.", {"Tags": "telephone_receiver"})
+    log(HANDSFREE_LOG, f"no answer to {who}'s call: left a missed call")
+    print("no answer (a missed call was left in ntfy)")
+    return 2
 
+
+def ring_henchline(agent: str, why: str, who: str) -> bool:
+    """Henchline's own push address, if it gave one: a full-screen call with the agent's henchman and tone."""
+    if not CALL_RING.exists():
+        return False
+    body = json.dumps({"agent": agent, "why": why}).encode()
+    try:
+        urllib.request.urlopen(urllib.request.Request(CALL_RING.read_text().strip(), data=body,
+                                                      headers={"Content-Type": "application/json"}),
+                               timeout=10).close()
+        return True
+    except (OSError, ValueError) as exc:
+        print(f"Henchline's push address failed ({exc.__class__.__name__}): an ntfy notification instead")
+        return False
+
+
+def ntfy(topic: str, title: str, message: str, headers: dict[str, str]) -> bool:
+    """A notification on the user's phone; the topic is never printed."""
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"{RING_SERVER}/{topic}", data=message.encode(),
+                                                      headers={"Title": title, **headers}), timeout=10).close()
+        return True
+    except (OSError, ValueError) as exc:
+        print(f"ntfy failed: {exc.__class__.__name__}")
+        return False
 
 def run() -> int:
     cfg = whisper.Config.load(HANDSFREE_LOG)
@@ -143,7 +170,8 @@ def main() -> int:
         return 0
     if command == "ring":
         now = "--now" in args  # the user asked for this ring: past the limit meant for agents
-        return ring(" ".join(a for a in args if a != "--now"), now)
+        wait = "--no-wait" not in args
+        return ring(" ".join(a for a in args if a not in ("--now", "--no-wait")), now, wait)
     if command == "hangup":
         if not in_call():
             print("no phone call is up")
