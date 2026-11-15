@@ -69,6 +69,7 @@ class CallService : Service() {
     @Volatile private var running = false
     @Volatile private var ended = false  // the screen was already told why the call ended
     private var reply: String? = null  // an answered ring's report-back address: told if the call can't connect
+    @Volatile private var startedAt = 0L  // when the laptop answered: the call's length, for the history
     @Volatile var lastSession = ""  // the chat a typed line was last sent in (its ticks are kept there)
     private val heard = LinkedBlockingDeque<ByteArray>()  // the agents' voices, waiting to be played
     private val audio by lazy { getSystemService(AudioManager::class.java) }
@@ -93,6 +94,7 @@ class CallService : Service() {
         if (running) return START_NOT_STICKY  // already calling or connecting
         clear = intent.getBooleanExtra(CLEAR, true)
         reply = intent.getStringExtra(IncomingActivity.REPLY)
+        Calls.outcome(this, reply, "answered")  // from the ring screen, its banner or the app: the user's tap
         running = true
         Bus.service = this
         wakeLock = getSystemService(PowerManager::class.java)
@@ -169,6 +171,7 @@ class CallService : Service() {
         }
         wakeLock?.let { if (it.isHeld) it.release() }
         Bus.connected = false
+        if (startedAt > 0) logCall()
         Bus.service = null
         Bus.lastAgents = null
         Bus.lastMode = null
@@ -233,6 +236,9 @@ class CallService : Service() {
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Bus.connected = true
+                startedAt = System.currentTimeMillis()
+                Calls.add(this@CallService, org.json.JSONObject().put("id", "call-$startedAt").put("kind", "call")
+                    .put("at", startedAt).put("answering", Calls.ringId(reply) ?: ""))
                 // Answering a ring: which one, so the laptop puts the call through to the agent that rang
                 reply?.let { webSocket.send(org.json.JSONObject().put("answering", it.substringAfterLast('/')).toString()) }
                 // Where the laptop can ring this phone later (`handsfree ring`), refreshed every call
@@ -398,11 +404,24 @@ class CallService : Service() {
             .put("hidden", !screenOn)).toString())
     }
 
+    /** The call ended: its length in the history, and a line in the chat it ended on, as WhatsApp shows one. */
+    private fun logCall() {
+        val seconds = (System.currentTimeMillis() - startedAt) / 1000
+        val session = getSharedPreferences("call", MODE_PRIVATE).getString("current", "") ?: ""
+        Calls.update(this, "call-$startedAt") { it.put("seconds", seconds).put("session", session) }
+        Chats.add(this, session, org.json.JSONObject().put("from", "").put("note", true).put("mine", false)
+            .put("text", "📞 Call · ${Calls.length(seconds)}"))
+        startedAt = 0
+    }
+
     /** End the call with a reason the screen shows; safe from any thread. */
     private fun fail(why: String) {
         if (ended) return
         ended = true
-        if (!Bus.connected) Reply.send(reply, "unreachable")  // answered, but the laptop is out of reach
+        if (!Bus.connected) {  // answered, but the laptop is out of reach
+            Reply.send(reply, "unreachable")
+            Calls.outcome(this, reply, "unreachable")
+        }
         Bus.listener?.invoke(org.json.JSONObject().put("closed", why).toString())
         android.os.Handler(mainLooper).post { stopSelf() }
     }

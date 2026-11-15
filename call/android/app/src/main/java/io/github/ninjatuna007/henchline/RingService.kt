@@ -50,6 +50,9 @@ class RingService : PushService() {
         val reply = Reply.valid(ring.optString("reply"))
         Reply.send(reply, "rang")  // it reached the phone
         val agent = ring.optString("agent", "handsfree")
+        Calls.add(this, JSONObject().put("id", Calls.ringId(reply) ?: "ring-${System.currentTimeMillis()}").put("kind", "ring")
+            .put("agent", agent).put("session", ring.optString("session")).put("why", ring.optString("why"))
+            .put("outcome", if (reply == null) "rang" else "ringing"))
         ringNow(this, agent, ring.optString("why"), reply, phrase = phraseFor(agent, ring.optString("kind")))
     }
 

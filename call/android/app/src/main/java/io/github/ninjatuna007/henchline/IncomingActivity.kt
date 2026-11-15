@@ -193,6 +193,7 @@ class IncomingActivity : Activity() {
         if (told) return
         told = true
         Reply.send(reply, what)
+        Calls.outcome(this, reply, what)
     }
 
     private fun resourceId(name: String) = resources.getIdentifier(name, "raw", packageName)

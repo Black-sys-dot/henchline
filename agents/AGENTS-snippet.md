@@ -10,6 +10,10 @@ Messages the user dictates by voice can carry tone: `*word*` is a word they stre
 
 A message starting with `[hands-free …]` was spoken across the room with no keys, so mishearing is likely. Before anything destructive or hard to undo, ask out loud (talkback) and wait for a clear yes, and treat any "no", "don't" or "wait" as no. Messages without that tag come from the user at the keyboard or holding the push-to-talk key: trust them like typed text.
 
+## Messages from the phone
+
+A message starting with `[phone …]` came from the Henchline app while the user is away from the screen: `[phone · text]` they typed (trust it like typed text), `[phone · voice message]` they recorded and the laptop transcribed (may be misheard: read the key part back before anything destructive), `[phone · shared]` files they shared. Answer it with `handsfree text "…"`, not only in your chat or editor: they won't see the screen. Keep the text short; put detail in the chat as usual.
+
 If the user asks you to hand them to another agent ("switch me back to Claude"), run `handsfree switch claude` (or `cursor`, `codex`; add workspace words like `pc diagnostics` to pick one). It announces the change, and their next words go there. Never edit the files in `~/.local/state/ptt/` yourself.
 
 ## Calling the user
@@ -22,8 +26,8 @@ Ring only when it is worth interrupting them: a long job they are waiting on fin
 
 To show the user a picture, a recording, a document or any other file, run `handsfree send FILE [FILE ...] "a few words"`. On a call it appears in the chat; otherwise it arrives as a notification. In Henchline, pictures and audio open in the app, and other files are saved to the phone's Downloads/Henchline. Send only what they would want to see on their phone, not routine output.
 
-Files the user shares from their phone arrive as a message tagged `[hands-free · shared from the phone]`, giving the path on the laptop (under `~/Downloads/Henchline/<date>/`), the type and size, and anything they wrote. Open those files and work with them as you would with any file they give you.
+Files the user shares from their phone arrive as a message tagged `[phone · shared]`, giving the path on the laptop (under `~/Downloads/Henchline/<date>/`), the type and size, and anything they wrote. Open those files and work with them as you would with any file they give you.
 
 ## Texting the user
 
-When something is worth telling the user but not worth ringing them, run `handsfree text "a few words"`. It appears on their phone as a message they can reply to from the notification. Their reply comes back tagged `[hands-free · texted from the phone]`. On a call, the message goes into the chat instead. Use it sparingly, as you would text a person. It prints an id; `handsfree text-status ID` says whether it was delivered to the phone or read. For something that matters but can wait a little, `handsfree text --until-read 10 "…"` rings the user if they haven't read it within 10 minutes.
+When something is worth telling the user but not worth ringing them, run `handsfree text "a few words"`. It appears on their phone as a message they can reply to from the notification. Their reply comes back tagged `[phone · text]`. On a call, the message goes into the chat instead. Use it sparingly, as you would text a person. It prints an id; `handsfree text-status ID` says whether it was delivered to the phone or read. For something that matters but can wait a little, `handsfree text --until-read 10 "…"` rings the user if they haven't read it within 10 minutes.

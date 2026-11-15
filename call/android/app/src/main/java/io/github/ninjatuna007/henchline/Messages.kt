@@ -18,7 +18,7 @@ import org.json.JSONObject
 /**
  * Agents texting you (`handsfree text` on the laptop) while no call is up: a messaging notification per agent
  * session, with a reply box right in it (the user's wish, 2026-11-15: "it's a messaging system now, not
- * calling"). A reply goes to that agent over Tailscale, tagged [hands-free · texted from the phone]. Both
+ * calling"). A reply goes to that agent over Tailscale, tagged [phone · text]. Both
  * sides are kept in that agent's chat in the app.
  */
 object Messages {

@@ -83,7 +83,7 @@ def main() -> int:
     event = hook.get("hook_event_name", "")
     if event == "UserPromptSubmit":
         text, who = str(hook.get("prompt", "")), "you"
-        if text.lstrip().startswith("[hands-free"):  # said on the call: the chat has it already
+        if text.lstrip().startswith(("[hands-free", "[phone")):  # from the call or the phone: shown there already
             return 0
         if text.lstrip().startswith(NOT_THE_USER):  # another agent's report or a notice, delivered as a prompt
             return 0

@@ -19,7 +19,7 @@
     handsfree text [--until-read MIN] WORDS
                                        a message to the user's phone, not a call: a notification they can
                                        reply to from the notification itself (the reply comes back tagged
-                                       [hands-free · texted from the phone]); on a call it goes to the chat.
+                                       [phone · text]); on a call it goes to the chat.
                                        Prints its id. --until-read MIN: wait that long for the user to read
                                        it, then ring if they haven't. Exit 0 sent (or read), 1 not
     handsfree text-status ID            sent, delivered (on the phone) or read (opened, or replied to)
@@ -324,7 +324,7 @@ def run() -> int:
 def voice_notes(transcriber: whisper.Transcriber, stop: threading.Event) -> None:
     """Voice messages recorded in Henchline off a call (the call server keeps them in VOICE_NOTES): each one
     transcribed with hands-free's own Whisper and typed into the agent whose chat it was recorded in, tagged
-    [hands-free · voice message from the phone]; what was heard, or why not, goes back for the phone to show."""
+    [phone · voice message]; what was heard, or why not, goes back for the phone to show."""
     while not stop.wait(1.0):
         for meta_path in sorted(VOICE_NOTES.glob("*.json")):
             try:  # one bad note never stops the rest

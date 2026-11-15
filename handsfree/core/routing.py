@@ -35,9 +35,16 @@ class Heard(str, Enum):
     CALL = "call"  # on a phone call, where the user talks whenever they like
     PUSHED = "call, held the talk button"  # on a phone call, while holding the page's talk button
     TYPED = "call, typed"  # typed into the call page's chat, not spoken
-    SHARED = "shared from the phone"  # files or text shared to Henchline from another app
-    TEXTED = "texted from the phone"
-    VOICE_NOTE = "voice message from the phone"  # recorded in Henchline off a call, transcribed here  # a reply typed into an agent's text notification on the phone
+    # From the phone off a call: tagged [phone · …], not hands-free (the user's call, 2026-11-16: a text isn't spoken
+    # across the room), and answered with `handsfree text`
+    SHARED = "shared"  # files or text shared to Henchline from another app
+    TEXTED = "text"  # typed in Henchline's chat, or in an agent's text notification
+    VOICE_NOTE = "voice message"  # recorded in Henchline off a call, transcribed here: may be misheard
+
+    @property
+    def tag(self) -> str:
+        source = "phone" if self in (Heard.SHARED, Heard.TEXTED, Heard.VOICE_NOTE) else "hands-free"
+        return f"[{source} · {self.value}]"
 
 
 NAMES = "|".join(SPOKEN_TO)
@@ -279,7 +286,7 @@ def type_into_cursor(wid: str, message: str) -> bool:
 
 def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
     """Type the words, tagged with how they were heard, to `to`, or else to the agent that spoke last."""
-    message = f"[hands-free · {heard.value}] {text}"
+    message = f"{heard.tag} {text}"
     speaker = to or last_speaker()
     if speaker is None:
         log(HANDSFREE_LOG, "nobody to send to")

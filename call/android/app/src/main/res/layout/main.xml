@@ -33,6 +33,17 @@
                 android:textSize="26sp"
                 android:textStyle="bold" />
 
+            <!-- Chats or the call history: tap to switch -->
+            <ImageButton
+                android:id="@+id/calls"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="8dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Call history"
+                android:src="@drawable/ic_phone"
+                android:tint="@color/muted" />
+
             <!-- How the chats are ordered: tap to cycle (recent, by project, by agent) -->
             <TextView
                 android:id="@+id/sort"
@@ -149,7 +160,7 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:maxLines="1"
-                    android:text="Not connected"
+                    android:text="Not on a call"
                     android:textColor="@color/muted"
                     android:textSize="13sp" />
             </LinearLayout>

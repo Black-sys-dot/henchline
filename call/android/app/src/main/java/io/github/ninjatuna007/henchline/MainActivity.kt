@@ -120,13 +120,14 @@ class MainActivity : Activity() {
         showCrew()
 
         findViewById<ImageButton>(R.id.menu).setOnClickListener { show(listScreen) }
+        findViewById<ImageButton>(R.id.calls).setOnClickListener { showCalls(!showingCalls) }
         callButton.setOnClickListener { if (CallService.Bus.connected) hangUp() else call() }
         findViewById<View>(R.id.serverRow).setOnClickListener { askServer { } }
         showClear(prefs().getBoolean("clear", true))
         setUpTalkButton()
         send.setOnClickListener { sendTyped() }
         setUpVoiceNotes()
-        attach.setOnClickListener { pickFiles() }
+        attach.setOnClickListener { if (locked) endVoiceNote(keep = false, why = "Dropped") else pickFiles() }
         text.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_SEND).also { if (it) sendTyped() } }
         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.BLUETOOTH_CONNECT), 1)
@@ -297,7 +298,7 @@ class MainActivity : Activity() {
             .setTitle("${IncomingActivity.nameOf(ring.optString("agent"))} is calling")
             .setMessage(ring.optString("why").ifEmpty { "Your crew wants to talk." })
             .setPositiveButton("Answer") { _, _ -> call(reply) }
-            .setNegativeButton("Decline") { _, _ -> Reply.send(reply, "declined"); Ringing.end(this) }
+            .setNegativeButton("Decline") { _, _ -> Reply.send(reply, "declined"); Calls.outcome(this, reply, "declined"); Ringing.end(this) }
             .show()
     }
 
@@ -402,7 +403,7 @@ class MainActivity : Activity() {
                     // Added at the end, your ticks before it turned blue in place: no redraw, so the chat
                     // doesn't jump (a full redraw shifted it, 2026-11-16)
                     say(from, line.getString("text"), session = current, keep = false)
-                    for ((bubble, words) in myBubbles) bubble.text = ticked(words, "read")
+                    for ((bubble, words) in myBubbles) bubble.text = stamp(bubble, words, "read")
                     myBubbles.clear()
                     if (chatScreen.visibility == View.VISIBLE) {
                         if (line.has("tid")) Messages.seen(this, current)
@@ -464,6 +465,7 @@ class MainActivity : Activity() {
     private fun showCrew() {
         crew.removeAllViews()
         main.removeCallbacks(searchSoon)
+        if (showingCalls) return showCalls()
         val query = if (::search.isInitialized) search.text.toString().trim() else ""
         if (names.isEmpty()) {
             crew.addView(TextView(this).apply {
@@ -551,12 +553,19 @@ class MainActivity : Activity() {
         }
     }
 
-    private var voiceNote: VoiceNote? = null  // recording while the mic is held
+    private var voiceNote: VoiceNote? = null  // recording while the mic is held, or locked
+    private var locked = false  // slid up: recording on without holding, sent with the button, dropped with ✕
+    private var lockHint: android.widget.PopupWindow? = null  // the lock above the mic, while it is held
+    private var tapped = false  // a new touch on the locked button
+    private var downX = 0f
+    private var downY = 0f
 
-    /** Off a call, with the box empty, the send button is a mic: hold to record a voice message, let go to send,
-     *  slide left to cancel (as in WhatsApp). The laptop transcribes it and types it to this chat's agent. */
+    /** Off a call, with the box empty, the send button is a mic, as in WhatsApp (the user's wish, 2026-11-16): hold
+     *  to record and let go to send; slide left to drop it; slide up to lock it on, then the button sends and ✕
+     *  drops. The button follows the finger, so it feels like something is happening. The laptop transcribes the
+     *  message and types it to this chat's agent. */
     private fun setUpVoiceNotes() {
-        val swap = { send.setImageResource(if (micMode()) R.drawable.ic_mic else R.drawable.ic_send) }
+        val swap = { if (voiceNote == null) send.setImageResource(if (micMode()) R.drawable.ic_mic else R.drawable.ic_send) }
         text.addTextChangedListener(object : android.text.TextWatcher {
             override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
             override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
@@ -565,11 +574,28 @@ class MainActivity : Activity() {
         swap()
         send.setOnTouchListener { _, event ->
             if (!micMode() && voiceNote == null) return@setOnTouchListener false  // a send: the click does it
+            if (locked) {  // the button is "send" now, for a new tap: the finger that locked it lifting is not one
+                if (event.actionMasked == MotionEvent.ACTION_DOWN) tapped = true
+                if (event.actionMasked == MotionEvent.ACTION_UP && tapped) endVoiceNote(keep = true)
+                return@setOnTouchListener true
+            }
             when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> startVoiceNote()
-                MotionEvent.ACTION_MOVE -> if (event.x < -dp(80)) endVoiceNote(keep = false, why = "Cancelled")
+                MotionEvent.ACTION_DOWN -> { downX = event.rawX; downY = event.rawY; startVoiceNote() }
+                MotionEvent.ACTION_MOVE -> if (voiceNote != null) {
+                    // Raw coordinates: the button moves under the finger, so its own would chase themselves
+                    val dx = (event.rawX - downX).coerceAtMost(0f)
+                    val dy = (event.rawY - downY).coerceAtMost(0f)
+                    val sideways = -dx > -dy  // one direction at a time, as WhatsApp does
+                    send.translationX = if (sideways) dx else 0f
+                    send.translationY = if (sideways) 0f else dy
+                    lockHint?.contentView?.alpha = if (sideways) 0.4f else 1f
+                    when {
+                        dx < -dp(110) -> endVoiceNote(keep = false, why = "Dropped")
+                        dy < -dp(90) -> lockVoiceNote()
+                    }
+                }
                 MotionEvent.ACTION_UP -> endVoiceNote(keep = true)
-                MotionEvent.ACTION_CANCEL -> endVoiceNote(keep = false, why = "Cancelled")
+                MotionEvent.ACTION_CANCEL -> endVoiceNote(keep = false, why = "Dropped")
             }
             true
         }
@@ -587,15 +613,73 @@ class MainActivity : Activity() {
         if (!note.start()) { say("", "The microphone is busy.", note = true); return }
         voiceNote = note
         send.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFFE24A4A.toInt())  // red while recording
-        text.hint = "Recording… let go to send, slide left to cancel"
+        send.animate().scaleX(1.5f).scaleY(1.5f).setDuration(160).setInterpolator(android.view.animation.OvershootInterpolator()).start()
         send.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        lockHint = android.widget.PopupWindow(TextView(this).apply {  // above the mic: slide up here to lock
+            text = "🔒\n▲"
+            gravity = Gravity.CENTER
+            setTextColor(getColor(R.color.text)); textSize = 16f
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            background = GradientDrawable().apply { setColor(getColor(R.color.surface_high)); cornerRadius = dp(22).toFloat() }
+        }, dp(48), dp(76)).apply {
+            showAsDropDown(send, 0, -send.height - dp(130))
+            contentView.translationY = dp(20).toFloat()
+            contentView.animate().translationY(0f).setDuration(220).start()
+            bounce(contentView)
+        }
+        main.post(recordClock)
+    }
+
+    /** The lock's arrow nudges up now and then, as a hint. */
+    private fun bounce(view: View) {
+        view.animate().translationY(-dp(6).toFloat()).setDuration(450).withEndAction {
+            view.animate().translationY(0f).setDuration(450).withEndAction { if (lockHint?.isShowing == true) bounce(view) }.start()
+        }.start()
+    }
+
+    /** The time recorded so far, in the message box, with what to do next. */
+    private val recordClock = object : Runnable {
+        override fun run() {
+            val note = voiceNote ?: return
+            val seconds = (System.currentTimeMillis() - note.started) / 1000
+            val clock = "%d:%02d".format(seconds / 60, seconds % 60)
+            text.hint = if (locked) "🔴 $clock   ✕ drops it, the button sends" else "🔴 $clock   ◀ slide to drop · ▲ to lock"
+            main.postDelayed(this, 500)
+        }
+    }
+
+    /** Slid up: recording stays on hands-off; the mic springs back as a send button, ✕ (where the paperclip is)
+     *  drops it. */
+    private fun lockVoiceNote() {
+        if (locked || voiceNote == null) return
+        locked = true
+        tapped = false
+        lockHint?.dismiss(); lockHint = null
+        send.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(200)
+            .setInterpolator(android.view.animation.OvershootInterpolator()).start()
+        send.setImageResource(R.drawable.ic_send)
+        attach.setImageResource(R.drawable.ic_close)
+        attach.contentDescription = "Drop the voice message"
+        send.performHapticFeedback(if (android.os.Build.VERSION.SDK_INT >= 30) android.view.HapticFeedbackConstants.CONFIRM else android.view.HapticFeedbackConstants.VIRTUAL_KEY)
+        recordClock.run()
     }
 
     private fun endVoiceNote(keep: Boolean, why: String = "") {
         val note = voiceNote ?: return
         voiceNote = null
+        locked = false
+        main.removeCallbacks(recordClock)
+        lockHint?.dismiss(); lockHint = null
         send.backgroundTintList = android.content.res.ColorStateList.valueOf(getColor(R.color.cyan))
-        showConnected(CallService.Bus.connected)  // the hint back
+        // Back in place with a little spring; a dropped one gives a shake, so it is clearly gone
+        send.animate().translationX(0f).translationY(0f).scaleX(1f).scaleY(1f).setDuration(220)
+            .setInterpolator(android.view.animation.OvershootInterpolator()).start()
+        if (!keep) send.postDelayed({
+            android.animation.ObjectAnimator.ofFloat(send, "rotation", 0f, -14f, 14f, -8f, 8f, 0f).setDuration(320).start()
+        }, 220)
+        attach.setImageResource(R.drawable.ic_attach)
+        attach.contentDescription = "Attach pictures or files"
+        showConnected(CallService.Bus.connected)  // the hint and the mic back
         val short = System.currentTimeMillis() - note.started < 700
         val wav = note.stop(keep && !short)
         if (wav == null) {
@@ -616,7 +700,7 @@ class MainActivity : Activity() {
                 Chats.setStatus(this, to, id, "delivered")
                 main.post {
                     if (sentBubbles[id]?.first === bubble) sentBubbles[id] = bubble to words
-                    bubble.text = ticked(words, "delivered")  // in place: no redraw under you
+                    bubble.text = stamp(bubble, words, "delivered")  // in place: no redraw under you
                 }
             } else {
                 Chats.setText(this, to, id, "🎙 Voice message (not sent)")
@@ -705,7 +789,7 @@ class MainActivity : Activity() {
         findViewById<View>(R.id.idle).visibility = if (readable) View.GONE else View.VISIBLE
         showClear(CallService.Bus.service?.clear ?: prefs().getBoolean("clear", true))
         if (!on) {
-            state.text = "Not connected"
+            state.text = "Not on a call"  // texts and voice messages still reach the agent (not "not connected", 2026-11-16)
             showMode("waiting")
         }
         showCrew()
@@ -728,10 +812,12 @@ class MainActivity : Activity() {
 
     /** A chat line: the agent's henchman and a bubble on the left, yours on the right, notes in the middle. */
     private fun say(from: String, words: String, mine: Boolean = false, note: Boolean = false, session: String = "",
-                    keep: Boolean = true, status: String = ""): TextView {
+                    keep: Boolean = true, status: String = "", at: Long = System.currentTimeMillis()): TextView {
         if (keep && !note) Chats.add(this, session, JSONObject().put("from", from).put("text", words).put("mine", mine))
+        if (!note && at > 0) dayLine(at)
         val bubble = TextView(this).apply {
-            text = if (mine && status.isNotEmpty()) ticked(words, status) else words
+            if (!note) bubbleAt[this] = at
+            text = if (note) words else stamp(this, words, if (mine) status else "")
             setTextColor(getColor(if (note) R.color.muted else R.color.text))
             textSize = if (note) 13f else 15f
             if (!note) {
@@ -777,17 +863,45 @@ class MainActivity : Activity() {
     /** A line of yours moved on (delivered): its ticks change where it is, nothing else redrawn. */
     private fun tick(id: String, status: String) {
         val (bubble, words) = sentBubbles[id] ?: return
-        bubble.text = ticked(words, status)
+        bubble.text = stamp(bubble, words, status)
     }
 
-    /** Your words with their ticks at the end: ✓ sent, ✓✓ delivered, ✓✓ in cyan once read. */
-    private fun ticked(words: String, status: String): CharSequence {
-        val ticks = if (status == "sent") "✓" else "✓✓"
-        val all = android.text.SpannableString("$words  $ticks")
-        all.setSpan(android.text.style.ForegroundColorSpan(getColor(if (status == "read") R.color.cyan else R.color.muted)),
-            all.length - ticks.length, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        all.setSpan(android.text.style.RelativeSizeSpan(0.8f), all.length - ticks.length, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+    private val bubbleAt = java.util.WeakHashMap<TextView, Long>()  // when each bubble's line was said
+    private var lastDay = ""  // the day of the newest line drawn, for the day line between days
+
+    /** The words with the time and, for yours, the ticks small at the end, as WhatsApp shows them: ✓ sent,
+     *  ✓✓ delivered, ✓✓ in cyan once read. */
+    private fun stamp(bubble: TextView, words: String, status: String): CharSequence {
+        val at = bubbleAt[bubble] ?: 0L
+        val time = if (at > 0) android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(at)) else ""
+        val ticks = when (status) { "" -> ""; "sent" -> "✓"; else -> "✓✓" }
+        val tail = listOf(time, ticks).filter { it.isNotEmpty() }.joinToString(" ")
+        if (tail.isEmpty()) return words
+        val all = android.text.SpannableString("$words  $tail")
+        val from = all.length - tail.length
+        all.setSpan(android.text.style.ForegroundColorSpan(getColor(R.color.muted)), from, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        if (ticks.isNotEmpty() && status == "read")
+            all.setSpan(android.text.style.ForegroundColorSpan(getColor(R.color.cyan)), all.length - ticks.length, all.length,
+                android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        all.setSpan(android.text.style.RelativeSizeSpan(0.75f), from, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         return all
+    }
+
+    /** "Today", "Yesterday" or the date, centred between the lines of different days. */
+    private fun dayLine(at: Long) {
+        val day = android.text.format.DateFormat.getMediumDateFormat(this).format(java.util.Date(at))
+        if (day == lastDay) return
+        lastDay = day
+        val label = when {
+            android.text.format.DateUtils.isToday(at) -> "Today"
+            android.text.format.DateUtils.isToday(at + 86_400_000L) -> "Yesterday"
+            else -> day
+        }
+        chat.addView(TextView(this).apply {
+            text = label
+            setTextColor(getColor(R.color.muted)); textSize = 12f; gravity = Gravity.CENTER
+            setPadding(0, dp(10), 0, dp(6))
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
     }
 
     private val searchSoon = Runnable { showCrew() }
@@ -800,7 +914,77 @@ class MainActivity : Activity() {
     private fun unread(session: String, last: JSONObject?): Int {
         val seen = prefs().getLong("seen_$session", 0)
         if (last == null || last.optBoolean("mine") || last.optLong("at") <= seen) return 0
-        return Chats.load(this, session).takeLastWhile { !it.optBoolean("mine") }.count { it.optLong("at") > seen }
+        return Chats.load(this, session).takeLastWhile { !it.optBoolean("mine") }
+            .count { !it.optBoolean("note") && it.optLong("at") > seen }  // a call's line isn't a message
+    }
+
+    private var showingCalls = false  // the list screen shows the call history instead of the chats
+
+    /** The call history, newest first: who rang and why, and how it went; calls with their length. Tap one for
+     *  that agent's chat. */
+    private fun showCalls() {
+        val calls = Calls.load(this).asReversed()
+        if (calls.isEmpty()) crew.addView(TextView(this).apply {
+            text = "No calls yet. Rings and calls show here."
+            setTextColor(getColor(R.color.muted)); setPadding(dp(20), dp(24), dp(20), dp(24))
+        })
+        val ringSeconds = (RingService.RING_SECONDS + 30) * 1000
+        for (call in calls) {
+            val ring = call.optString("kind") == "ring"
+            val at = call.optLong("at")
+            // A banner ring nobody answered or declined is still "ringing" in the log: missed, once its time is up
+            val outcome = call.optString("outcome").let { if (it == "ringing" && System.currentTimeMillis() - at > ringSeconds) "missed" else it }
+            val agent = call.optString("agent")
+            val session = call.optString("session")
+            val name = if (ring) IncomingActivity.nameOf(agent) else names[session]?.substringBefore(",") ?: "Call"
+            val (mark, colour) = when {
+                !ring -> "📞" to R.color.text
+                outcome == "answered" -> "↙ answered" to R.color.cyan
+                outcome == "declined" -> "↙ declined" to R.color.muted
+                outcome == "ringing" || outcome == "rang" -> "↙ rang" to R.color.muted
+                else -> "↙ $outcome" to R.color.hang
+            }
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                setPadding(dp(20), dp(12), dp(20), dp(12))
+                if (session.isNotEmpty()) setOnClickListener { showCalls(false); open(session) }
+            }
+            row.addView(ImageView(this).apply {
+                setImageResource(if (ring) avatarOf(agent) else if (session.isNotEmpty()) avatarOf(session) else R.drawable.avatar_handsfree)
+            }, LinearLayout.LayoutParams(dp(44), dp(44)))
+            val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
+            val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            top.addView(TextView(this).apply {
+                text = name
+                setTextColor(getColor(if (outcome == "missed") R.color.hang else R.color.text)); textSize = 16f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD; maxLines = 1
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            top.addView(TextView(this).apply {
+                text = android.text.format.DateUtils.formatDateTime(this@MainActivity, at,
+                    android.text.format.DateUtils.FORMAT_SHOW_TIME or android.text.format.DateUtils.FORMAT_SHOW_DATE or
+                        android.text.format.DateUtils.FORMAT_ABBREV_MONTH)
+                setTextColor(getColor(R.color.muted)); textSize = 12f
+            })
+            words.addView(top)
+            val detail = if (ring) listOf(mark, call.optString("why")) else
+                listOf("$mark Call" + if (call.has("seconds")) " · ${Calls.length(call.optLong("seconds"))}" else " · going on")
+            words.addView(TextView(this).apply {
+                text = detail.filter { it.isNotEmpty() }.joinToString(" · ")
+                setTextColor(getColor(colour)); textSize = 14f; maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            row.addView(words, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            crew.addView(row)
+        }
+    }
+
+    /** The phone button in the list's top bar: lit while the call history shows. */
+    private fun showCalls(on: Boolean) {
+        showingCalls = on
+        findViewById<ImageButton>(R.id.calls).setColorFilter(getColor(if (on) R.color.cyan else R.color.muted))
+        findViewById<View>(R.id.sort).visibility = if (on) View.GONE else View.VISIBLE
+        showCrew()
     }
 
     private fun sortMode() = prefs().getString("sort", "recent") ?: "recent"
@@ -950,6 +1134,7 @@ class MainActivity : Activity() {
     /** The current agent's kept chat, from the start: on opening the app, and on switching agents. */
     private fun showHistory() {
         chat.removeAllViews()
+        lastDay = ""
         myBubbles.clear()
         sentBubbles.clear()  // their views are gone with the old rows
         val history = Chats.load(this, current)
@@ -962,9 +1147,12 @@ class MainActivity : Activity() {
             val file = line.optJSONObject("file")
             if (file != null) fileCard(line.optString("from"), file, current, keep = false)
             else if (line.has("thumb")) picture(line.getString("thumb"), line.optString("text"), current)
-            else {
+            else if (line.optBoolean("note")) {  // a kept note: a call and its length
+                dayLine(line.optLong("at"))
+                say("", line.optString("text"), note = true, session = current, keep = false)
+            } else {
                 val bubble = say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"),
-                    session = current, keep = false,
+                    session = current, keep = false, at = line.optLong("at"),
                     status = line.optString("status").ifEmpty {  // from before ticks: answered since means read
                         if (!line.optBoolean("mine")) "" else if (i < lastAgent) "read" else "delivered" })
                 // Yours, by id: a delivered reply arriving later changes this bubble, the one on screen
