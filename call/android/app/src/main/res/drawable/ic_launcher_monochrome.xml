@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The themed (one-colour) launcher icon: the notification's silhouette, scaled into the safe zone like
+     the colour one, so a round mask keeps the antenna -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp" android:viewportWidth="108" android:viewportHeight="108">
+    <group android:pivotX="54" android:pivotY="54" android:scaleX="0.78" android:scaleY="0.78" android:translateY="3">
+        <path android:fillColor="#FFFFFF" android:fillType="evenOdd"
+            android:pathData="M30,50 A24,24 0,0 1,78 50 V76 A14,14 0,0 1,64 90 H44 A14,14 0,0 1,30 76 Z M42,48a12,12 0,1 0,24 0a12,12 0,1 0,-24 0" />
+        <path android:fillColor="#FFFFFF" android:pathData="M48,48a6,6 0,1 0,12 0a6,6 0,1 0,-12 0 M51,12h6v16h-6z" />
+    </group>
+</vector>
