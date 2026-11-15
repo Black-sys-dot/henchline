@@ -23,7 +23,7 @@ from sensing import PER_SECOND, RATE, SPEECH, level
 from talkover import TalkOver, our_own_words
 from voicegate import START_DB
 from voice import whisper
-from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call, log, ptt_busy, release_phase,
+from voice.state import (BY_HANDSFREE, CALL_PUSH, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call, log, ptt_busy, release_phase,
                          set_phase, set_target)
 
 THINK_WINDOW = 180  # seconds after "give me a minute"
@@ -85,7 +85,10 @@ class Turn:
         since, quiet, peak = time.monotonic(), 0, -120.0
         started = heard is not Heard.WOKE  # after "hey Claude" people pause for the chime
         end = CALL_END_FRAMES if in_call() else END_FRAMES
-        while quiet < end and time.monotonic() - since < MAX_SECONDS:
+        held = heard is Heard.PUSHED  # the button decides when it ends, not a pause
+        while (quiet < end or held) and time.monotonic() - since < MAX_SECONDS:
+            if held and not CALL_PUSH.exists():
+                break
             samples = self.read()
             if samples is None:
                 break
@@ -102,7 +105,8 @@ class Turn:
             quiet = quiet + 1 if db < max(floor + END_DB, peak - BELOW_PEAK) else 0
             if quiet == OVER_FRAMES and self.ends_with_over(frames):
                 break
-        reason = "over" if quiet == OVER_FRAMES else "pause" if quiet >= end else "limit"
+        reason = ("the button" if held else "over" if quiet == OVER_FRAMES else "pause" if quiet >= end
+                  else "limit")
         log(HANDSFREE_LOG, f"recorded {time.monotonic() - since:.1f}s, ended by {reason} (floor {floor:.0f} dB)")
         return frames
 

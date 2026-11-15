@@ -48,6 +48,8 @@ HANDSFREE_WAV = STATE / "handsfree.wav"  # a turn being transcribed, deleted aft
 
 # A phone call (call/): while CALL exists, hands-free hears PHONE_MIC and talkback plays into PHONE_SPEAKER
 CALL = STATE / "call"
+CALL_PUSH = STATE / "call.push"  # exists while the call page's talk button is held
+HANDSFREE_MODE = STATE / "handsfree.mode"  # waiting / listening / recording / transcribing: the tray's colours
 PHONE_MIC = "phone_mic"  # a virtual sink the call page writes the phone's mic into; listened to as its monitor
 PHONE_SPEAKER = "phone_speaker"  # a virtual sink talkback plays into during a call; streamed to the phone
 

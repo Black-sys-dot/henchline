@@ -2,36 +2,55 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
 <title>Call the agents</title>
 <style>
-  :root { --bg: #f6f5f2; --fg: #1d1d1b; --muted: #6b6a66; --go: #2e7d4f; --stop: #b3322b; --card: #ffffff; }
-  @media (prefers-color-scheme: dark) { :root { --bg: #141413; --fg: #ecebe6; --muted: #9a9892; --card: #1f1f1d; } }
-  body { margin: 0; background: var(--bg); color: var(--fg); font: 17px/1.45 system-ui, sans-serif;
-         min-height: 100vh; display: flex; align-items: center; justify-content: center; }
-  main { width: min(420px, 100% - 32px); text-align: center; }
-  h1 { font-size: 1.4rem; margin: 0 0 .3rem; }
-  p { color: var(--muted); margin: .2rem 0 1.4rem; }
-  button { width: 100%; padding: 1.1rem; font-size: 1.2rem; border: 0; border-radius: 14px; color: #fff;
-           background: var(--go); }
-  button.on { background: var(--stop); }
-  #state { margin-top: 1rem; min-height: 1.5em; }
-  meter { width: 100%; height: 10px; margin-top: .8rem; }
-  #state { font-weight: 600; }
-  #caption { margin-top: .8rem; padding: .8rem 1rem; border-radius: 12px; background: var(--card); text-align: left;
-             min-height: 3em; color: var(--fg); }
-  #caption:empty { display: none; }
+  :root { --bg: #f6f5f2; --fg: #1d1d1b; --muted: #6b6a66; --card: #ffffff; --line: #e2e0da;
+          --call: #2e7d4f; --hang: #b3322b;
+          /* the laptop tray's colours: plain while only the wake word gets in, then green, red, yellow */
+          --waiting: #8e8c86; --listening: #3cb371; --recording: #e24a4a; --transcribing: #e0a100; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #141413; --fg: #ecebe6; --muted: #9a9892; --card: #1f1f1d; --line: #2d2d2a; --waiting: #6b6a66; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 16px/1.45 system-ui, sans-serif;
+         height: 100dvh; display: flex; flex-direction: column; }
+  header { display: flex; align-items: center; gap: .75rem; padding: .8rem 16px; border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 1.05rem; margin: 0; flex: 1; }
+  #call { border: 0; border-radius: 999px; padding: .55rem 1.1rem; font-size: 1rem; color: #fff; background: var(--call); }
+  #call.on { background: var(--hang); }
+  #chat { flex: 1; overflow-y: auto; padding: 1rem 16px; display: flex; flex-direction: column; gap: .5rem; }
+  .msg { max-width: 85%; padding: .55rem .8rem; border-radius: 14px; background: var(--card); border: 1px solid var(--line);
+         overflow-wrap: anywhere; }
+  .msg .who { font-size: .75rem; color: var(--muted); margin-bottom: .1rem; }
+  .msg.you { align-self: flex-end; background: color-mix(in srgb, var(--call) 18%, var(--card)); }
+  .msg.note { align-self: center; background: none; border: 0; color: var(--muted); font-size: .85rem; }
+  #talk-area { display: flex; flex-direction: column; align-items: center; gap: .4rem; padding: .8rem 16px .4rem; }
+  #talk { width: 92px; height: 92px; border-radius: 50%; border: 0; background: var(--waiting); color: #fff;
+          font-size: .9rem; font-weight: 600; touch-action: none; user-select: none; -webkit-user-select: none;
+          box-shadow: 0 0 0 0 transparent; transition: background .15s, box-shadow .15s; }
+  #talk[data-mode="listening"] { background: var(--listening); }
+  #talk[data-mode="recording"] { background: var(--recording); box-shadow: 0 0 0 8px color-mix(in srgb, var(--recording) 30%, transparent); }
+  #talk[data-mode="transcribing"] { background: var(--transcribing); }
+  #talk:disabled { opacity: .45; }
+  #state { color: var(--muted); font-size: .9rem; min-height: 1.3em; text-align: center; }
+  form { display: flex; gap: .5rem; padding: .5rem 16px calc(.8rem + env(safe-area-inset-bottom)); }
+  form input { flex: 1; min-width: 0; font: inherit; padding: .65rem .8rem; border-radius: 12px; border: 1px solid var(--line);
+               background: var(--card); color: var(--fg); }
+  form button { font: inherit; border: 0; border-radius: 12px; padding: 0 1rem; background: var(--call); color: #fff; }
 </style>
 </head>
 <body>
-<main>
+<header>
   <h1>Call the agents</h1>
-  <p>Talk the way you do at home: hands-free hears you, and the agent that spoke last answers out loud here.</p>
   <button id="call">Call</button>
-  <meter id="level" min="0" max="1" value="0"></meter>
+</header>
+<div id="chat"><div class="msg note">Tap Call. Then just talk, hold the round button to talk, or type below.</div></div>
+<div id="talk-area">
+  <button id="talk" data-mode="waiting" disabled>Hold to talk</button>
   <div id="state">Not connected</div>
-  <div id="caption"></div>
-</main>
+</div>
+<form id="send"><input id="text" placeholder="Message the agent…" autocomplete="off" disabled><button>Send</button></form>
 <script>
 // Two small audio worklets: one sends the mic as 16 kHz 16-bit, one plays what the laptop sends (24 kHz 16-bit)
 const worklets = `
@@ -41,16 +60,14 @@ class Mic extends AudioWorkletProcessor {
   constructor() { super(); this.step = sampleRate / 16000; this.acc = 0; this.n = 0; this.left = this.step; this.buf = []; }
   process([input]) {
     const ch = input[0]; if (!ch) return true;
-    let peak = 0;
     for (let i = 0; i < ch.length; i++) {
       this.acc += ch[i]; this.n++; this.left -= 1;
       if (this.left <= 0) {
-        const s = Math.max(-1, Math.min(1, this.acc / this.n));
-        this.buf.push(s * 32767); peak = Math.max(peak, Math.abs(s));
+        this.buf.push(Math.max(-1, Math.min(1, this.acc / this.n)) * 32767);
         this.acc = 0; this.n = 0; this.left += this.step;
       }
     }
-    if (this.buf.length >= 320) { this.port.postMessage({pcm: Int16Array.from(this.buf).buffer, peak}); this.buf = []; }
+    if (this.buf.length >= 320) { this.port.postMessage(Int16Array.from(this.buf).buffer); this.buf = []; }
     return true;
   }
 }
@@ -71,9 +88,20 @@ class Speaker extends AudioWorkletProcessor {
 }
 registerProcessor('mic', Mic); registerProcessor('speaker', Speaker);`;
 
-const button = document.getElementById('call'), state = document.getElementById('state'), meter = document.getElementById('level');
-const caption = document.getElementById('caption');
+const $ = (id) => document.getElementById(id);
+const callButton = $('call'), talk = $('talk'), state = $('state'), chat = $('chat'), text = $('text');
 let ws = null, ctx = null, stream = null, wakeLock = null;
+
+function say(who, words, kind = '') {
+  const div = document.createElement('div');
+  div.className = `msg ${kind}`;
+  if (who) { const w = document.createElement('div'); w.className = 'who'; w.textContent = who; div.append(w); }
+  div.append(document.createTextNode(words));
+  chat.append(div);
+  chat.scrollTop = chat.scrollHeight;
+}
+
+function send(message) { if (ws && ws.readyState === 1) ws.send(JSON.stringify(message)); }
 
 async function start() {
   state.textContent = 'Starting…';
@@ -86,16 +114,20 @@ async function start() {
   speaker.connect(ctx.destination);
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/call`);
   ws.binaryType = 'arraybuffer';
-  ws.onopen = () => { state.textContent = 'Connected: talk any time'; button.textContent = 'Hang up'; button.classList.add('on'); };
-  ws.onmessage = (e) => {
-    if (typeof e.data === 'string') {  // what hands-free and the agent are doing, and the agent's words
-      const status = JSON.parse(e.data);
-      state.textContent = status.state;
-      if (status.caption !== undefined) caption.textContent = status.caption;
-    } else speaker.port.postMessage(e.data, [e.data]);
+  ws.onopen = () => {
+    callButton.textContent = 'Hang up'; callButton.classList.add('on');
+    talk.disabled = text.disabled = false;
+    say('', 'Call started', 'note');
   };
-  ws.onclose = (e) => { stop(); state.textContent = e.reason || 'Call ended'; };
-  mic.port.onmessage = (e) => { meter.value = e.data.peak; if (ws.readyState === 1) ws.send(e.data.pcm); };
+  ws.onmessage = (e) => {
+    if (typeof e.data !== 'string') { speaker.port.postMessage(e.data, [e.data]); return; }
+    const status = JSON.parse(e.data);
+    if (status.chat) { say(status.chat.from, status.chat.text, status.chat.from === 'you' ? 'you' : ''); return; }
+    state.textContent = status.state;
+    talk.dataset.mode = status.mode || 'waiting';
+  };
+  ws.onclose = (e) => { stop(); say('', e.reason || 'Call ended', 'note'); };
+  mic.port.onmessage = (e) => { if (ws.readyState === 1) ws.send(e.data); };
   try { wakeLock = await navigator.wakeLock.request('screen'); } catch (_) {}
 }
 
@@ -105,10 +137,27 @@ function stop() {
   if (ctx) ctx.close();
   if (wakeLock) wakeLock.release();
   ws = ctx = stream = wakeLock = null;
-  button.textContent = 'Call'; button.classList.remove('on'); meter.value = 0;
+  callButton.textContent = 'Call'; callButton.classList.remove('on');
+  talk.disabled = text.disabled = true; talk.dataset.mode = 'waiting'; state.textContent = 'Not connected';
 }
 
-button.onclick = () => (ws ? (stop(), state.textContent = 'Call ended') : start().catch((err) => { stop(); state.textContent = err.message; }));
+callButton.onclick = () => (ws ? stop() : start().catch((err) => { stop(); say('', err.message, 'note'); }));
+
+// Hold to talk: hands-free records while the button is down, and sends when it is let go
+const press = (down) => (e) => { e.preventDefault(); send({push: down}); };
+talk.addEventListener('pointerdown', (e) => { talk.setPointerCapture(e.pointerId); press(true)(e); });
+talk.addEventListener('pointerup', press(false));
+talk.addEventListener('pointercancel', press(false));
+talk.addEventListener('contextmenu', (e) => e.preventDefault());
+
+$('send').onsubmit = (e) => {
+  e.preventDefault();
+  const words = text.value.trim();
+  if (!words) return;
+  send({chat: words});
+  say('you', words, 'you');
+  text.value = '';
+};
 </script>
 </body>
 </html>

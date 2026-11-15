@@ -22,9 +22,11 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 HERE = Path(__file__).resolve().parent
-sys.path.insert(0, str(HERE.parent))  # voice/
-from voice.state import (BY_HANDSFREE, CALL, HANDSFREE_ON, PHONE_MIC, PHONE_SPEAKER, Phase, Playing,  # noqa: E402
-                         log, phase_now, write_json)
+sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree")]  # voice/, and hands-free's routing
+import routing  # noqa: E402
+from routing import Heard  # noqa: E402
+from voice.state import (BY_HANDSFREE, CALL, CALL_PUSH, HANDSFREE_MODE, HANDSFREE_ON, PHONE_MIC,  # noqa: E402
+                         PHONE_SPEAKER, Phase, Playing, log, phase_now, write_json)
 from voice.state import HANDSFREE_LOG  # noqa: E402  (calls are logged with hands-free, which they drive)
 
 MIC_RATE = 16000  # what the page sends: what hands-free listens at
@@ -36,34 +38,46 @@ STATUS_EVERY = 0.2  # seconds between looks at what hands-free and talkback are 
 
 
 class Status:
-    """What the phone shows: hearing you, writing it down, waiting for the agent, or the agent's words.
+    """What the phone shows: the talk button's colour, a status line, and the chat.
 
-    Read from the shared state (the phase, the clip playing) and from the
-    hands-free log's lines since the call began (which say who a message
-    went to, never what it said). The agent's own words are its captions.
+    Read from the shared state (hands-free's mode, the phase, the clip playing)
+    and from the hands-free log's lines since the call began, which say who a
+    message went to, never what it said. The agents' own words become chat.
     """
 
     def __init__(self) -> None:
         self.log = HANDSFREE_LOG.open()
         self.log.seek(0, 2)
         self.waiting_for = ""  # the agent a message went to, until it starts speaking
+        self.clip = ""  # the clip last put in the chat
 
-    def now(self) -> dict:
+    def events(self) -> list[dict]:
+        """New chat lines: what an agent started saying, and that a spoken message went out."""
+        lines = []
         for line in self.log.readlines():
             if " sent to " in line:
                 self.waiting_for = line.split(" sent to ", 1)[1].split()[0].capitalize()
+                lines.append({"chat": {"from": "you", "text": f"(spoken, sent to {self.waiting_for})"}})
+        playing = Playing.now()
+        if playing and playing.clip != self.clip:
+            self.clip = playing.clip
+            lines.append({"chat": {"from": playing.agent.capitalize(), "text": playing.text}})
+        return lines
+
+    def now(self) -> dict:
+        mode = HANDSFREE_MODE.read_text().strip() if HANDSFREE_MODE.exists() else "waiting"
         playing = Playing.now()
         if playing:
             self.waiting_for = ""
-            return {"state": f"{playing.agent.capitalize()} is speaking", "caption": playing.text}
+            return {"mode": mode, "state": f"{playing.agent.capitalize()} is speaking"}
         phase, by = phase_now()
         if by == BY_HANDSFREE and phase is Phase.RECORDING:
-            return {"state": "Hearing you…"}
+            return {"mode": mode, "state": "Hearing you…"}
         if by == BY_HANDSFREE and phase is Phase.TRANSCRIBING:
-            return {"state": "Writing it down…"}
+            return {"mode": mode, "state": "Writing it down…"}
         if self.waiting_for:
-            return {"state": f"Sent to {self.waiting_for}: waiting for the answer…"}
-        return {"state": "Listening"}
+            return {"mode": mode, "state": f"Sent to {self.waiting_for}: waiting for the answer…"}
+        return {"mode": mode, "state": "Listening"}
 
     def close(self) -> None:
         self.log.close()
@@ -90,6 +104,14 @@ class Devices:
         for module in self.modules:
             if module.isdigit():
                 pactl("unload-module", module)
+
+
+async def from_page(message: dict) -> None:
+    """The talk button held or let go, or a typed chat message for the agent that spoke last."""
+    if "push" in message:
+        CALL_PUSH.touch() if message["push"] else CALL_PUSH.unlink(missing_ok=True)
+    elif message.get("chat", "").strip():
+        await asyncio.get_running_loop().run_in_executor(None, routing.deliver, message["chat"].strip(), Heard.TYPED)
 
 
 async def call(request: web.Request) -> web.WebSocketResponse:
@@ -121,6 +143,8 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             status, shown = Status(), None
             try:
                 while not ws.closed:
+                    for event in status.events():
+                        await ws.send_json(event)
                     now = status.now()
                     if now != shown:
                         await ws.send_json(now)
@@ -138,9 +162,12 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                     heard += len(msg.data)
                     mic.stdin.write(msg.data)
                     await mic.stdin.drain()
+                elif msg.type == WSMsgType.TEXT:
+                    await from_page(msg.json())
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:
+            CALL_PUSH.unlink(missing_ok=True)
             sender.cancel()
             shower.cancel()
             CALL.unlink(missing_ok=True)  # hands-free and talkback go back to the laptop first

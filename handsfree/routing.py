@@ -32,6 +32,8 @@ class Heard(str, Enum):
     FOLLOW_ON = "follow-on"  # just after their own last message
     OVER_YOU = "over you"  # talked over a clip
     CALL = "call"  # on a phone call, where the user talks whenever they like
+    PUSHED = "call, held the talk button"  # on a phone call, while holding the page's talk button
+    TYPED = "call, typed"  # typed into the call page's chat, not spoken
 
 
 NAMES = "|".join(SPOKEN_TO)

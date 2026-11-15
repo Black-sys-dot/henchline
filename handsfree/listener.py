@@ -24,8 +24,8 @@ from turn import Mode, Turn
 from voicegate import VoiceGate
 from voice import whisper
 from voice.spool import queued
-from voice.state import (BY_HANDSFREE, CLOSE, HANDSFREE_LOG, LISTEN, PAUSE, PLAYING, WORKER_PID, in_call, log,
-                         mic_source, ptt_busy, release_phase)
+from voice.state import (BY_HANDSFREE, CALL_PUSH, CLOSE, HANDSFREE_LOG, HANDSFREE_MODE, LISTEN, PAUSE, PLAYING,
+                         WORKER_PID, in_call, log, mic_source, ptt_busy, release_phase)
 
 WINDOW = 8.0  # seconds to answer after a clip
 FOLLOW = 6.0  # seconds to carry on after their own message (once, never chained)
@@ -73,6 +73,7 @@ class Listener:
         self.turns = Turn(cfg, self.transcriber, self.talkover, self.read, self.show, self.echo_slipped, stop)
         self.last_check = ""
         self.mode = Mode.WAITING
+        HANDSFREE_MODE.write_text(self.mode.value)
         self.window = Window()
         self.wake = Wake.available()
         self.button, self.playback, self.output = EarbudButton(stop), Playback(stop), Output()
@@ -126,7 +127,10 @@ class Listener:
             self.stream.terminate()
 
     def show(self, mode: Mode) -> None:
-        self.mode = mode
+        """The tray's colour, and the call page's talk button."""
+        if mode is not self.mode:
+            self.mode = mode
+            HANDSFREE_MODE.write_text(mode.value)
 
     def open_stream(self) -> None:
         self.source = mic_source()  # the phone's mic during a call
@@ -187,7 +191,10 @@ class Listener:
         # our voice out, and only "hey Claude" getting in made calls deaf between clips (2026-11-15)
         calling = in_call()
         open_ = (playing or calling or self.window.is_open()) and not ptt_busy() and not PAUSE.exists()
-        self.mode = Mode.LISTENING if open_ else Mode.WAITING
+        self.show(Mode.LISTENING if open_ else Mode.WAITING)
+        if open_ and calling and CALL_PUSH.exists():  # the call page's talk button: a turn now, until it is let go
+            self.turn(list(self.preroll), Heard.PUSHED, floor_of(self.room, db))
+            return True
         if not open_:
             self.gate.clear()
             self.preroll.clear()
