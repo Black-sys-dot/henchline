@@ -99,8 +99,8 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
             return ring_ended(who, "answered", 0)
         if pushed:
             heard |= replies(reply, since)
-            if "declined" in heard:
-                return ring_ended(who, "declined", 3, topic, why)
+            if "declined" in heard:  # they saw it and said no: no missed call to remind them
+                return ring_ended(who, "declined", 3)
             if "unreachable" in heard:
                 return ring_ended(who, "answered, but the call couldn't reach the laptop (the phone off Tailscale?)",
                                   4, topic, why)
