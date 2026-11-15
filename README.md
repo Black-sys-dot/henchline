@@ -59,6 +59,8 @@ The listener writes `~/.local/state/ptt/phase` and `~/.local/state/ptt/target` (
 
 ## Talkback
 
+<img src="docs/peek_claude.svg" align="right" width="150" alt="">
+
 `talkback/` lets AI agents (Claude Code, Cursor, others that read a skill or rule) speak back through a local [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) voice on the CPU. Each call to `talkback/scripts/say.py` joins one queue (`voice/spool.py`), played by one worker (`talkback/scripts/worker.py`), so agents never talk over each other; each agent has its own voice and introduces itself when the speaker changes. When push-to-talk or hands-free hears you, it goes quiet, holds what it had not said, and the agent decides whether to carry on, acknowledge, or answer you instead.
 
 ```bash
@@ -68,6 +70,8 @@ The listener writes `~/.local/state/ptt/phase` and `~/.local/state/ptt/target` (
 `agents/` holds what the agents need to know, in one text for all of them (`AGENTS-snippet.md`); `./install.sh agents` wires it into Claude Code, Cursor and Codex if they are installed, and `agents/README.md` shows where other agents look. Say "talk back" to an agent to turn it on.
 
 ## Hands-free
+
+<img src="docs/peek_handsfree.svg" align="right" width="150" alt="">
 
 `handsfree on` talks to the same agents without a key (`handsfree/handsfree.py` is the command; `listener.py` decides when to listen, `sensing.py` hears the mic, wake word, earbuds and speakers, `routing.py` picks the agent and types to it, `tray.py` is the icon; user unit `handsfree/handsfree.service`; `./install.sh handsfree` installs it with talkback, and `handsfree on` also starts it at every login). Its echo canceller (`handsfree/talkback-echo-cancel.conf`, its own user unit) captures the mic on the same sound card as the speakers, which shares their clock; the installer picks that mic. It listens for a few seconds after an agent speaks, while an agent speaks (talking over it stops it), and for a wake word the rest of the time. The words are typed into the Konsole tab of the agent that spoke last, prefixed `[hands-free · how it was heard]`. "Over" sends at once, "give me a minute" keeps listening, "never mind" drops it, "hands-free off" ends it. A tap on Bluetooth earbuds works like the wake word, silently: hands-free grabs the earbuds' media-key device ("… (AVRCP)") while it runs, so the tap does not also pause music, and lets go when it stops. Earbuds send those keys in their music profile (A2DP); in the headset profile a tap becomes a call command that never reaches hands-free. Hands-free listens through the laptop mic anyway, so music mode loses nothing.
 
@@ -96,6 +100,8 @@ Log: `~/.local/state/ptt/handsfree.log` (events, no words)
 
 ## Phone call
 
+<img src="docs/peek_cursor.svg" align="right" width="150" alt="">
+
 `./install.sh call` runs a small web server (`call/server.py`, user unit `call.service`) on the laptop's Tailscale address, so only your own devices (and programs on the laptop) reach it, behind `tailscale serve` at `https://<laptop's Tailscale name>/` with a real certificate. Tailscale must let your user configure it, once: `sudo tailscale set --operator=$USER` (and HTTPS enabled for the tailnet). Until then it listens on the laptop's Tailscale address with a certificate of its own (`https://<laptop's Tailscale IP>:8790`; the phone accepts it once). Open the address on the phone and tap **Call**: your mic goes into a virtual sink that hands-free listens to instead of the laptop mic, and talkback plays into another one that is streamed to the phone, so the laptop stays quiet. The phone's browser cancels its own echo. A call turns hands-free and talkback on, and leaves them on when it ends.
 
 - On a call the line is open: just talk, no wake word needed; talking over the agent and switching agents work as at home.
@@ -107,6 +113,8 @@ Log: `~/.local/state/ptt/handsfree.log` (events, no words)
 `--host tailscale` keeps the self-signed way even when `tailscale serve` would work.
 
 ### The Android app
+
+<img src="docs/peek_codex.svg" align="right" width="150" alt="">
 
 `call/android/` is **Henchline**, the same call as an Android app (Kotlin, OkHttp, Android 10+): you, calling your crew of agents. The call runs in a foreground service, so it keeps going with the screen off or the app in the background, which a browser tab does not; the phone's own voice-call audio cancels its echo, and the voice goes to earbuds or a headset when there are some, else the loudspeaker. The screen is the page's: who you talk to, the round talk button, the chat. Build and install over USB (needs the Android SDK, platform 35):
 
