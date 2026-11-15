@@ -23,6 +23,7 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
 /**
@@ -644,7 +645,8 @@ class MainActivity : Activity() {
         val origin = Files.origin(this) ?: run { refresh.isRefreshing = false; return say("", "Set the laptop's address in Settings first.", note = true).let {} }
         Thread {
             val found = try {
-                Files.client.newCall(okhttp3.Request.Builder().url("$origin/crew").header("Origin", origin).build())
+                Files.client.newCall(okhttp3.Request.Builder().url("$origin/crew").header("Origin", origin)
+                    .post(ByteArray(0).toRequestBody(null)).build())
                     .execute().use { org.json.JSONObject(it.body?.string() ?: "{}").optJSONArray("agents") }
             } catch (_: Exception) { null }
             main.post {
@@ -671,13 +673,20 @@ class MainActivity : Activity() {
     /** A message dragged to the right far enough is the one being replied to, as in WhatsApp. */
     private fun swipeToReply(row: View, words: String) {
         var startX = 0f
+        var startY = 0f
         var dragging = false
         row.setOnTouchListener { view, event ->
             when (event.actionMasked) {
-                MotionEvent.ACTION_DOWN -> { startX = event.rawX; dragging = false; false }
+                // Kept from the start (a row that doesn't take the DOWN never sees the drag); the list still
+                // scrolls, as the ScrollView takes over a vertical move
+                MotionEvent.ACTION_DOWN -> { startX = event.rawX; startY = event.rawY; dragging = false; true }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - startX
-                    if (dx > dp(12)) { dragging = true; view.parent.requestDisallowInterceptTouchEvent(true) }
+                    val dy = event.rawY - startY
+                    if (!dragging && dx > dp(12) && dx > 2 * kotlin.math.abs(dy)) {  // sideways, not a slow scroll
+                        dragging = true
+                        view.parent.requestDisallowInterceptTouchEvent(true)
+                    }
                     if (dragging) view.translationX = dx.coerceIn(0f, dp(96).toFloat())
                     dragging
                 }

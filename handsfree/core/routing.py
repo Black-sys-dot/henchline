@@ -117,13 +117,13 @@ def find(agent: str, where: str | None = None) -> Speaker | None:
     return max(found, key=lambda s: s.at) if found else None
 
 
-def discover(agent: str, where: str | None) -> list[Speaker]:
+def discover(agent: str, where: str | None, tabs: list | None = None, windows: list | None = None) -> list[Speaker]:
     """An agent the user asks for that hasn't spoken through talkback yet, found running (the user's idea,
     2026-11-16): in a terminal tab whose foreground program is that agent, or for Cursor its editor window, by
     its workspace's name. route() registers it when it is the only one (several are not guessed between)."""
     agent = agent.lower()
     found = []
-    for tab, pid in desktop().terminals.agent_tabs():
+    for tab, pid in (desktop().terminals.agent_tabs() if tabs is None else tabs):
         p = process(pid)
         if not p or p.agent != agent:
             continue
@@ -144,7 +144,7 @@ def discover(agent: str, where: str | None) -> list[Speaker]:
         _, key = identity(agent, session or str(folder))
         found.append(Speaker(key, agent, "home" if folder == Path.home() else folder.name, tab))
     if agent == "cursor":  # the editor: its window title ends "<workspace> - Cursor"
-        for window in desktop().windows("cursor"):
+        for window in (desktop().windows("cursor") if windows is None else windows):
             name = window.title.removesuffix(" - Cursor").rsplit(" - ", 1)[-1]
             if name and (not where or squash(where) in squash(name) or squash(name) in squash(where)):
                 found.append(Speaker(identity("cursor", f"/{name}")[1], "cursor", name))
@@ -156,10 +156,11 @@ def discover(agent: str, where: str | None) -> list[Speaker]:
 def discover_all() -> int:
     """Every agent running that the crew doesn't know yet, found and registered (Henchline's pull-to-refresh):
     how many were new. One already known in that tab (or that Cursor window) isn't added again."""
-    known = recent_speakers()
+    known = [s for s in (Speaker.load(p) for p in SPEAKERS.glob("*.json")) if s]  # every record, not just recent
+    tabs, windows = desktop().terminals.agent_tabs(), desktop().windows("cursor")  # the desktop looked at once
     new = 0
     for agent in SPOKEN_TO:
-        for found in discover(agent, None):
+        for found in discover(agent, None, tabs, windows):
             def same(k: Speaker) -> bool:
                 if k.agent != found.agent:
                     return False

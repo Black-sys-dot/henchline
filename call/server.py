@@ -574,7 +574,7 @@ def main() -> int:
     app.router.add_post("/share/file", share_file)
     app.router.add_post("/share/tell", share_tell)
     app.router.add_post("/text", texted)
-    app.router.add_get("/crew", crew)
+    app.router.add_post("/crew", crew)  # it registers what it finds: a POST
     app.router.add_get("/files/{secret}/{name}", sent_file)
     proxied = False
     if args.host in ("serve", "tailscale"):
