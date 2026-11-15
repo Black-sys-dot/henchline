@@ -73,8 +73,8 @@ install_ptt() {
   id -nG | grep -qw input || say "Note: the hotkey needs the input group: sudo usermod -aG input $(id -un) (then log in again)"
   mkdir -p "$bin" "$units" "$HOME/.config/ptt"
   ln -sfn "$root/ptt/ptt.py" "$bin/ptt"
-  install -m 644 "$root/ptt/ptt.service" "$units/ptt.service"
-  [ -f "$HOME/.config/ptt/config.json" ] || install -m 644 "$root/ptt/config.example.json" "$HOME/.config/ptt/config.json"
+  install -m 644 "$root/ptt/system/ptt.service" "$units/ptt.service"
+  [ -f "$HOME/.config/ptt/config.json" ] || install -m 644 "$root/ptt/system/config.example.json" "$HOME/.config/ptt/config.json"
   systemctl --user daemon-reload
   systemctl --user enable ptt.service
   systemctl --user restart ptt.service  # starts it, or brings a running one onto the new code
@@ -129,27 +129,27 @@ install_handsfree() {  # the call needs it too: once is enough
   mkdir -p "$units" "$HOME/.config/pipewire" "$bin"
   conf="$HOME/.config/pipewire/talkback-echo-cancel.conf"
   if [ -n "$mic" ]; then
-    sed "s|@MIC@|$mic|" "$root/handsfree/talkback-echo-cancel.conf" > "$conf"
+    sed "s|@MIC@|$mic|" "$root/handsfree/system/talkback-echo-cancel.conf" > "$conf"
     say "Echo canceller listens to $mic"
   else
-    grep -v "@MIC@" "$root/handsfree/talkback-echo-cancel.conf" > "$conf"
+    grep -v "@MIC@" "$root/handsfree/system/talkback-echo-cancel.conf" > "$conf"
     say "Echo canceller listens to the default mic: none found on the output's sound card"
   fi
-  install -m 644 "$root/handsfree/talkback-echo-cancel.service" "$units/talkback-echo-cancel.service"
-  install -m 644 "$root/handsfree/handsfree.service" "$units/handsfree.service"
+  install -m 644 "$root/handsfree/system/talkback-echo-cancel.service" "$units/talkback-echo-cancel.service"
+  install -m 644 "$root/handsfree/system/handsfree.service" "$units/handsfree.service"
   ln -sfn "$root/handsfree/handsfree.py" "$bin/handsfree"
   systemctl --user daemon-reload
   start_or_restart talkback-echo-cancel.service handsfree.service
   say "Hands-free: handsfree on (then it starts again at login)."
   [ -f "$share/handsfree/hey_jarvis_v0.1.onnx" ] && say "\"Hey Jarvis\" wakes it."
   say "\"Hey Claude\" needs your voice first:"
-  say "  handsfree/wakeword_collect.py, then handsfree/wakeword_train.py"
+  say "  handsfree/tools/wakeword_collect.py, then handsfree/tools/wakeword_train.py"
 }
 
 install_call() {
   install_handsfree  # a call is hands-free with the phone as mic and speaker
   if command -v claude >/dev/null; then  # the terminal side of a Claude Code conversation, in the call's chat
-    "$root/call/claude_hooks.py" add && say "Claude Code: hooks show your terminal prompts and its replies in a call's chat"
+    "$root/call/hooks/claude_hooks.py" add && say "Claude Code: hooks show your terminal prompts and its replies in a call's chat"
   fi
   pip_install call
   for tool in tailscale openssl; do
@@ -166,7 +166,7 @@ install_call() {
   fi
   mkdir -p "$bin" "$units"
   ln -sfn "$root/call/server.py" "$bin/voice-call"
-  install -m 644 "$root/call/call.service" "$units/call.service"
+  install -m 644 "$root/call/system/call.service" "$units/call.service"
   systemctl --user daemon-reload
   systemctl --user enable call.service
   systemctl --user restart call.service
@@ -254,7 +254,7 @@ remove_handsfree() {
 
 remove_call() {
   remove_unit call.service
-  if [ -f "$HOME/.claude/settings.json" ]; then "$root/call/claude_hooks.py" remove; fi
+  if [ -f "$HOME/.claude/settings.json" ]; then "$root/call/hooks/claude_hooks.py" remove; fi
   remove_link "$bin/voice-call"
   systemctl --user daemon-reload
   say "Call page removed (its certificate kept in $share/copilot-ptt/call)"

@@ -19,14 +19,15 @@ from pathlib import Path
 
 from evdev import ecodes
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
-import tray  # noqa: E402
+HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(HERE / "core"), str(HERE.parent)]  # push-to-talk's own modules (core/), and the repository for voice/
+import ptt_tray as tray  # noqa: E402  (named apart from hands-free's tray: never two in one process)
 from keys import HotkeyCapture, Hold, Keyboards  # noqa: E402
 from voice import state as shared  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
 from voice.state import BY_PTT, PTT_LOG, PTT_WAV, Phase  # noqa: E402
 from voice.state import ptt_log as log  # noqa: E402
-from voice.whisper import Config, Transcriber  # noqa: E402
+from voice.speech.whisper import Config, Transcriber  # noqa: E402
 
 SHORTEST = 0.35  # seconds: a shorter press is a slip, not speech
 SMALLEST = 1000  # bytes: a recording this small has no audio in it

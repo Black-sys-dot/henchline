@@ -42,14 +42,19 @@ One snippet (`agents/AGENTS-snippet.md`) teaches every agent (Claude Code, Curso
 
 ## What is in here
 
+Every folder has its own README with the details. Each piece is laid out the same way: its command at the top,
+its modules in `core/`, its tools in `tools/`, and what gets installed into the system (units, configs) in `system/`.
+
 | Folder | What it does | Needs |
 |---|---|---|
-| `ptt/` | **Push-to-talk:** hold a key, speak, the words are typed into the focused window (`keys.py` the hotkey, `paste.py` the window, `tray.py` the icon, `ptt.py` records in between). Works on its own. | the rest of this page |
-| `talkback/` | **Talkback:** AI agents (Claude Code, Cursor) speak their replies through a local voice, one at a time. | `ptt/` only if you want it to go quiet while you talk |
-| `handsfree/` | **Hands-free:** talk with those agents without touching a key: a reply window after they speak, talking over them, and a personal wake word. | `ptt/` and `talkback/` |
-| `call/` | **Phone call:** the same conversation from your phone, over Tailscale: a web page streams your mic in and the agents' voices out, with a hold-to-talk button and a chat. | `handsfree/`, Tailscale on the laptop and the phone |
-| `agents/` | What the agents need to be told: one snippet for Claude Code, Cursor, Codex and anything reading `AGENTS.md`. | `talkback/` |
-| `voice/` | What the three share: the state files in `~/.local/state/ptt/` and their names (`state.py`), the settings, Whisper and the chime (`whisper.py`), tone marks (`tone.py`), talkback's queue of clips (`spool.py`), which agent and terminal tab a process belongs to (`agents.py`), windows, keys and the clipboard on X11 (`x11.py`). | nothing |
+| [`ptt/`](ptt/) | **Push-to-talk:** hold a key, speak, the words are typed into the focused window. `ptt.py`; `core/` the hotkey, the paste and the tray icon; `system/` the unit and an example config. | nothing else |
+| [`talkback/`](talkback/) | **Talkback:** the agents speak their replies through a local voice, one at a time. `scripts/` the `talkback` command and its worker; `SKILL.md` what agents read. | `ptt/` only to go quiet while you talk |
+| [`handsfree/`](handsfree/) | **Hands-free:** talk with the agents without a key. `handsfree.py`; `core/` listening, turns, routing, the wake words, talking over; `tools/` recording, training and benchmarks; `system/` the units and the echo canceller. | `talkback/` |
+| [`call/`](call/) | **Phone call and Henchline:** the call server and page; `hooks/` the Claude Code terminal mirror; `system/` the unit; [`android/`](call/android/) the app. | `handsfree/`, Tailscale |
+| [`agents/`](agents/) | What the agents are told: one snippet for Claude Code, Cursor, Codex and anything reading `AGENTS.md`. | `talkback/` |
+| [`voice/`](voice/) | What all of them share: the state files (`state.py`), agents and their tabs (`agents.py`), talkback's queue (`spool.py`), files to and from the phone (`files.py`); `desktop/` windows, keys, the clipboard and terminals (KDE or any X11); `speech/` Whisper and tone marks. | nothing |
+| [`tests/`](tests/) | Unit tests per piece, and a throwaway-container test of the generic X11 desktop. | |
+| [`docs/`](docs/) | The README's pictures and the scripts that draw them. | |
 
 ## Desktops
 

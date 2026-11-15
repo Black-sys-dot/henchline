@@ -34,7 +34,7 @@ from pathlib import Path
 from aiohttp import WSMsgType, web
 
 HERE = Path(__file__).resolve().parent
-sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree")]  # voice/, and hands-free's routing
+sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
@@ -92,7 +92,7 @@ class Status:
             self.clip = playing.clip
             lines.append({"chat": {"from": playing.agent.capitalize(), "text": playing.text,
                                    "session": playing.session}})
-        for line in sorted(CALL_MIRROR.glob("*.json")):  # typed in the terminal, or written there (call/mirror.py)
+        for line in sorted(CALL_MIRROR.glob("*.json")):  # typed in the terminal, or written there (call/hooks/mirror.py)
             mirrored = read_json(line)
             line.unlink(missing_ok=True)
             if mirrored.get("text"):
@@ -334,6 +334,7 @@ def trusted(request: web.Request) -> None:
         raise web.HTTPForbidden(text="only the call page may connect")
     if CALL_ORIGIN.exists() and CALL_ORIGIN.read_text() == origin:
         return
+    CALL_ORIGIN.parent.mkdir(parents=True, exist_ok=True)  # a fresh install has no state folder yet
     CALL_ORIGIN.write_text(origin)  # where `handsfree send` points a notification's link
 
 

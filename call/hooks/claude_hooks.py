@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Add or remove call/mirror.py as a Claude Code hook in ~/.claude/settings.json (install.sh call does this).
+"""Add or remove call/hooks/mirror.py as a Claude Code hook in ~/.claude/settings.json (install.sh call does this).
 
-    call/claude_hooks.py add | remove
+    call/hooks/claude_hooks.py add | remove
 
 Only this repository's own hook entries are touched; anything else in the settings stays as it was.
 """
@@ -11,7 +11,8 @@ from pathlib import Path
 
 SETTINGS = Path.home() / ".claude/settings.json"
 MIRROR = str(Path(__file__).resolve().parent / "mirror.sh")
-OLD = (str(Path(__file__).resolve().parent / "mirror.py"),)  # what earlier versions added
+# What earlier versions added, taken out on add and remove: before call/hooks/, the hook lived in call/
+OLD = tuple(str(Path(__file__).resolve().parents[1] / name) for name in ("mirror.sh", "mirror.py"))
 EVENTS = ("UserPromptSubmit", "Stop")
 
 

@@ -1,4 +1,4 @@
-"""Inside the container: drive voice/desktop.py on a plain X11 desktop (no KDE) and check each answer.
+"""Inside the container: drive voice/desktop/__init__.py on a plain X11 desktop (no KDE) and check each answer.
 
 Run by inside.sh after Xvfb, openbox and two xterms are up: one runs a pretend
 agent (a program called "claude" that writes what it is typed to a file), the

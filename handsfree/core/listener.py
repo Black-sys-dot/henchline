@@ -22,7 +22,7 @@ from sensing import (FRAME, PER_SECOND, RATE, EarbudButton, EchoWatch, Output, P
 from talkover import TalkOver, Verdict
 from turn import Mode, Turn
 from voicegate import VoiceGate
-from voice import whisper
+from voice.speech import whisper
 from voice.spool import queued
 from voice.state import (BY_HANDSFREE, CALL_BUTTON_ONLY, CALL_PUSH, CLOSE, HANDSFREE_LOG, HANDSFREE_MODE, LISTEN,
                          PAUSE, PLAYING, WORKER_PID, in_call, log, mic_source, ptt_busy, release_phase)

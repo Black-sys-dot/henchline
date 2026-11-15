@@ -43,13 +43,14 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path[:0] = [str(HERE), str(HERE.parent)]  # here, and the repository for voice/
+sys.path[:0] = [str(HERE / "core"), str(HERE.parent)]  # hands-free's modules (core/), and the repository for voice/
 
 import routing  # noqa: E402
 import tray  # noqa: E402
 from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
-from voice import files, whisper  # noqa: E402
+from voice import files  # noqa: E402
+from voice.speech import whisper  # noqa: E402
 from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN, CALL_RING, CALL_RINGER,  # noqa: E402
                          CLOSE, HANDSFREE_LOG, HANDSFREE_ON, LISTEN, SPEAKERS, Speaker, in_call, log,
                          release_phase, turn_on_handsfree, write_json)

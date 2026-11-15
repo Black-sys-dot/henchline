@@ -100,7 +100,7 @@ def transcribe(model, path: Path, cfg: Config, log_to: Path) -> tuple[str, str]:
     rich = text
     if cfg.tone and text:
         try:
-            from voice import tone
+            from voice.speech import tone
 
             words = [(w.start, w.end, w.word) for seg in segments for w in seg.words or []]
             rich = tone.annotate(path, words, text)

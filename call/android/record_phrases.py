@@ -23,7 +23,8 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path[:0] = [str(HERE.parent.parent), str(HERE.parent.parent / "handsfree")]  # voice/, hands-free's tools
+sys.path[:0] = [str(HERE.parent.parent), str(HERE.parent.parent / "handsfree/tools"),  # voice/, hands-free's tools
+                 str(HERE.parent.parent / "handsfree/core")]
 from collect import CHIME, speak as say  # noqa: E402
 from ringtones import PHRASES  # noqa: E402
 from voice.state import HANDSFREE_DATA, PAUSE  # noqa: E402
