@@ -346,8 +346,11 @@ def main() -> int:
     app.router.add_get("/call", call)
     proxied = False
     if args.host in ("serve", "tailscale"):
-        mode, args.host = args.host, subprocess.run(["tailscale", "ip", "-4"], capture_output=True,
-                                                    text=True).stdout.split()[0]
+        found = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True).stdout.split()
+        if not found:  # the page is only for your own devices: no tailnet, no page
+            print("Tailscale has no address: sudo tailscale up", file=sys.stderr)
+            return 1
+        mode, args.host = args.host, found[0]
         proxied = mode == "serve" and args.cert is None and serve(args.host, args.port)
     if args.cert is None and not proxied:
         if not (CALL_TLS / "cert.pem").exists():  # plain http: the phone's browser would refuse the mic
