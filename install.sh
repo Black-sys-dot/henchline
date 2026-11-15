@@ -73,8 +73,8 @@ install_ptt() {
   id -nG | grep -qw input || say "Note: the hotkey needs the input group: sudo usermod -aG input $(id -un) (then log in again)"
   mkdir -p "$bin" "$units" "$HOME/.config/ptt"
   ln -sfn "$root/ptt/ptt.py" "$bin/ptt"
-  install -m 644 "$root/ptt/ptt.service" "$units/ptt.service"
-  [ -f "$HOME/.config/ptt/config.json" ] || install -m 644 "$root/ptt/config.example.json" "$HOME/.config/ptt/config.json"
+  install -m 644 "$root/ptt/system/ptt.service" "$units/ptt.service"
+  [ -f "$HOME/.config/ptt/config.json" ] || install -m 644 "$root/ptt/system/config.example.json" "$HOME/.config/ptt/config.json"
   systemctl --user daemon-reload
   systemctl --user enable ptt.service
   systemctl --user restart ptt.service  # starts it, or brings a running one onto the new code

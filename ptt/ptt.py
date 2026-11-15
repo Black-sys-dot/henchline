@@ -19,7 +19,8 @@ from pathlib import Path
 
 from evdev import ecodes
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
+HERE = Path(__file__).resolve().parent
+sys.path[:0] = [str(HERE / "core"), str(HERE.parent)]  # push-to-talk's own modules (core/), and the repository for voice/
 import tray  # noqa: E402
 from keys import HotkeyCapture, Hold, Keyboards  # noqa: E402
 from voice import state as shared  # noqa: E402
