@@ -32,7 +32,7 @@ WINDOW = 8.0  # seconds to answer after a clip
 FOLLOW = 6.0  # seconds to carry on after their own message (once, never chained)
 THINK_WINDOW = 180  # after "give me a minute"
 WAIT_FOR_WORDS = 5.0  # after the wake word, seconds to start talking before it gives up
-IDLE = 15 * 60  # no clip and no speech for this long: hands-free turns itself off
+IDLE = None  # seconds with no clip and no speech before hands-free turns itself off; None: never (user's choice, 2026-11-15)
 START_DB, BARGE_DB, WARM_DB = 12, 15, 10  # dB over the floor to count; while a clip plays; extra when wary
 LOUD_SPAN = 12  # frames looked at for loud, voiced ones
 START_FRAMES, BARGE_FRAMES = 6, 8  # of the last LOUD_SPAN, voiced and loud enough to count; while a clip plays
@@ -219,7 +219,7 @@ class Listener:
                     self.window.open(WINDOW, Heard.REPLY, never_shorter=True)
                 was_busy = busy
                 self.follow_requests()
-                if time.monotonic() - self.last_activity > IDLE:
+                if IDLE and time.monotonic() - self.last_activity > IDLE:
                     log(HANDSFREE_LOG, "idle, turning off")
                     routing.say("Hands-free is going to sleep.")
                     self.stop.set()
