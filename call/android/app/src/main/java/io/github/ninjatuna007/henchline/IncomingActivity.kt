@@ -24,7 +24,6 @@ class IncomingActivity : Activity() {
 
     private val main = Handler(Looper.getMainLooper())
     private var ring: MediaPlayer? = null
-    private var phrase: MediaPlayer? = null
     private var reply: String? = null  // where the laptop hears how this ring went
     private var told = false  // the laptop was told how it ended: answered, declined or missed
     private var agent = "handsfree"
@@ -34,14 +33,13 @@ class IncomingActivity : Activity() {
         super.onCreate(savedInstanceState)
         setShowWhenLocked(true)
         setTurnScreenOn(true)
-        // Opened from a ringing banner (the phone was in use): this screen rings now, so the banner's tone stops
-        getSystemService(NotificationManager::class.java).cancel(RingService.NOTIFICATION)
         showing = java.lang.ref.WeakReference(this)
         agent = (intent.getStringExtra(AGENT) ?: "").takeIf { it in FLAVOURS } ?: "handsfree"
         why = intent.getStringExtra(WHY) ?: ""
         reply = intent.getStringExtra(REPLY)
+        // This screen rings now: the notification stays, silent, for Answer and Decline and to come back to
+        RingService.ringNow(this, agent, why, reply, quiet = true, seconds = maxOf(1, Ringing.secondsLeft(this)))
         val lines = phrasesOf(agent)
-        val pick = lines.indices.random()
 
         val dp = resources.displayMetrics.density
         val screen = LinearLayout(this).apply {
@@ -59,7 +57,7 @@ class IncomingActivity : Activity() {
         screen.addView(ImageView(this).apply { setImageResource(MainActivity.avatarOf(agent)) },
             LinearLayout.LayoutParams((220 * dp).toInt(), (220 * dp).toInt()).apply { topMargin = (32 * dp).toInt() })
         screen.addView(TextView(this).apply {  // the banner: what it is saying
-            text = "“${lines[pick]}”"
+            text = lines.joinToString("\n") { "“$it”" }  // both, as the ring says them in turn
             setTextColor(getColor(R.color.cyan))
             textSize = 20f
             gravity = Gravity.CENTER
@@ -92,25 +90,10 @@ class IncomingActivity : Activity() {
         screen.addView(buttons)
         setContentView(screen)
 
-        ring = player(resourceId("ring_$agent"), loop = true, volume = 0.45f)  // started by sayAgain's first beat
-        phrase = player(resourceId("phrase_${agent}_$pick"), loop = false, volume = 1f)
-        sayAgain()
+        // The very sound the banner rings with (banner_mix.py: the tone, the phrases on its beat), so the two
+        // never differ (2026-11-15: they said different phrases)
+        ring = player(resourceId("banner_$agent").takeIf { it != 0 } ?: resourceId("ring_$agent"), loop = true, volume = 1f)
         main.postDelayed({ tell("missed"); Ringing.end(this); stop() }, maxOf(1, Ringing.secondsLeft(this)) * 1000)
-    }
-
-    /** The phrase over the ringtone, on the ringtone's beat: it starts with the tone's loop and again on
-     *  the first beat after it has ended, so voice and tone stay in step (the user's wish, 2026-11-15; a
-     *  fixed gap drifted against the tone). */
-    private fun sayAgain() {
-        val sound = phrase ?: return
-        // The tones play their motif twice a loop, so half a loop is a beat; the phrase comes back on the
-        // first beat after it ends (whole loops left 2.5 s gaps)
-        val beat = ring?.duration?.takeIf { it > 0 }?.toLong()?.div(2) ?: (sound.duration + SAY_GAP)
-        val every = beat * ((sound.duration + beat - 1) / beat).coerceAtLeast(1)
-        ring?.seekTo(0)  // the tone's loop starts with the phrase
-        sound.seekTo(0)
-        sound.start()
-        main.postDelayed({ sayAgain() }, every)
     }
 
     /** A sound that won't load just isn't played: the screen, its buttons and the time-out go on. */
@@ -127,7 +110,7 @@ class IncomingActivity : Activity() {
                 isLooping = loop
                 setVolume(volume, volume)
                 prepare()
-                if (loop) start()
+                start()
             }
         } catch (e: Exception) {
             android.util.Log.w("Henchline", "ring sound failed: ${e.message}")
@@ -139,19 +122,24 @@ class IncomingActivity : Activity() {
     private fun stop() {  // safe to call more than once, and with no sound loaded
         main.removeCallbacksAndMessages(null)
         ring?.release()
-        phrase?.release()
         ring = null
-        phrase = null
         if (!isFinishing) finish()
     }
 
-    /** Left without a button (back, home, another app): the call keeps ringing as a banner with Answer and
-     *  Decline until it times out, as a phone call does (2026-11-15: leaving counted as declining, and the
-     *  call was gone). A screen rebuilt (rotation, dark mode) is not leaving either. */
-    override fun onDestroy() {
-        val left = isFinishing && !told && !ended && Ringing.now(this) != null
+    /** Left without a button (back, home, another app, the power key): the call keeps ringing as a banner with
+     *  Answer and Decline until it times out, as a phone call does (2026-11-15: leaving counted as declining,
+     *  and then left nothing behind). On stop, which leaving always brings; a screen rebuilt (rotation, dark
+     *  mode) doesn't stop this one (configChanges). */
+    override fun onStop() {
+        super.onStop()
+        if (told || ended || Ringing.now(this) == null) return
+        ended = true
         stop()
-        if (left) RingService.ringNow(this, agent, why, reply, banner = true, seconds = Ringing.secondsLeft(this))
+        RingService.ringNow(this, agent, why, reply, banner = true, seconds = maxOf(1, Ringing.secondsLeft(this)))
+    }
+
+    override fun onDestroy() {
+        stop()
         if (showing?.get() === this) showing = null
         super.onDestroy()
     }

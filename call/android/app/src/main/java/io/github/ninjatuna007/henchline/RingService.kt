@@ -57,7 +57,8 @@ class RingService : PushService() {
 
     companion object {
         const val ENDPOINT = "ring_endpoint"
-        const val CHANNEL = "calls"  // "ring" until 2026-11-15: a channel can't be told to get through Do Not Disturb later
+        // "ring", then "calls" until 2026-11-15: a channel made before the app had Do Not Disturb access never gets through
+        const val CHANNEL = "calls_v2"
         const val NOTIFICATION = 2
         const val RING_SECONDS = 30L  // then it is a missed call
 
@@ -73,14 +74,15 @@ class RingService : PushService() {
          *  shows a banner, which rang silently (2026-11-15): then the banner itself rings, with the agent's
          *  tone over and over, and has Answer and Decline, as a phone app's call does. */
         fun ringNow(context: Context, agent: String, why: String, reply: String? = null, banner: Boolean = false,
-                    seconds: Long = RING_SECONDS) {
+                    seconds: Long = RING_SECONDS, quiet: Boolean = false) {
             val manager = context.getSystemService(NotificationManager::class.java)
             val flavour = agent.takeIf { it in IncomingActivity.FLAVOURS } ?: "handsfree"
             val inUse = banner || (context.getSystemService(android.os.PowerManager::class.java).isInteractive &&
                 !context.getSystemService(android.app.KeyguardManager::class.java).isKeyguardLocked)
             if (seconds == RING_SECONDS) Ringing.started(context, agent, why, reply)
             retire(manager)
-            val channel = if (inUse) bannerChannel(context, manager, flavour) else CHANNEL.also {
+            // quiet: the ring screen is up and rings itself; the notification stays for its buttons, silent
+            val channel = if (inUse && !quiet) bannerChannel(context, manager, flavour) else CHANNEL.also {
                 manager.createNotificationChannel(NotificationChannel(CHANNEL, "Incoming calls", NotificationManager.IMPORTANCE_HIGH)
                     .apply { setSound(null, null); setBypassDnd(true) })  // IncomingActivity rings, with the agent's own tone
             }
@@ -102,7 +104,7 @@ class RingService : PushService() {
                 .setContentTitle("$name is calling")
                 .setContentText(why.ifEmpty { "Your crew wants to talk." })
                 .setCategory(Notification.CATEGORY_CALL)
-                .apply { if (!banner) setFullScreenIntent(open, true) }  // back from the ring screen: a banner, not it again
+                .apply { if (!banner && !quiet) setFullScreenIntent(open, true) }  // the screen is, or was, up already
                 .setContentIntent(open)
                 .setOngoing(true)
                 .setTimeoutAfter(seconds * 1000)
@@ -117,7 +119,7 @@ class RingService : PushService() {
                     }
                 }
                 .build()
-            if (inUse) ring.flags = ring.flags or Notification.FLAG_INSISTENT  // the tone repeats until answered
+            if (inUse && !quiet) ring.flags = ring.flags or Notification.FLAG_INSISTENT  // the tone repeats until answered
             manager.notify(NOTIFICATION, ring)
         }
 
@@ -142,7 +144,7 @@ class RingService : PushService() {
         /** The channels from before rings could get through Do Not Disturb. */
         private fun retire(manager: NotificationManager) {
             val old = IncomingActivity.FLAVOURS.flatMap { listOf("ring_banner_$it", "calls_banner_$it", "calls_banner_dnd_$it") }
-            for (id in listOf("ring") + old) manager.deleteNotificationChannel(id)
+            for (id in listOf("ring", "calls") + old) manager.deleteNotificationChannel(id)
         }
     }
 }

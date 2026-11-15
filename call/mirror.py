@@ -23,6 +23,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from voice.agents import identity  # noqa: E402
 from voice.state import CALL_MIRROR, in_call, write_json  # noqa: E402
 
+# Prompts that are not the user's typing: a subagent's or another session's report, a task's notice (one
+# arrived as the user's own message in the chat, 2026-11-15)
+NOT_THE_USER = ("<agent-message", "<task-notification", "<system-reminder", "<cross-session-message", "[SYSTEM",
+                "<local-command", "<command-")
 LONGEST = 4000  # characters of one line in the chat
 TAIL = 512 * 1024  # bytes of the transcript read for the reply: a long session's whole file would be megabytes
 SECRETS = [  # the shapes secrets usually come in, and what each becomes
@@ -79,6 +83,8 @@ def main() -> int:
     if event == "UserPromptSubmit":
         text, who = str(hook.get("prompt", "")), "you"
         if text.lstrip().startswith("[hands-free"):  # said on the call: the chat has it already
+            return 0
+        if text.lstrip().startswith(NOT_THE_USER):  # another agent's report or a notice, delivered as a prompt
             return 0
     elif event == "Stop":
         text, who = reply(Path(str(hook.get("transcript_path", "")))), "Claude"
