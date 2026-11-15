@@ -25,7 +25,7 @@ import listener  # noqa: E402
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from echo_replay import NO_LOG  # noqa: E402
-from voice import whisper  # noqa: E402
+from voice.speech import whisper  # noqa: E402
 
 from voice.state import WAKE_SAMPLES  # noqa: E402
 

@@ -32,7 +32,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
 from voice.state import HANDSFREE_DATA  # noqa: E402
-from voice.whisper import CPU_THREADS, DEFAULT_HOTWORDS, Config  # noqa: E402
+from voice.speech.whisper import CPU_THREADS, DEFAULT_HOTWORDS, Config  # noqa: E402
 
 SET = HANDSFREE_DATA / "asr-set"
 MODELS = ["small", "medium", "distil-large-v3", "large-v3-turbo"]

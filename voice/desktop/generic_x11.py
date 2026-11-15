@@ -1,5 +1,5 @@
 """The Desktop for any X11 session without KDE: windows and keys through X11
-(voice/x11.py), the clipboard through xclip, and terminals of any kind.
+(voice/desktop/x11.py), the clipboard through xclip, and terminals of any kind.
 
 A terminal tab is its window (WINDOWID, which xterm, kitty, alacritty and
 others set for the programs inside) and its tty. Typing into it raises the
@@ -12,7 +12,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from voice import x11
+from voice.desktop import x11
 from voice.agents import SHELLS, ancestors, comm, process, terminal_foreground
 from voice.desktop import Desktop, Tab, Terminals, Window
 
@@ -66,7 +66,7 @@ class AnyTerminal(Terminals):
 
 
 class GenericX11(Desktop):
-    """Plain X11; KDE (voice/kde_x11.py) is this with Klipper and Konsole."""
+    """Plain X11; KDE (voice/desktop/kde_x11.py) is this with Klipper and Konsole."""
 
     def __init__(self) -> None:
         os.environ.setdefault("DISPLAY", ":0")

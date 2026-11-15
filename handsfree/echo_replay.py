@@ -25,7 +25,7 @@ sys.path[:0] = [str(HERE), str(HERE.parent)]  # hands-free's modules; voice/
 from listener import BARGE_GRACE, FLOOR_SPAN, PREROLL, floor_of  # noqa: E402
 from sensing import FRAME, LEVEL_SPAN, RATE, level  # noqa: E402
 from talkover import GAP, SUSTAIN, TalkOver, Verdict  # noqa: E402
-from voice import whisper  # noqa: E402
+from voice.speech import whisper  # noqa: E402
 from voicegate import VoiceGate  # noqa: E402
 
 NO_LOG = Path("/dev/null")  # a replay must not write into hands-free's own log

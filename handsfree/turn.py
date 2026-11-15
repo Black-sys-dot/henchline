@@ -22,7 +22,7 @@ from routing import Heard, Meaning
 from sensing import PER_SECOND, RATE, SPEECH, level
 from talkover import TalkOver, our_own_words
 from voicegate import START_DB
-from voice import whisper
+from voice.speech import whisper
 from voice.state import (BY_HANDSFREE, CALL_HANGUP, CALL_PUSH, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call, log,
                          ptt_busy, release_phase, set_phase, set_target)
 

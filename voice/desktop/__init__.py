@@ -1,8 +1,8 @@
 """What push-to-talk, talkback and hands-free need from the desktop, and nothing else.
 
 Every window, key, clipboard and terminal call goes through a Desktop. There
-are two: any X11 desktop (voice/generic_x11.py) and KDE on X11, which adds
-Klipper and Konsole (voice/kde_x11.py); current() picks one by kde_session().
+are two: any X11 desktop (voice/desktop/generic_x11.py) and KDE on X11, which adds
+Klipper and Konsole (voice/desktop/kde_x11.py); current() picks one by kde_session().
 Another desktop, or Wayland, is one new module that fills in these methods.
 """
 
@@ -150,9 +150,9 @@ def current() -> Desktop:
     if os.environ.get("XDG_SESSION_TYPE") == "wayland":
         raise NotImplementedError("Wayland is not supported yet: log in to the X11 session (see the README)")
     if kde_session():
-        from voice.kde_x11 import KdeX11
+        from voice.desktop.kde_x11 import KdeX11
 
         return KdeX11()
-    from voice.generic_x11 import GenericX11
+    from voice.desktop.generic_x11 import GenericX11
 
     return GenericX11()

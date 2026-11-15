@@ -26,7 +26,7 @@ from voice import state as shared  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
 from voice.state import BY_PTT, PTT_LOG, PTT_WAV, Phase  # noqa: E402
 from voice.state import ptt_log as log  # noqa: E402
-from voice.whisper import Config, Transcriber  # noqa: E402
+from voice.speech.whisper import Config, Transcriber  # noqa: E402
 
 SHORTEST = 0.35  # seconds: a shorter press is a slip, not speech
 SMALLEST = 1000  # bytes: a recording this small has no audio in it

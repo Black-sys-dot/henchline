@@ -12,7 +12,7 @@ import paste
 from keys import HotkeyCapture
 from voice.state import PHASE_COLOURS, Phase
 from voice.state import ptt_log as log
-from voice.whisper import Config, ding
+from voice.speech.whisper import Config, ding
 
 IDLE_COLOUR = "#d8d8d8"
 POLL_MS = 100

@@ -1,4 +1,4 @@
-"""The Desktop for KDE Plasma on X11: windows and keys through X11 (voice/x11.py),
+"""The Desktop for KDE Plasma on X11: windows and keys through X11 (voice/desktop/x11.py),
 the clipboard through Klipper, terminals through Konsole's D-Bus interface."""
 
 from __future__ import annotations
@@ -11,7 +11,7 @@ from pathlib import Path
 
 from voice.agents import CLAUDE_DAEMON, SHELLS, ancestors, cmdline_has, comm, nearest_agent, process
 from voice.desktop import Tab, Window
-from voice.generic_x11 import AnyTerminal, GenericX11
+from voice.desktop.generic_x11 import AnyTerminal, GenericX11
 
 KLIPPER = ("org.kde.klipper", "/klipper")
 TYPE_PAUSE = 0.15  # seconds between the text and its Enter, so Konsole takes them in order

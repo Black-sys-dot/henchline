@@ -14,7 +14,7 @@ import threading
 from evdev import InputDevice, ecodes, list_devices
 
 from voice.state import ptt_log as log
-from voice.whisper import Config
+from voice.speech.whisper import Config
 
 COPILOT_KEY = "F23"  # always a trigger, whatever else is set
 RESCAN = 2.0  # seconds without a key event before looking for keyboards that came or went
