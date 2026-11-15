@@ -16,9 +16,20 @@ object Chats {
     private fun file(context: Context, session: String) =
         File(context.filesDir, "chats/" + session.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".jsonl")
 
+    private val lasts = HashMap<String, JSONObject?>()  // each chat's newest line, for the list: no file re-read
+
+    /** A chat's newest line (the list's preview), read from its file once and then kept up to date. */
+    @Synchronized
+    fun last(context: Context, session: String): JSONObject? = lasts.getOrPut(session) {
+        val chat = file(context, session)
+        if (session.isEmpty() || !chat.exists()) null
+        else chat.readLines().lastOrNull { it.isNotBlank() }?.let { try { JSONObject(it) } catch (_: Exception) { null } }
+    }
+
     @Synchronized
     fun add(context: Context, session: String, line: JSONObject) {
         if (session.isEmpty()) return
+        lasts[session] = line
         val chat = file(context, session)
         chat.parentFile?.mkdirs()
         chat.appendText(line.put("at", System.currentTimeMillis()).toString() + "\n")
@@ -32,6 +43,7 @@ object Chats {
             // Chats of agent sessions untouched for PRUNE_DAYS go
             chat.parentFile?.listFiles()?.filter { it.isFile && System.currentTimeMillis() - it.lastModified() > PRUNE_DAYS * 86_400_000L }
                 ?.forEach { it.delete() }
+            lasts.clear()  // trimmed or pruned: the list reads them again
             sweep(context)
         }
     }
@@ -44,6 +56,31 @@ object Chats {
             .toSet()
         val settled = System.currentTimeMillis() - 10 * 60_000L  // newer: its line may not be written yet
         File(folder, "thumbs").listFiles()?.filter { it.path !in named && it.lastModified() < settled }?.forEach { it.delete() }
+    }
+
+    /** Your message's ticks, WhatsApp's way: "sent" (one: the laptop has it), "delivered" (two: typed into the
+     *  agent), "read" (two, blue: the agent has answered since). */
+    @Synchronized
+    fun setStatus(context: Context, session: String, id: String, status: String) = rewrite(context, session) { line ->
+        if (line.optString("id") == id && rank(status) > rank(line.optString("status"))) line.put("status", status) else line
+    }
+
+    /** The agent spoke in that chat: everything you sent it before is read. */
+    @Synchronized
+    fun readAll(context: Context, session: String) = rewrite(context, session) { line ->
+        if (line.optBoolean("mine") && line.optString("status") == "delivered") line.put("status", "read") else line
+    }
+
+    private fun rank(status: String) = listOf("", "sent", "delivered", "read").indexOf(status)
+
+    private fun rewrite(context: Context, session: String, change: (JSONObject) -> JSONObject) {
+        val chat = file(context, session)
+        if (session.isEmpty() || !chat.exists()) return
+        val lines = chat.readLines().map { raw -> try { change(JSONObject(raw)).toString() } catch (_: Exception) { raw } }
+        val aside = File(chat.path + ".new")
+        aside.writeText(lines.joinToString("\n", postfix = "\n"))
+        aside.renameTo(chat)
+        lasts.remove(session)  // its newest line may have changed (ticks): read again when wanted
     }
 
     @Synchronized

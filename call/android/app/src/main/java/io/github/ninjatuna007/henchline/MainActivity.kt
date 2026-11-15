@@ -71,7 +71,11 @@ class MainActivity : Activity() {
         quoteBar = findViewById(R.id.quote)
         search = findViewById(R.id.search)
         search.addTextChangedListener(object : android.text.TextWatcher {
-            override fun afterTextChanged(e: android.text.Editable?) = showCrew()
+            // After a short pause in typing, not on every key (2026-11-16 review)
+            override fun afterTextChanged(e: android.text.Editable?) {
+                main.removeCallbacks(searchSoon)
+                main.postDelayed(searchSoon, 250)
+            }
             override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
             override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
         })
@@ -394,7 +398,7 @@ class MainActivity : Activity() {
                 if (file != null) fileCard(from, file, line.optString("session"), keep = false)
             }
             status.has("agents") -> showAgents(status)
-            status.has("reload") -> showHistory()  // a share was put in the kept chat (UploadService)
+            status.has("reload") || status.has("delivered") -> showHistory()  // a share was put in the kept chat (UploadService)
             status.has("talking") ->  // the earbuds or the notification started or ended a turn
                 android.widget.Toast.makeText(this, if (status.getBoolean("talking")) "Talking: tap again to send" else "Sent",
                     android.widget.Toast.LENGTH_SHORT).show()
@@ -434,6 +438,7 @@ class MainActivity : Activity() {
      *  search box matches project and agent names first, then what was said, showing the matching line. */
     private fun showCrew() {
         crew.removeAllViews()
+        main.removeCallbacks(searchSoon)
         val query = if (::search.isInitialized) search.text.toString().trim() else ""
         if (names.isEmpty()) {
             crew.addView(TextView(this).apply {
@@ -444,19 +449,31 @@ class MainActivity : Activity() {
         }
         class Chat(val session: String, val agent: String, val project: String, val last: JSONObject?, val found: String)
         fun project(name: String) = name.substringAfter(", ", "").removePrefix("in ").ifEmpty { "home" }
-        var chats = names.map { (session, name) ->
-            val lines = Chats.load(this, session)
-            Chat(session, name.substringBefore(","), project(name), lines.lastOrNull(), "")
-        }
+        var chats = names.map { (session, name) -> Chat(session, name.substringBefore(","), project(name), Chats.last(this, session), "") }
         if (query.isNotEmpty()) {
             val q = query.lowercase()
             val byName = chats.filter { q in it.project.lowercase() || q in it.agent.lowercase() }
-            chats = byName.ifEmpty {  // nothing by name: a deeper look, in what was said
-                chats.mapNotNull { chat ->
-                    Chats.load(this, chat.session).lastOrNull { q in it.optString("text").lowercase() }
-                        ?.let { Chat(chat.session, chat.agent, chat.project, chat.last, it.optString("text")) }
+            if (byName.isEmpty()) {  // nothing by name: a deeper look, in what was said, off the main thread
+                val done = searched?.takeIf { it.first == q }?.second
+                if (done == null) {
+                    val sessions = chats.map { it.session }
+                    Thread {
+                        val hits = sessions.mapNotNull { session ->
+                            Chats.load(this, session).lastOrNull { q in it.optString("text").lowercase() }
+                                ?.let { session to it.optString("text") }
+                        }.toMap()
+                        main.post {
+                            searched = q to hits
+                            if (search.text.toString().trim().lowercase() == q) showCrew()
+                        }
+                    }.start()
+                    crew.addView(TextView(this).apply {
+                        text = "Searching the chats…"; setTextColor(getColor(R.color.muted)); setPadding(dp(20), dp(24), dp(20), dp(24))
+                    })
+                    return
                 }
-            }
+                chats = chats.mapNotNull { c -> done[c.session]?.let { Chat(c.session, c.agent, c.project, c.last, it) } }
+            } else chats = byName
             if (chats.isEmpty()) crew.addView(TextView(this).apply {
                 text = "Nothing matches \"$query\"."; setTextColor(getColor(R.color.muted)); setPadding(dp(20), dp(24), dp(20), dp(24))
             })
@@ -515,13 +532,19 @@ class MainActivity : Activity() {
         // Replying to a message: it goes along, on the same line (a newline would send early in a terminal)
         val words = if (quote.isEmpty()) entered else "(replying to: \"${quote.replace("\n", " ").take(160)}\") $entered"
         setQuote("")
+        val id = java.util.UUID.randomUUID().toString()
         if (!CallService.Bus.connected) {  // off a call: a text, to the agent whose chat this is
             if (current.isEmpty()) return
-            val bubble = say("you", words, mine = true, session = current)
+            Chats.add(this, current, JSONObject().put("from", "you").put("text", words).put("mine", true).put("id", id).put("status", "sent"))
+            val bubble = say("you", words, mine = true, session = current, keep = false, status = "sent")
             text.setText("")
             val to = current
             Thread {
                 val note = Messages.text(this, to, words)
+                if (note.isEmpty()) {
+                    Chats.setStatus(this, to, id, "delivered")
+                    main.post { if (to == current) showHistory() }
+                }
                 if (note.isNotEmpty()) main.post {
                     bubble.alpha = 0.5f
                     bubble.paintFlags = bubble.paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
@@ -530,9 +553,10 @@ class MainActivity : Activity() {
             }.start()
             return
         }
-        val id = (++typed).toString()
+        CallService.Bus.service?.lastSession = current
         CallService.Bus.service?.send(JSONObject().put("chat", words).put("session", current).put("id", id).toString())
-        say("you", words, mine = true, session = current).tag = "typed-$id"
+        Chats.add(this, current, JSONObject().put("from", "you").put("text", words).put("mine", true).put("id", id).put("status", "sent"))
+        say("you", words, mine = true, session = current, keep = false, status = "sent").tag = "typed-$id"
         text.setText("")
     }
 
@@ -597,10 +621,10 @@ class MainActivity : Activity() {
 
     /** A chat line: the agent's henchman and a bubble on the left, yours on the right, notes in the middle. */
     private fun say(from: String, words: String, mine: Boolean = false, note: Boolean = false, session: String = "",
-                    keep: Boolean = true): TextView {
+                    keep: Boolean = true, status: String = ""): TextView {
         if (keep && !note) Chats.add(this, session, JSONObject().put("from", from).put("text", words).put("mine", mine))
         val bubble = TextView(this).apply {
-            text = words
+            text = if (mine && status.isNotEmpty()) ticked(words, status) else words
             setTextColor(getColor(if (note) R.color.muted else R.color.text))
             textSize = if (note) 13f else 15f
             if (!note) {
@@ -638,6 +662,19 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    /** Your words with their ticks at the end: ✓ sent, ✓✓ delivered, ✓✓ in cyan once read. */
+    private fun ticked(words: String, status: String): CharSequence {
+        val ticks = if (status == "sent") "✓" else "✓✓"
+        val all = android.text.SpannableString("$words  $ticks")
+        all.setSpan(android.text.style.ForegroundColorSpan(getColor(if (status == "read") R.color.cyan else R.color.muted)),
+            all.length - ticks.length, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        all.setSpan(android.text.style.RelativeSizeSpan(0.8f), all.length - ticks.length, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        return all
+    }
+
+    private val searchSoon = Runnable { showCrew() }
+    private var searched: Pair<String, Map<String, String>>? = null  // a content search's result, for its query
 
     private fun sortMode() = prefs().getString("sort", "recent") ?: "recent"
 
@@ -774,7 +811,8 @@ class MainActivity : Activity() {
             val file = line.optJSONObject("file")
             if (file != null) fileCard(line.optString("from"), file, current, keep = false)
             else if (line.has("thumb")) picture(line.getString("thumb"), line.optString("text"), current)
-            else say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"), session = current, keep = false)
+            else say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"), session = current, keep = false,
+                status = line.optString("status"))
         }
         if (!CallService.Bus.connected) showConnected(false)  // off a call: the chat if there is one, else the henchman
     }

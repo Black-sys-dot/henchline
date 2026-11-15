@@ -274,7 +274,9 @@ async def from_page(message: dict, ear: Ear) -> str:
         await asyncio.get_running_loop().run_in_executor(None, switch, message["switch"])
     elif words := message.get("chat", "").strip():
         note = await asyncio.get_running_loop().run_in_executor(None, typed, words, message.get("session", ""))
-        return json.dumps({"note": note, "unsent": message.get("id", "")}) if note else ""
+        if note:
+            return json.dumps({"note": note, "unsent": message.get("id", "")})
+        return json.dumps({"delivered": message.get("id", "")})  # typed into the agent: the phone's two ticks
     return ""
 
 

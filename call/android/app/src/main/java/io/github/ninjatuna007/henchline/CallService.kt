@@ -69,6 +69,7 @@ class CallService : Service() {
     @Volatile private var running = false
     @Volatile private var ended = false  // the screen was already told why the call ended
     private var reply: String? = null  // an answered ring's report-back address: told if the call can't connect
+    @Volatile var lastSession = ""  // the chat a typed line was last sent in (its ticks are kept there)
     private val heard = LinkedBlockingDeque<ByteArray>()  // the agents' voices, waiting to be played
     private val audio by lazy { getSystemService(AudioManager::class.java) }
 
@@ -253,6 +254,7 @@ class CallService : Service() {
                         .put("mine", line.optString("from") == "you")
                     line.optJSONObject("file")?.let { keep.put("file", it) }
                     Chats.add(this@CallService, line.optString("session"), keep)
+                    if (line.optString("from") != "you") Chats.readAll(this@CallService, line.optString("session"))
                 }
                 val file = message?.optJSONObject("chat")?.optJSONObject("file")
                 if (file != null && Bus.listener == null) {  // the call screen isn't showing: don't let it pass unseen
@@ -260,6 +262,9 @@ class CallService : Service() {
                     Files.notify(this@CallService, line.optString("from").lowercase(), line.optString("text"),
                         file.optString("url"), file.optString("name", "file"),
                         file.optString("type", "application/octet-stream"), file.optLong("size"))
+                }
+                message?.optString("delivered")?.takeIf { it.isNotEmpty() }?.let { id ->  // typed into the agent
+                    Chats.setStatus(this@CallService, lastSession, id, "delivered")
                 }
                 Bus.listener?.invoke(text)
             }

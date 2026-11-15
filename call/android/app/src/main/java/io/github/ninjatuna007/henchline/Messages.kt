@@ -35,6 +35,7 @@ object Messages {
     /** An agent's message: shown with the last few of the conversation, and a reply box. */
     fun show(context: Context, agent: String, session: String, text: String) {
         Chats.add(context, session, JSONObject().put("from", IncomingActivity.nameOf(agent)).put("text", text).put("mine", false))
+        Chats.readAll(context, session)
         post(context, agent, session)
         // The app open on that chat shows it at once, as a line from a call would (2026-11-15: a text reached the
         // notification and the kept chat, but the open screen didn't redraw)
