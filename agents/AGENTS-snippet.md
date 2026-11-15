@@ -26,4 +26,4 @@ Files the user shares from their phone arrive as a message tagged `[hands-free �
 
 ## Texting the user
 
-When something is worth telling the user but not worth ringing them, run `handsfree text "a few words"`. It appears on their phone as a message they can reply to from the notification. Their reply comes back tagged `[hands-free · texted from the phone]`. On a call, the message goes into the chat instead. Use it sparingly, as you would text a person.
+When something is worth telling the user but not worth ringing them, run `handsfree text "a few words"`. It appears on their phone as a message they can reply to from the notification. Their reply comes back tagged `[hands-free · texted from the phone]`. On a call, the message goes into the chat instead. Use it sparingly, as you would text a person. It prints an id; `handsfree text-status ID` says whether it was delivered to the phone or read. For something that matters but can wait a little, `handsfree text --until-read 10 "…"` rings the user if they haven't read it within 10 minutes.
