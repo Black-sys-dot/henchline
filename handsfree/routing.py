@@ -42,7 +42,7 @@ AGENT = rf"({NAMES})"
 WHERE = r"(?:\s+(?:in|from|on)\s+(?:the\s+)?(.+?))?"
 SWITCH = re.compile(
     rf"^\W*(?:(?:okay|ok|alright|right|so|no|actually|hey)[\s,]+)?(?:(?:hey\s+)?(?:{NAMES})[\s,]+)?"
-    rf"(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?(?:please\s+)?"
+    rf"(?:please\s+)?(?:can\s+you\s+|could\s+you\s+)?(?:please\s+)?(?:just\s+)?"
     rf"(?:switch(?:\s+me)?(?:\s+back)?|(?:hand|pass)(?:\s+(?:me|it|this))?(?:\s+(?:over|back))?|"
     rf"(?:give|send)(?:\s+(?:me|it|this))?\s+(?:over|back)|go\s+back|(?:let\s+me\s+)?talk|connect\s+me|"
     rf"put\s+me\s+through|i\s+want\s+to\s+talk|back)\s+(?:over\s+)?to\s+{AGENT}{WHERE}(?:\s+please)?\W*$", re.I)
@@ -54,6 +54,7 @@ DISCARD = re.compile(r".*\b(?:never\s*mind|scratch\s+that|forget\s+(?:it|that|al
 # A short lead-in sentence before the request: a long message that merely ends that way is a message
 LAST_SENTENCE = re.compile(r"^(.*[.!?])\s+([^.!?]+[.!?]?)\s*$", re.S)
 LEAD_IN_WORDS = 8
+CLAUSE = re.compile(r"^(.*[.,;!?])\s+([^.,;!?]+[.!?]?)\s*$", re.S)  # a lead-in, then the last clause
 WHO = re.compile(r"^\W*who\s+(?:am\s+i|are\s+you)\s+(?:talking\s+to|speaking\s+to)?\W*$"
                  r"|^\W*who\s+is\s+(?:this|listening)\W*$", re.I)
 THINK = re.compile(r"\b(give me a (minute|moment|second|sec)|let me think|hold on|hang on"
@@ -87,7 +88,7 @@ def meaning(text: str) -> Meaning:
         return Meaning.ROUTING
     if OFF.search(text):
         return Meaning.OFF
-    if HANGUP.match(text) and in_call():
+    if hangup_request(text) and in_call():
         return Meaning.HANGUP
     if CANCEL.match(text):
         return Meaning.CANCEL
@@ -119,6 +120,14 @@ def switch_to(speaker: Speaker) -> None:
     speaker.save(LAST)
     LISTEN.write_text(str(time.time() + AFTER_SWITCH))
     log(HANDSFREE_LOG, f"switched to {speaker.agent} in {speaker.where or '?'}")
+
+
+def hangup_request(text: str) -> bool:
+    """The turn asks to end the call: all of it, or its last clause after a short lead-in ("I'm in, hang up")."""
+    if HANGUP.match(text):
+        return True
+    last = CLAUSE.match(text)
+    return bool(last) and len(last.group(1).split()) <= LEAD_IN_WORDS and bool(HANGUP.match(last.group(2)))
 
 
 def switch_request(text: str) -> tuple[str, str | None, bool] | None:
