@@ -277,10 +277,20 @@ class Speaker:
         return not self.tab and self.agent == "cursor" and bool(self.where)
 
     def remember(self) -> None:
-        """This agent spoke: replies go to it, and it can be switched to by name."""
+        """This agent spoke: replies go to it, and it can be switched to by name. A record of the same agent in the
+        same tab (or, in the Cursor editor, the same workspace) under another key goes: hands-free may have found
+        it running before it spoke (routing.discover), and it must not show up twice."""
         self.at = time.time()
         self.save(LAST)
         self.save(SPEAKERS / f"{self.session}.json")
+        for path in SPEAKERS.glob("*.json"):
+            other = Speaker.load(path)
+            if not other or other.session == self.session or other.agent != self.agent:
+                continue
+            in_tab = bool(self.tab) and other.tab == self.tab
+            in_editor = not self.tab and not other.tab and other.where == self.where
+            if in_tab or in_editor:
+                path.unlink(missing_ok=True)
 
     def spoken(self) -> str:
         """How the agent is named out loud: "Claude, in pc diagnostics"."""

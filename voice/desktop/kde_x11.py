@@ -17,14 +17,19 @@ KLIPPER = ("org.kde.klipper", "/klipper")
 TYPE_PAUSE = 0.15  # seconds between the text and its Enter, so Konsole takes them in order
 
 
-def qdbus(service: str, *args: str) -> str:
-    return subprocess.run(["qdbus", service, *args], capture_output=True, text=True).stdout.strip()
+def qdbus(*args: str) -> str:
+    """A D-Bus call, or "" when it can't be made: no qdbus, or the bus wedged (KWin's D-Bus wedge on this kind of
+    machine): never hangs the turn that asked."""
+    try:
+        return subprocess.run(["qdbus", *args], capture_output=True, text=True, timeout=3).stdout.strip()
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
 
 
 class Konsole(AnyTerminal):
     def agent_tabs(self) -> list[tuple[Tab, int]]:
         found = []
-        services = subprocess.run(["qdbus"], capture_output=True, text=True).stdout.split()
+        services = qdbus().split()
         for service in (s for s in services if s.startswith("org.kde.konsole")):
             for session in (s for s in qdbus(service).split() if s.startswith("/Sessions/")):
                 foreground = qdbus(service, session, "foregroundProcessId")
