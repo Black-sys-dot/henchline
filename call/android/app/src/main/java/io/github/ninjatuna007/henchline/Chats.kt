@@ -11,6 +11,7 @@ import java.io.File
  */
 object Chats {
     private const val KEEP = 400
+    private const val PRUNE_DAYS = 90
 
     private fun file(context: Context, session: String) =
         File(context.filesDir, "chats/" + session.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".jsonl")
@@ -23,7 +24,14 @@ object Chats {
         chat.appendText(line.put("at", System.currentTimeMillis()).toString() + "\n")
         if (chat.length() > 512 * 1024) {  // now and then, the oldest go
             val lines = chat.readLines()
-            if (lines.size > KEEP) chat.writeText(lines.takeLast(KEEP).joinToString("\n", postfix = "\n"))
+            if (lines.size > KEEP) {  // written aside, then swapped in: a crash mid-write keeps the old chat
+                val trimmed = File(chat.path + ".new")
+                trimmed.writeText(lines.takeLast(KEEP).joinToString("\n", postfix = "\n"))
+                trimmed.renameTo(chat)
+            }
+            // Chats of agent sessions untouched for PRUNE_DAYS go
+            chat.parentFile?.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > PRUNE_DAYS * 86_400_000L }
+                ?.forEach { it.delete() }
         }
     }
 
