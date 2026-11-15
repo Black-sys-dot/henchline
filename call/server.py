@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import re
 import ssl
@@ -125,10 +126,16 @@ class Ear:
         self.loud_ms = 0  # played out loud over the call
         self.while_speaking = 0  # 2 s spans with a clip playing on the laptop
         self.silent = 0  # … of which the phone played (almost) nothing
+        self.clip = ""  # the clip playing at the last report
+        self.said = ""  # the last trouble logged: said once, not every 2 s
 
     def report(self, stats: dict) -> None:
         self.loud_ms += stats.get("loud_ms", 0)
-        if Playing.now() is None:
+        playing = Playing.now()
+        clip, self.clip = self.clip, playing.clip if playing else ""
+        # Judged only once the same clip was playing a report ago: its first seconds are still being
+        # rendered, silent on the laptop too (every "silent" span of the first test call, 2026-11-15)
+        if not playing or playing.clip != clip:
             return
         self.while_speaking += 1
         trouble = []
@@ -141,8 +148,10 @@ class Ear:
         if stats.get("loud_ms", 0) < 200:
             self.silent += 1
             trouble.append(f"played only {stats.get('loud_ms', 0)} ms of 2 s, got {stats.get('got', 0)} chunks")
-        if trouble:
-            log(HANDSFREE_LOG, "call: talkback playing, but " + "; ".join(trouble))
+        said = "; ".join(trouble)
+        if said and said != self.said:
+            log(HANDSFREE_LOG, f"call: talkback playing, but {said}")
+        self.said = said
 
     def summary(self) -> str:
         return (f"the phone played {self.loud_ms / 1000:.0f} s out loud; silent in {self.silent} of "
@@ -167,7 +176,8 @@ async def from_page(message: dict, ear: Ear) -> str:
     elif "switch" in message:
         await asyncio.get_running_loop().run_in_executor(None, switch, message["switch"])
     elif words := message.get("chat", "").strip():
-        return await asyncio.get_running_loop().run_in_executor(None, typed, words, message.get("session", ""))
+        note = await asyncio.get_running_loop().run_in_executor(None, typed, words, message.get("session", ""))
+        return json.dumps({"note": note, "unsent": message.get("id", "")}) if note else ""
     return ""
 
 
@@ -267,7 +277,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                     mic.stdin.write(msg.data)
                     await mic.stdin.drain()
                 elif msg.type == WSMsgType.TEXT and (note := await from_page(msg.json(), ear)):
-                    await ws.send_json({"note": note, "unsent": True})  # only a refused typed line has one
+                    await ws.send_str(note)  # only a refused typed line has one
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:

@@ -117,6 +117,7 @@ let ws = null, ctx = null, stream = null, wakeLock = null;
 // One chat per agent: each line carries its agent's session and only the current agent's are shown (the
 // one replies go to, which follows whoever spoke last); notes about the call itself show in all of them
 let current = '';
+let typedCount = 0;  // ids for typed lines, so a "not sent" note marks the right one
 
 function say(who, words, kind = '', session = '') {
   const div = document.createElement('div');
@@ -127,6 +128,7 @@ function say(who, words, kind = '', session = '') {
   div.append(document.createTextNode(words));
   chat.append(div);
   chat.scrollTop = chat.scrollHeight;
+  return div;
 }
 
 // Who the call talks to: the agents heard lately and still running; picking one switches, as saying it would
@@ -179,8 +181,8 @@ async function start() {
     if (status.agents) { showAgents(status.agents, status.current); return; }
     if (status.note) {
       // The typed line it refers to was put in the chat when sent: mark it, so it doesn't look delivered
-      const mine = chat.querySelectorAll('.msg.you:not([hidden])');
-      if (status.unsent && mine.length) mine[mine.length - 1].classList.add('unsent');
+      const line = status.unsent && chat.querySelector(`[data-id="${status.unsent}"]`);
+      if (line) line.classList.add('unsent');
       say('', status.note, 'note');
       return;
     }
@@ -230,8 +232,9 @@ $('send').onsubmit = (e) => {
   e.preventDefault();
   const words = text.value.trim();
   if (!words) return;
-  send({chat: words, session: current});
-  say('you', words, 'you', current);
+  const id = String(++typedCount);
+  send({chat: words, session: current, id});
+  say('you', words, 'you', current).dataset.id = id;
   text.value = '';
 };
 </script>
