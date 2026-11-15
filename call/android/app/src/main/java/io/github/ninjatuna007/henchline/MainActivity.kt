@@ -38,6 +38,7 @@ class MainActivity : Activity() {
     private lateinit var settingsScreen: View
     private lateinit var refresh: SwipeRefreshLayout
     private lateinit var quoteBar: TextView
+    private lateinit var search: EditText
     private var quote = ""  // the message being replied to (swiped right), sent along with the answer
     private lateinit var callButton: ImageButton
     private lateinit var talk: Button
@@ -68,6 +69,22 @@ class MainActivity : Activity() {
         settingsScreen = findViewById(R.id.settingsScreen)
         refresh = findViewById(R.id.refresh)
         quoteBar = findViewById(R.id.quote)
+        search = findViewById(R.id.search)
+        search.addTextChangedListener(object : android.text.TextWatcher {
+            override fun afterTextChanged(e: android.text.Editable?) = showCrew()
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+        })
+        findViewById<TextView>(R.id.sort).apply {
+            fun label() = mapOf("recent" to "Recent", "project" to "By project", "agent" to "By agent")[sortMode()]
+            text = label()
+            setOnClickListener {
+                val next = mapOf("recent" to "project", "project" to "agent", "agent" to "recent")[sortMode()]
+                prefs().edit().putString("sort", next).apply()
+                text = label()
+                showCrew()
+            }
+        }
         refresh.setColorSchemeColors(getColor(R.color.cyan))
         refresh.setProgressBackgroundColorSchemeColor(getColor(R.color.surface))
         refresh.setOnRefreshListener { findCrew() }
@@ -412,10 +429,12 @@ class MainActivity : Activity() {
         showCrew()
     }
 
-    /** The chat list (the home screen): each agent with its henchman, its name and workspace, its last line and
-     *  when, newest first; the one you're talking to marked. Tap one to open its chat. */
+    /** The chat list (the home screen). Each chat is named by its project, its henchman's face and name saying
+     *  which agent (the user's choice, 2026-11-16). Ordered newest first, or grouped by project or by agent; the
+     *  search box matches project and agent names first, then what was said, showing the matching line. */
     private fun showCrew() {
         crew.removeAllViews()
+        val query = if (::search.isInitialized) search.text.toString().trim() else ""
         if (names.isEmpty()) {
             crew.addView(TextView(this).apply {
                 text = "No crew yet. Pull down to look for agents running on your computer, or call once."
@@ -423,37 +442,38 @@ class MainActivity : Activity() {
                 setPadding(dp(20), dp(24), dp(20), dp(24))
             })
         }
-        val lasts = names.keys.associateWith { Chats.load(this, it).lastOrNull() }
-        for ((session, name) in names.entries.sortedByDescending { lasts[it.key]?.optLong("at") ?: 0 }.map { it.key to it.value }) {
-            val last = lasts[session]
-            val row = LinearLayout(this).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER_VERTICAL
-                setPadding(dp(20), dp(12), dp(20), dp(12))
-                background = getDrawable(if (session == current) R.drawable.row_current else android.R.color.transparent)
-                setOnClickListener { open(session) }
+        class Chat(val session: String, val agent: String, val project: String, val last: JSONObject?, val found: String)
+        fun project(name: String) = name.substringAfter(", ", "").removePrefix("in ").ifEmpty { "home" }
+        var chats = names.map { (session, name) ->
+            val lines = Chats.load(this, session)
+            Chat(session, name.substringBefore(","), project(name), lines.lastOrNull(), "")
+        }
+        if (query.isNotEmpty()) {
+            val q = query.lowercase()
+            val byName = chats.filter { q in it.project.lowercase() || q in it.agent.lowercase() }
+            chats = byName.ifEmpty {  // nothing by name: a deeper look, in what was said
+                chats.mapNotNull { chat ->
+                    Chats.load(this, chat.session).lastOrNull { q in it.optString("text").lowercase() }
+                        ?.let { Chat(chat.session, chat.agent, chat.project, chat.last, it.optString("text")) }
+                }
             }
-            row.addView(ImageView(this).apply { setImageResource(avatarOf(session)) }, LinearLayout.LayoutParams(dp(52), dp(52)))
-            val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
-            val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
-            top.addView(TextView(this).apply {
-                text = name.substringBefore(",")
-                setTextColor(getColor(R.color.text)); textSize = 17f; typeface = android.graphics.Typeface.DEFAULT_BOLD
-            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            top.addView(TextView(this).apply {
-                text = last?.optLong("at")?.takeIf { it > 0 }?.let { android.text.format.DateUtils.getRelativeTimeSpanString(it).toString() } ?: ""
-                setTextColor(getColor(R.color.muted)); textSize = 12f
+            if (chats.isEmpty()) crew.addView(TextView(this).apply {
+                text = "Nothing matches \"$query\"."; setTextColor(getColor(R.color.muted)); setPadding(dp(20), dp(24), dp(20), dp(24))
             })
-            words.addView(top)
-            words.addView(TextView(this).apply {
-                val workspace = name.substringAfter(", ", "").removePrefix("in ")
-                val line = last?.let { (if (it.optBoolean("mine")) "You: " else "") + it.optString("text").ifEmpty { "📎 file" } } ?: ""
-                text = listOf(workspace, line).filter { it.isNotEmpty() }.joinToString(" · ")
-                setTextColor(getColor(R.color.muted)); textSize = 14f; maxLines = 1
-                ellipsize = android.text.TextUtils.TruncateAt.END
+        }
+        val recent = chats.sortedByDescending { it.last?.optLong("at") ?: 0 }
+        val groups: List<Pair<String, List<Chat>>> = when (sortMode()) {
+            "project" -> recent.groupBy { it.project }.toList()
+            "agent" -> recent.groupBy { it.agent }.toList()
+            else -> listOf("" to recent)
+        }
+        for ((heading, members) in groups) {
+            if (heading.isNotEmpty()) crew.addView(TextView(this).apply {
+                text = heading.replace("_", " ").uppercase()
+                setTextColor(getColor(R.color.muted)); textSize = 12f; typeface = android.graphics.Typeface.DEFAULT_BOLD
+                setPadding(dp(20), dp(16), dp(20), dp(4))
             })
-            row.addView(words, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-            crew.addView(row)
+            for (chat in members) crew.addView(chatRow(chat.session, chat.agent, chat.project, chat.last, chat.found))
         }
         val name = names[current] ?: prefs().getString("current_name", "")?.ifEmpty { null }.takeIf { current.isNotEmpty() }
         who.text = name?.substringBefore(",") ?: "Henchline"
@@ -618,6 +638,42 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    private fun sortMode() = prefs().getString("sort", "recent") ?: "recent"
+
+    /** A chat in the list: henchman, project, the agent's name and the last line (or the line a search found). */
+    private fun chatRow(session: String, agent: String, project: String, last: JSONObject?, found: String): View {
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(20), dp(12), dp(20), dp(12))
+            background = getDrawable(if (session == current) R.drawable.row_current else android.R.color.transparent)
+            setOnClickListener { open(session) }
+        }
+        row.addView(ImageView(this).apply { setImageResource(avatarOf(session)) }, LinearLayout.LayoutParams(dp(52), dp(52)))
+        val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
+        val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+        top.addView(TextView(this).apply {
+            text = project.replace("_", " ")
+            setTextColor(getColor(R.color.text)); textSize = 17f; typeface = android.graphics.Typeface.DEFAULT_BOLD
+            maxLines = 1; ellipsize = android.text.TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        top.addView(TextView(this).apply {
+            text = last?.optLong("at")?.takeIf { it > 0 }?.let { android.text.format.DateUtils.getRelativeTimeSpanString(it).toString() } ?: ""
+            setTextColor(getColor(R.color.muted)); textSize = 12f
+        })
+        words.addView(top)
+        words.addView(TextView(this).apply {
+            val line = found.ifEmpty {
+                last?.let { (if (it.optBoolean("mine")) "You: " else "") + it.optString("text").ifEmpty { "📎 file" } } ?: ""
+            }
+            text = listOf(agent, line.replace("\n", " ")).filter { it.isNotEmpty() }.joinToString(" · ")
+            setTextColor(getColor(if (found.isNotEmpty()) R.color.cyan else R.color.muted)); textSize = 14f; maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.END
+        })
+        row.addView(words, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        return row
+    }
 
     /** One screen at a time: the chat list, a chat, or settings. */
     private fun show(screen: View) {
