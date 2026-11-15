@@ -19,6 +19,7 @@ class Window:
     app: str  # the window class, lower case, e.g. '"konsole", "konsole"'
     role: str = ""
     pid: int = 0
+    title: str = ""
 
     def is_app(self, *names: str) -> bool:
         return any(f'"{name}"' in self.app for name in names)
@@ -61,8 +62,8 @@ class Desktop(ABC):
         """The focused window (id "" when there is none)."""
 
     @abstractmethod
-    def windows(self, app: str) -> list[tuple[str, str]]:
-        """(id, title) of every window of that application."""
+    def windows(self, app: str) -> list[Window]:
+        """Every window of that application, with its title."""
 
     @abstractmethod
     def set_clipboard(self, text: str) -> bool:
@@ -74,7 +75,14 @@ class Desktop(ABC):
 
     @abstractmethod
     def raise_window(self, window_id: str) -> None:
-        """Bring the window to the front and focus it."""
+        """Ask for the window to come to the front and take focus (the window manager may refuse)."""
+
+    @abstractmethod
+    def is_front(self, window_id: str) -> bool:
+        """Is that window the focused one now?"""
+
+    def prepare_threads(self) -> None:
+        """Called once before threads use the desktop (Xlib needs it); nothing by default."""
 
 
 @cache

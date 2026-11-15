@@ -51,18 +51,13 @@ def window_pid(wid: str) -> int:
     return int(text[-1]) if text and text[-1].isdigit() else 0
 
 
-def set_clipboard(text: str) -> bool:
-    """Put text on KDE's clipboard (Klipper) and check it arrived."""
-    os.environ.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{os.getuid()}/bus")
-    klipper = ["qdbus", "org.kde.klipper", "/klipper"]
-    if subprocess.run([*klipper, "setClipboardContents", text], capture_output=True).returncode != 0:
-        return False
-    got = subprocess.run([*klipper, "getClipboardContents"], capture_output=True, text=True).stdout
-    return got.strip() == text
-
-
 def windows() -> list[str]:
     return re.findall(r"0x[0-9a-f]+", _xprop("-root", "_NET_CLIENT_LIST"))
+
+
+def init_threads() -> None:
+    """Xlib from several threads (the tray and the key listener) needs this, before anything else."""
+    ctypes.CDLL("libX11.so.6").XInitThreads()
 
 
 class Display:

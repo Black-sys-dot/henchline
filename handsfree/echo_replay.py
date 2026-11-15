@@ -1,13 +1,17 @@
 #!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
-"""Replay an echo_collect.py session through the live talk-over rule (listener.py's thresholds), offline.
+"""Replay an echo_collect.py session through the live talk-over code, offline.
 
-    echo_replay.py SESSION [SUSTAIN] [GAP] [GOING_FRAMES]
+    echo_replay.py SESSION [SUSTAIN] [GAP]
 
-Tune thresholds here, against recordings, before the user has to fight them live.
-
+Runs the same VoiceGate and TalkOver (with the word check against the clip's
+text) the listener runs, on recorded frames with the recording's own clock,
+so thresholds are tuned against recordings before the user has to fight them.
 Per take: whether the clip would have been stopped, when (relative to the
 chime), and whether that was false (no chime yet, or a quiet take).
 """
+
+from __future__ import annotations
+
 import collections
 import json
 import sys
@@ -17,78 +21,86 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path[:0] = [str(HERE), str(HERE.parent)]  # listener and sensing; voice/
-import listener as L  # noqa: E402
-from sensing import FRAME, RATE, level, voiced  # noqa: E402
-from faster_whisper.vad import get_speech_timestamps  # noqa: E402
+sys.path[:0] = [str(HERE), str(HERE.parent)]  # hands-free's modules; voice/
+import talkover  # noqa: E402
+from listener import BARGE_GRACE, FLOOR_SPAN, floor_of  # noqa: E402
+from sensing import FRAME, LEVEL_SPAN, RATE, level  # noqa: E402
+from talkover import TalkOver, Verdict  # noqa: E402
+from voice import whisper  # noqa: E402
+from voicegate import VoiceGate  # noqa: E402
 
-folder = Path(sys.argv[1])
-SUSTAIN = float(sys.argv[2]) if len(sys.argv) > 2 else L.SUSTAIN
-GAP = float(sys.argv[3]) if len(sys.argv) > 3 else L.GAP
-GOING = int(sys.argv[4]) if len(sys.argv) > 4 else L.GOING_FRAMES
-STEP = L.CHECK_EVERY * FRAME / RATE
-takes = json.loads((folder / "trials.json").read_text())
+PREROLL = 15  # as the listener keeps
 
 
-def load(name):
+def load(folder: Path, name: str) -> np.ndarray:
     with wave.open(str(folder / name)) as w:
-        return (np.frombuffer(w.readframes(w.getnframes()), "<i2").astype(np.float32) / 32768).reshape(-1, w.getnchannels())[:, 0]
+        audio = np.frombuffer(w.readframes(w.getnframes()), "<i2").astype(np.float32) / 32768
+        return audio.reshape(-1, w.getnchannels())[:, 0]
 
 
-def replay(t):
-    ec, play = load(f"{t['take']}-ec.wav"), load(f"{t['take']}-play.wav")
-    n = min(len(ec), len(play)) // FRAME
-    c0, c1 = t["clip_start"], t["clip_end"]
-    echo_hist = collections.deque(maxlen=L.FLOOR_SPAN)
-    loud = collections.deque(maxlen=L.LOUD_SPAN)
-    recent = collections.deque(maxlen=L.PER_SECOND)
-    levels = collections.deque(maxlen=L.LEVEL_SPAN)
-    plays = collections.deque(maxlen=L.LEVEL_SPAN)
-    checked, over = 0, None
-    for i in range(n):
-        ts = i * FRAME / RATE
+def replay(folder: Path, take: dict, transcriber: whisper.Transcriber) -> tuple[float | None, int]:
+    """(when the clip would have stopped, how often its echo was caught by its words)."""
+    ec, play = load(folder, f"{take['take']}-ec.wav"), load(folder, f"{take['take']}-play.wav")
+    clock = [0.0]
+    over = TalkOver(transcriber.quick_text, clock=lambda: clock[0])
+    gate = VoiceGate()
+    echo_floor = collections.deque(maxlen=FLOOR_SPAN)
+    plays = collections.deque(maxlen=LEVEL_SPAN)
+    preroll = collections.deque(maxlen=PREROLL)
+    echoes = 0
+    for i in range(min(len(ec), len(play)) // FRAME):
+        clock[0] = i * FRAME / RATE
         frame = ec[i * FRAME:(i + 1) * FRAME]
         db = level(frame)
         plays.append(level(play[i * FRAME:(i + 1) * FRAME]))
-        if not (c0 + L.BARGE_GRACE < ts < c1):
+        over.track_onset(max(plays))
+        if not take["clip_start"] < clock[0] < take["clip_end"]:
             continue
-        floor = L.floor_of(echo_hist, db)
-        recent.append(frame); levels.append(db); checked += 1
-        loud.append(db > floor + L.BARGE_DB and voiced(frame))
-        speech = False
-        if sum(loud) >= L.BARGE_FRAMES and checked >= L.CHECK_EVERY:
-            checked = 0
-            if get_speech_timestamps(np.concatenate(recent), L.SPEECH_OVER):
-                played = max(plays)
-                speech = max(levels) - played >= L.ECHO_MARGIN
-        going = (not checked % L.CHECK_EVERY and sum(loud) >= GOING
-                 and bool(get_speech_timestamps(np.concatenate(recent), L.SPEECH_OVER)))
-        if over is None:
-            echo_hist.append(db)
-            if speech or going:
-                over = [ts, ts, STEP]
-            continue
-        if speech or going:
-            over[1] = ts; over[2] += STEP
-        if ts - over[1] > GAP:
-            over = None
-        elif over[2] >= SUSTAIN:
-            return ts
-    return None
+        floor = floor_of(echo_floor, db)
+        preroll.append(frame)
+        gate.add(frame, db)
+        speech = gate.talking(frame, db, floor, True, max(plays),
+                              clock[0] - take["clip_start"] > BARGE_GRACE, False)
+        if not over.over:
+            echo_floor.append(db)
+        verdict = over.feed(frame, speech or gate.still_speaking(), list(preroll), "replay", take["text"])
+        if verdict is Verdict.ECHO:
+            echoes += 1
+        elif verdict is Verdict.USER:
+            return clock[0], echoes
+    return None, echoes
 
 
-false = miss = 0
-lags = []
-for t in takes:
-    hit = replay(t)
-    cue = t["cue"]
-    if hit is not None and (cue is None or hit < cue):
-        false += 1; verdict = f"FALSE at {hit:.1f}s"
-    elif cue is not None and hit is None:
-        miss += 1; verdict = "missed"
-    elif hit is not None:
-        lags.append(round(hit - cue, 2)); verdict = f"stopped {hit - cue:.2f}s after the chime"
-    else:
-        verdict = "kept playing (right)"
-    print(f"  {t['take']:18s} {verdict}")
-print(f"SUSTAIN {SUSTAIN} GAP {GAP} GOING {GOING}: false {false}, missed {miss}, delays {lags}")
+def main() -> int:
+    folder = Path(sys.argv[1])
+    if len(sys.argv) > 2:
+        talkover.SUSTAIN = float(sys.argv[2])
+    if len(sys.argv) > 3:
+        talkover.GAP = float(sys.argv[3])
+    cfg = whisper.Config.load(Path("/dev/null"))
+    transcriber = whisper.Transcriber(cfg, whisper.load_model(cfg, cfg.want_cuda(), Path("/dev/null")), Path("/dev/null"))
+    false = miss = caught = 0
+    lags = []
+    for take in json.loads((folder / "trials.json").read_text()):
+        hit, echoes = replay(folder, take, transcriber)
+        caught += echoes
+        cue = take["cue"]
+        if hit is not None and (cue is None or hit < cue):
+            false += 1
+            verdict = f"FALSE stop at {hit:.1f}s"
+        elif cue is not None and hit is None:
+            miss += 1
+            verdict = "missed"
+        elif hit is not None:
+            lags.append(round(hit - cue, 2))
+            verdict = f"stopped {hit - cue:.2f}s after the chime"
+        else:
+            verdict = "kept playing (right)"
+        print(f"  {take['take']:18s} {verdict}" + (f", echo caught by its words {echoes}x" if echoes else ""))
+    print(f"SUSTAIN {talkover.SUSTAIN} GAP {talkover.GAP}: false {false}, missed {miss}, "
+          f"echo caught {caught}x, delays after the chime {lags}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

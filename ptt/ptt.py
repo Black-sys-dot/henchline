@@ -8,7 +8,6 @@ Default mic route only: pw-record with no --target.
 keys.py notices the hotkey, paste.py types the words, tray.py is the icon;
 this file records and transcribes in between.
 """
-import ctypes
 import gc
 import queue
 import shutil
@@ -25,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repositor
 import tray  # noqa: E402
 from keys import HotkeyCapture, Hold, Keyboards  # noqa: E402
 from voice import state as shared  # noqa: E402
+from voice.desktop import current as desktop  # noqa: E402
 from voice.state import BY_PTT, PTT_LOG, PTT_WAV, Phase  # noqa: E402
 from voice.state import ptt_log as log  # noqa: E402
 from voice.whisper import Config, load_model, transcribe  # noqa: E402
@@ -125,7 +125,7 @@ class PushToTalk:
 
 if __name__ == "__main__":
     try:
-        ctypes.CDLL("libX11.so.6").XInitThreads()
+        desktop().prepare_threads()
         cfg = Config.load(PTT_LOG)
         cfg.save()  # every setting in the file, so it can be edited
         stop = threading.Event()

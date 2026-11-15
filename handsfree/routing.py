@@ -16,12 +16,12 @@ from enum import Enum
 from pathlib import Path
 
 from voice.agents import SPOKEN_TO
-from voice.desktop import Tab
 from voice.desktop import current as desktop
 from voice.state import BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, Speaker, last_speaker, log, recent_speakers
 
 SAY = Path(__file__).resolve().parent.parent / "talkback/scripts/say.py"
 RAISE_TRIES = 3  # attempts to bring Cursor's window to the front before giving up
+RAISE_SETTLE, CHAT_SETTLE, PASTE_SETTLE = 0.4, 0.3, 0.2  # seconds for the window, its chat box, the paste
 AFTER_SWITCH = 30.0  # seconds to start talking after "Now talking to …"
 
 
@@ -154,17 +154,16 @@ def route(text: str, last_message: tuple[str, Heard] | None) -> bool:
 
 def reachable(speaker: Speaker) -> bool:
     """Is that agent still running where its words would be typed: its Konsole tab, or its Cursor window?"""
-    tab = Tab(*speaker.konsole)
-    if tab:
-        return desktop().terminals.agent_running(tab)
-    return speaker.agent == "cursor" and bool(speaker.where) and bool(cursor_window(speaker.where))
+    if speaker.tab:
+        return desktop().terminals.agent_running(speaker.tab)
+    return speaker.in_editor and bool(cursor_window(speaker.where))
 
 
 def cursor_window(where: str) -> str:
     """The Cursor editor window for a workspace, by its title "… - <where> - Cursor"."""
-    for wid, title in desktop().windows("cursor"):
-        if title == f"{where} - Cursor" or title.endswith(f" - {where} - Cursor"):
-            return wid
+    for window in desktop().windows("cursor"):
+        if window.title == f"{where} - Cursor" or window.title.endswith(f" - {where} - Cursor"):
+            return window.id
     return ""
 
 
@@ -180,8 +179,8 @@ def type_into_cursor(wid: str, message: str) -> bool:
         return False
     for _ in range(RAISE_TRIES):
         screen.raise_window(wid)
-        time.sleep(0.4)
-        if in_front(screen, wid):
+        time.sleep(RAISE_SETTLE)
+        if screen.is_front(wid):
             break
     else:
         # KWin can refuse a background program's raise; keys pressed now would land in the focused
@@ -189,18 +188,13 @@ def type_into_cursor(wid: str, message: str) -> bool:
         log(HANDSFREE_LOG, f"Cursor's window did not come to the front (focus: {screen.focused().app.strip()})")
         return False
     screen.press("ctrl", "alt", "shift", "f12")
-    time.sleep(0.3)
-    if not in_front(screen, wid):  # the user switched away meanwhile
+    time.sleep(CHAT_SETTLE)
+    if not screen.is_front(wid):  # the user switched away meanwhile
         return False
     screen.press("ctrl", "v")
-    time.sleep(0.2)
+    time.sleep(PASTE_SETTLE)
     screen.press("return")
     return True
-
-
-def in_front(screen, wid: str) -> bool:
-    focused = screen.focused().id
-    return bool(focused) and int(focused, 16) == int(wid, 16)
 
 
 def deliver(text: str, heard: Heard) -> bool:
@@ -211,8 +205,8 @@ def deliver(text: str, heard: Heard) -> bool:
         log(HANDSFREE_LOG, "nobody to send to")
         say("I heard you, but no agent has spoken yet.")
         return False
-    tab = Tab(*speaker.konsole)
-    if not tab and speaker.agent == "cursor" and speaker.where:
+    tab = speaker.tab
+    if speaker.in_editor:
         wid = cursor_window(speaker.where)
         if not wid:
             log(HANDSFREE_LOG, f"no Cursor window for {speaker.where}")

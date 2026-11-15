@@ -21,14 +21,12 @@ from enum import Enum
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
+sys.path.insert(0, str(ROOT))  # voice/state.py: standard library only
+from voice.state import EC_CONF as CANCELLER_CONF, EC_SOURCE, KOKORO_MODELS as KOKORO, VENV, WAKE_MODEL  # noqa: E402
+
 HOME = Path.home()
-VENV = HOME / ".local/share/copilot-ptt/venv"
 PYTHON = VENV / "bin/python3"
 BIN = HOME / ".local/bin"
-KOKORO = HOME / ".local/share/talkback"
-HANDSFREE_DATA = HOME / ".local/share/handsfree"
-CANCELLER_CONF = HOME / ".config/pipewire/talkback-echo-cancel.conf"
-EC_SOURCE = "talkback_ec_source"
 LOUDEST_SAFE = 80  # % speaker volume above which hands-free hears its own voice (README, 2026-11-15)
 
 
@@ -74,7 +72,7 @@ def unit_state(unit: str) -> tuple[str, str]:
 
 
 def link_into_repo(path: Path) -> bool:
-    return path.is_symlink() and str(path.resolve()).startswith(str(ROOT))
+    return path.is_symlink() and ROOT in path.resolve().parents
 
 
 def check(piece: str, what: str, ok: bool, detail: str = "", fix: str = "", warn_only: bool = False) -> Check:
@@ -141,7 +139,7 @@ def talkback() -> list[Check]:
 
 def speaker_volume() -> Check:
     rc, sink = run("pactl", "get-default-sink")
-    rc2, volume = run("pactl", "get-sink-volume", "@DEFAULT_SINK@")
+    _, volume = run("pactl", "get-sink-volume", "@DEFAULT_SINK@")
     percents = [int(v) for v in re.findall(r"(\d+)%", volume)]
     speakers = rc == 0 and not re.search(r"bluez|headphone|headset|usb", sink, re.I)
     loudest = max(percents, default=0)
@@ -163,7 +161,7 @@ def handsfree() -> list[Check]:
     return [
         check("handsfree", "wake word and analysis packages in the venv", ok, err, "./install.sh handsfree"),
         check("handsfree", "wake word feature models", bool(feature_models), "", "./install.sh handsfree"),
-        check("handsfree", "personal wake word", (HANDSFREE_DATA / "hey_claude_personal.pkl").exists(), "",
+        check("handsfree", "personal wake word", WAKE_MODEL.exists(), "",
               "handsfree/wakeword_collect.py, then handsfree/wakeword_train.py", warn_only=True),
         check("handsfree", "echo canceller settings", bool(conf), str(CANCELLER_CONF), "./install.sh handsfree"),
         check("handsfree", "echo canceller's mic exists", bool(mic) and mic.group(1) in sources,

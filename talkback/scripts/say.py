@@ -22,7 +22,6 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import astuple
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -33,8 +32,7 @@ from voice import spool  # noqa: E402
 import worker  # noqa: E402
 from voice.agents import agent_folder, identity  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
-from voice.state import (HOLDS, PLAYING, SPOOL, TALKBACK_LOG, WORKER_PID, log,  # noqa: E402
-                         read_json)
+from voice.state import HOLDS, PLAYING, SPOOL, TALKBACK_LOG, WORKER_PID, Playing, log  # noqa: E402
 
 
 def spawn_worker() -> None:
@@ -56,7 +54,7 @@ def new_clip(agent: str, session: str, text: str, voice: str) -> spool.Clip:
     folder = agent_folder()
     return spool.Clip.of_text(text, agent=agent, session=session, voice=voice,
                               where="home" if folder == Path.home() else folder.name,
-                              konsole=astuple(desktop().terminals.tab_of_caller()))
+                              tab=desktop().terminals.tab_of_caller())
 
 
 def text_from(words: list[str]) -> str:
@@ -94,7 +92,7 @@ def main() -> int:
         return 0
     if args.drop:
         spool.drop(session)
-        if read_json(PLAYING).get("session") == session:
+        if (playing := Playing.now()) and playing.session == session:
             try:
                 os.kill(int(WORKER_PID.read_text().strip()), signal.SIGUSR1)
             except (FileNotFoundError, ValueError, ProcessLookupError):
@@ -111,7 +109,7 @@ def main() -> int:
         log(TALKBACK_LOG, f"{agent} spoke again; dropped its older held clips")
     path = spool.add(new_clip(agent, session, text, args.voice))
     spawn_worker()
-    while args.wait and (path.exists() or read_json(PLAYING).get("clip") == path.name):
+    while args.wait and (path.exists() or ((playing := Playing.now()) and playing.clip == path.name)):
         time.sleep(0.2)
     return 0
 

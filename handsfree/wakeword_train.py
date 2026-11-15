@@ -29,12 +29,9 @@ from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path[:0] = [str(REPO), str(REPO / "talkback/scripts")]  # voice/, and the talkback worker
-from worker import MODELS as KOKORO  # noqa: E402
+sys.path.insert(0, str(REPO))  # voice/
+from voice.state import KOKORO_MODELS as KOKORO, WAKE_MODEL as OUT, WAKE_SAMPLES as SAMPLES  # noqa: E402
 
-DATA = Path.home() / ".local/share/handsfree"
-SAMPLES = DATA / "samples"
-OUT = DATA / "hey_claude_personal.pkl"
 RATE = 16000
 WIN = 2 * RATE  # 2 s of audio gives the 16 embedding frames a detector sees
 NEGATIVE_LINES = [

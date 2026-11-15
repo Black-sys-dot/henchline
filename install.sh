@@ -81,7 +81,10 @@ install_ptt() {
   say "Push-to-talk: on, and at every login. Hold the Copilot key (F23) and speak."
 }
 
-install_talkback() {
+talkback_done=""
+install_talkback() {  # hands-free and the agent rules need it too: once is enough
+  [ -z "$talkback_done" ] || return 0
+  talkback_done=1
   make_venv
   pip_install talkback
   mkdir -p "$kokoro" "$bin"

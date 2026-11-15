@@ -25,15 +25,10 @@ import numpy as np
 from openwakeword.model import Model
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
-from sensing import EC_SOURCE, RATE  # noqa: E402
-from routing import SAY  # noqa: E402
-from voice.spool import queued  # noqa: E402
-from voice.state import BY_HANDSFREE, PAUSE, PLAYING  # noqa: E402
+from collect import CHIME, speak as say  # noqa: E402
+from sensing import RATE  # noqa: E402
+from voice.state import EC_SOURCE, HANDSFREE_DATA, PAUSE, WAKE_SAMPLES as SAMPLES  # noqa: E402
 
-HOME = Path.home()
-DATA = HOME / ".local/share/handsfree"
-SAMPLES = DATA / "samples"
-CHIME = "/usr/share/sounds/freedesktop/stereo/message.oga"
 THRESHOLD = 0.5
 POSITIONS = [
     ("desk", "at your desk, facing me"),
@@ -41,13 +36,6 @@ POSITIONS = [
     ("kitchen-away", "in the kitchen, facing away from me"),
     ("hall-towards", "in the hall, facing towards me"),
 ]
-
-
-def say(text: str) -> None:
-    subprocess.run([str(SAY), "--agent", BY_HANDSFREE, "--session", BY_HANDSFREE, text])
-    time.sleep(0.5)
-    while PLAYING.exists() or queued():
-        time.sleep(0.2)
 
 
 def record(seconds: float) -> np.ndarray:
@@ -85,7 +73,7 @@ def save(name: str, audio: np.ndarray) -> None:
 def main() -> int:
     wanted = set(sys.argv[1:])
     positions = [p for p in POSITIONS if not wanted or p[0] in wanted]
-    model = Model(wakeword_models=[str(DATA / "hey_claude.onnx")], inference_framework="onnx")
+    model = Model(wakeword_models=[str(HANDSFREE_DATA / "hey_claude.onnx")], inference_framework="onnx")
     PAUSE.touch()
     results = []
     try:

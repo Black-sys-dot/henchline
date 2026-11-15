@@ -95,3 +95,31 @@ def ding(cfg: Config) -> None:
     if cfg.chime and os.path.exists(cfg.chime_sound):
         subprocess.Popen(["pw-play", cfg.chime_sound], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
+
+
+class Transcriber:
+    """A loaded Whisper model that moves itself to the CPU when the GPU runs out of memory."""
+
+    def __init__(self, cfg: Config, model, log_to: Path) -> None:
+        self.cfg, self.model, self.log_to = cfg, model, log_to
+        self.on_cpu = False
+
+    def run(self, use):
+        """use(model); if the GPU is full, move Whisper to the CPU and try again."""
+        try:
+            return use(self.model)
+        except RuntimeError as exc:
+            if "out of memory" not in str(exc).lower() or self.on_cpu:
+                raise
+            log(self.log_to, "GPU out of memory: Whisper moves to the CPU")
+            self.model, self.on_cpu = load_model(self.cfg, False, self.log_to), True
+            return use(self.model)
+
+    def quick_text(self, audio) -> str:
+        """A fast, plain transcript of a little audio (16 kHz floats): no tone, no voice detection."""
+        return self.run(lambda model: " ".join(
+            seg.text for seg in model.transcribe(audio, language="en", beam_size=1, vad_filter=False)[0]))
+
+    def file(self, path: Path) -> tuple[str, str]:
+        """(plain text, text with tone marks) of a recording."""
+        return self.run(lambda model: transcribe(model, path, self.cfg, self.log_to))

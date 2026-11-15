@@ -1,7 +1,7 @@
 """Which agent is running us, where it lives, and whether it is still there.
 
 Talkback asks this when an agent speaks (whose voice, which workspace); the
-desktop (voice/desktop.py) uses it to find the agent's terminal tab. The answers come from the process tree, because environment markers lie:
+KDE desktop (voice/kde_x11.py) uses it to find the agent's Konsole tab. The answers come from the process tree, because environment markers lie:
 an editor started from a Claude shell inherits CLAUDECODE, and a session
 moved into Claude's background daemon inherits another tab's Konsole address.
 """

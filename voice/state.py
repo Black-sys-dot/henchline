@@ -1,16 +1,21 @@
 """The files push-to-talk, talkback and hands-free share, and what is in them.
 
-Every name under ~/.local/state/ptt lives here and is read from here; no tool
-spells a path of its own. The files carry state, never the user's words.
+Every name under ~/.local/state/ptt, and every shared data path, lives here
+and is read from here; no tool spells a path of its own. The state files
+carry state, never the user's words. Standard library only: doctor.py,
+running on the system Python, reads these names too.
 """
 
 from __future__ import annotations
 
 import json
+import re
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
+
+from voice.desktop import Tab
 
 STATE = Path.home() / ".local/state/ptt"
 
@@ -40,6 +45,18 @@ LISTEN = STATE / "handsfree.listen"  # keep the reply window open until this tim
 CLOSE = STATE / "handsfree.close"  # end the reply window now
 HANDSFREE_LOG = STATE / "handsfree.log"
 HANDSFREE_WAV = STATE / "handsfree.wav"  # a turn being transcribed, deleted after
+
+# Data, not state: models, settings and recordings
+SHARE = Path.home() / ".local/share"
+VENV = SHARE / "copilot-ptt/venv"  # the private Python every tool runs on (its path is also in each shebang)
+KOKORO_MODELS = SHARE / "talkback"  # kokoro-v1.0.onnx and voices-v1.0.bin
+HANDSFREE_DATA = SHARE / "handsfree"
+WAKE_MODEL = HANDSFREE_DATA / "hey_claude_personal.pkl"  # the user's own "hey Claude"
+WAKE_SAMPLES = HANDSFREE_DATA / "samples"
+ECHO_SET = HANDSFREE_DATA / "echo-set"  # talk-over recordings, one folder per session
+EC_SOURCE = "talkback_ec_source"  # the echo-cancelled mic hands-free listens to
+EC_UNIT = "talkback-echo-cancel.service"
+EC_CONF = Path.home() / ".config/pipewire/talkback-echo-cancel.conf"
 
 # Who wrote the phase, and the agent name hands-free's own notices speak as
 BY_PTT = "ptt"
@@ -134,7 +151,7 @@ class Speaker:
     session: str
     agent: str
     where: str = ""  # its workspace folder name
-    konsole: tuple[str, str] = ("", "")  # D-Bus service and session of its Konsole tab
+    tab: Tab = field(default_factory=Tab)  # its terminal tab, where hands-free types replies
     at: float = field(default_factory=time.time)
 
     @classmethod
@@ -142,11 +159,15 @@ class Speaker:
         data = read_json(path)
         if not data.get("session") or not data.get("agent"):
             return None
-        return cls(data["session"], data["agent"], data.get("where", ""),
-                   tuple(data.get("konsole") or ("", "")), data.get("at", 0.0))
+        return cls(data["session"], data["agent"], data.get("where", ""), tab_from(data), data.get("at", 0.0))
 
     def save(self, path: Path) -> None:
-        write_json(path, {**asdict(self), "konsole": list(self.konsole)})
+        write_json(path, {**asdict(self), "tab": [self.tab.service, self.tab.session]})
+
+    @property
+    def in_editor(self) -> bool:
+        """An agent in the Cursor editor: no tab, reached through its window instead."""
+        return not self.tab and self.agent == "cursor" and bool(self.where)
 
     def remember(self) -> None:
         """This agent spoke: replies go to it, and it can be switched to by name."""
@@ -158,6 +179,38 @@ class Speaker:
         """How the agent is named out loud: "Claude, in pc diagnostics"."""
         where = self.where.replace("_", " ").replace("-", " ")
         return f"{self.agent.capitalize()}, in {where}" if where else self.agent.capitalize()
+
+
+def canceller_mic() -> str:
+    """The mic install.sh chose for the echo canceller (on the speakers' sound card); "" if none."""
+    try:
+        found = re.search(r'target\.object\s*=\s*"([^"@]+)"', EC_CONF.read_text())
+    except OSError:
+        return ""
+    return found.group(1) if found else ""
+
+
+def tab_from(data: dict) -> Tab:
+    """A stored tab, as ["service", "session"] ("konsole" in files written before 2026-11-15)."""
+    return Tab(*(data.get("tab") or data.get("konsole") or ("", "")))
+
+
+@dataclass
+class Playing:
+    """The clip talkback is playing: hands-free checks what it hears over it against the words."""
+
+    clip: str
+    session: str
+    agent: str
+    text: str
+
+    @classmethod
+    def now(cls) -> Playing | None:
+        data = read_json(PLAYING)
+        return cls(**data) if data.keys() >= {"clip", "session", "agent", "text"} else None
+
+    def save(self) -> None:
+        write_json(PLAYING, asdict(self))
 
 
 def last_speaker() -> Speaker | None:

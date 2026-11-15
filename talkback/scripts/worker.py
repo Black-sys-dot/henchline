@@ -20,10 +20,9 @@ import time
 from pathlib import Path
 
 from voice import spool
-from voice.state import (BY_HANDSFREE, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Speaker, last_speaker, log,
-                         mic_busy, read_json, target_since, write_json)
+from voice.state import (BY_HANDSFREE, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing, Speaker, last_speaker,
+                         log, mic_busy, read_json, target_since)
 
-MODELS = Path.home() / ".local/share/talkback"
 THREADS = int(os.environ.get("TALKBACK_THREADS", "4"))  # CPU threads: 4 measured best (latency vs load)
 RATE = 24000
 PAUSE = 0.25  # seconds between sentences
@@ -57,9 +56,9 @@ class Voice:
             opts = rt.SessionOptions()
             opts.intra_op_num_threads = THREADS
             opts.inter_op_num_threads = 1
-            session = rt.InferenceSession(str(MODELS / "kokoro-v1.0.onnx"), opts,
+            session = rt.InferenceSession(str(KOKORO_MODELS / "kokoro-v1.0.onnx"), opts,
                                           providers=["CPUExecutionProvider"])
-            self._kokoro = Kokoro.from_session(session, str(MODELS / "voices-v1.0.bin"))
+            self._kokoro = Kokoro.from_session(session, str(KOKORO_MODELS / "voices-v1.0.bin"))
         return self._kokoro
 
     def render(self, sentence: str, voice: str):
@@ -79,7 +78,6 @@ class Voice:
         if clip is None:
             path.unlink(missing_ok=True)
             return
-        write_json(PLAYING, {"clip": path.name, "session": clip.session})
         path.unlink(missing_ok=True)
         sentences = clip.sentences
         intro = 0
@@ -88,9 +86,9 @@ class Voice:
             if not last or last.session != clip.session:
                 name = clip.agent.capitalize()
                 sentences, intro = [f"{name} here, from {clip.where}."] + sentences, 1
-            Speaker(clip.session, clip.agent, clip.where, clip.konsole).remember()
-        # The words too: hands-free checks what it hears over a clip against them (its own echo)
-        write_json(PLAYING, {"clip": path.name, "session": clip.session, "text": " ".join(sentences)})
+            Speaker(clip.session, clip.agent, clip.where, clip.tab).remember()
+        # Once, with the words: hands-free checks what it hears over a clip against them (its own echo)
+        Playing(path.name, clip.session, clip.agent, " ".join(sentences)).save()
         voice = clip.voice or VOICES.get(clip.agent, DEFAULT_VOICE)
         ready: queue.Queue = queue.Queue(maxsize=2)
         done = threading.Event()

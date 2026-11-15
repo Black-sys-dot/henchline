@@ -22,13 +22,10 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
-from routing import SAY  # noqa: E402
-from sensing import EC_SOURCE, RATE  # noqa: E402
-from voice.spool import queued  # noqa: E402
-from voice.state import BY_HANDSFREE, PAUSE, PLAYING, read_json  # noqa: E402
+from collect import chime, ours_queued, speak as say  # noqa: E402
+from sensing import RATE  # noqa: E402
+from voice.state import EC_SOURCE, ECHO_SET as SET, PAUSE, PLAYING, canceller_mic  # noqa: E402
 
-SET = Path.home() / ".local/share/handsfree/echo-set"
-CHIME = "/usr/share/sounds/freedesktop/stereo/message.oga"
 VOICE = "af_heart"  # the voice the user talks over most
 CUE = (4.0, 10.0)  # seconds into a clip for the "talk now" chime, at random
 TAIL = 4.0  # seconds recorded after a clip ends, for the end of what the user says
@@ -49,33 +46,15 @@ CLIPS = [
 ]
 
 
-def ours_queued() -> bool:
-    """Clips of this tool still waiting (an agent's held clips are not ours to wait for)."""
-    return any(read_json(path).get("agent") == BY_HANDSFREE for path in queued())
-
-
-def say(text: str, voice: str = "") -> None:
-    """Speak and wait until it is done."""
-    subprocess.run([str(SAY), "--agent", BY_HANDSFREE, "--session", BY_HANDSFREE,
-                    *(["--voice", voice] if voice else []), text])
-    time.sleep(0.5)
-    while PLAYING.exists() or ours_queued():
-        time.sleep(0.1)
-
-
 class Recorders:
     """The raw mic, the cancelled mic and the speakers, recorded from the same moment."""
-
-    SOURCES = {
-        "raw": ("alsa_input.pci-0000_00_1f.3-platform-sof_sdw.HiFi__Mic__source", 2),
-        "ec": (EC_SOURCE, 1),
-        "play": ("@DEFAULT_MONITOR@", 1),
-    }
 
     def __init__(self, folder: Path, take: str) -> None:
         self.started = time.monotonic()
         self.procs = []
-        for name, (device, channels) in self.SOURCES.items():  # wav straight to disk: a pipe would fill and stall
+        sources = {"raw": (canceller_mic() or "@DEFAULT_SOURCE@", 2),  # the mic the canceller listens to
+                   "ec": (EC_SOURCE, 1), "play": ("@DEFAULT_MONITOR@", 1)}
+        for name, (device, channels) in sources.items():  # wav straight to disk: a pipe would fill and stall
             self.procs.append(subprocess.Popen(
                 ["parec", f"--device={device}", "--format=s16le", f"--rate={RATE}", f"--channels={channels}",
                  "--latency-msec=30", "--file-format=wav", str(folder / f"{take}-{name}.wav")]))
@@ -91,7 +70,7 @@ def trial(folder: Path, take: str, kind: str, text: str) -> dict:
     """One clip, recorded; for a "talk" trial, a chime partway through asks the user to talk over it."""
     recorders = Recorders(folder, take)
     time.sleep(1.0)  # some room sound before the clip
-    subprocess.Popen([str(SAY), "--agent", BY_HANDSFREE, "--session", BY_HANDSFREE, "--voice", VOICE, text])
+    say(text, VOICE, wait=False)
     while not PLAYING.exists():
         time.sleep(0.02)
     clip_start = time.monotonic() - recorders.started
@@ -99,7 +78,7 @@ def trial(folder: Path, take: str, kind: str, text: str) -> dict:
     if kind == "talk":
         time.sleep(random.uniform(*CUE))
         cue = time.monotonic() - recorders.started
-        subprocess.Popen(["pw-play", CHIME])
+        chime()
     while PLAYING.exists() or ours_queued():
         time.sleep(0.05)
     clip_end = time.monotonic() - recorders.started

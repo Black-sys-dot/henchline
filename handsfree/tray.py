@@ -6,7 +6,8 @@ from __future__ import annotations
 import sys
 import threading
 
-from listener import Listener, Mode
+from listener import Listener
+from turn import Mode
 from voice.state import PHASE_COLOURS, Phase
 
 COLOURS = {Mode.LISTENING: "#3cb371", Mode.RECORDING: PHASE_COLOURS[Phase.RECORDING],

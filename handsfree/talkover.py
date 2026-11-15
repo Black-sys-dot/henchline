@@ -10,13 +10,14 @@ from __future__ import annotations
 
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
+from typing import Callable
 
 import numpy as np
 
 from sensing import FRAME, RATE
-from voice.state import BY_HANDSFREE, HANDSFREE_LOG, PLAYING, log, read_json
+from voice.state import BY_HANDSFREE, HANDSFREE_LOG, PLAYING as PLAYING_PATH, Playing, log
 
 CHECK_EVERY = 3  # frames between voice checks (90 ms)
 STEP = CHECK_EVERY * FRAME / RATE  # seconds of voice one positive check stands for
@@ -59,10 +60,6 @@ def our_own_words(heard: str, said: str) -> bool:
     return shared / len(heard_words) >= OWN_WORDS or (shared >= OWN_RUN and shared / len(heard_words) >= OWN_SHARE)
 
 
-def notice_playing() -> bool:
-    """Hands-free's own short notices: their echo was taken for the user ("Now talking to Claude in
-    peace", 2026-11-15), and nobody needs to talk over two seconds of "Now talking to …"."""
-    return read_json(PLAYING).get("session", "").startswith(f"{BY_HANDSFREE}-")
 
 
 @dataclass
@@ -70,12 +67,12 @@ class Overlap:
     """A voice over a clip, kept while it lasts, every frame since it began."""
 
     started: float
-    frames: list
+    frames: list[np.ndarray]
     first: str  # how it began, for the log
     clip_text: str  # what we were saying
     last: float = 0.0  # last time it still sounded like a voice
     voiced: float = STEP  # seconds that sounded like a voice, added up
-    next_check: float = SUSTAIN  # seconds of voice before the next look at its words
+    next_check: float = 0.0  # seconds of voice before the next look at its words (after SUSTAIN)
 
     def speaking_for(self) -> float:
         return self.last - self.started
@@ -91,14 +88,17 @@ class Verdict(str, Enum):
 class TalkOver:
     """The one attempt at talking over a clip in progress, and when our voice last started."""
 
-    whisper: object  # Listener.whisper: runs a function with the model, moving to the CPU when the GPU is full
+    quick_text: Callable[[np.ndarray], str]  # a fast transcript of a little audio
     over: Overlap | None = None
+    playing: Playing | None = None  # the clip now playing, read once per clip
     taken: Overlap | None = None  # the last attempt that stopped a clip: its frames and the clip's words
     onset: float = 0.0  # when our voice last became audible after a silence
-    silent_since: float = field(default_factory=time.monotonic)
+    silent_since: float = 0.0
+    read_at: float = 0.0  # when the playing marker was last read
+    clock: Callable[[], float] = time.monotonic  # replaced by the recording's own time in echo_replay.py
 
     def track_onset(self, played_db: float | None) -> None:
-        now = time.monotonic()
+        now = self.clock()
         if played_db is None or played_db < AUDIBLE_DB:
             self.silent_since = self.silent_since or now
         elif self.silent_since:
@@ -109,13 +109,28 @@ class TalkOver:
     def reset(self) -> None:
         self.over = None
 
-    def feed(self, frame: np.ndarray, voice: bool, preroll: list, how: str) -> Verdict:
-        """One frame while a clip plays (or just after); voice: does it sound like someone talking."""
-        now = time.monotonic()
+    def clip(self) -> Playing | None:
+        """The clip playing now; the marker is read again only when talkback starts another."""
+        if not PLAYING_PATH.exists():
+            self.playing = None
+        elif self.playing is None or PLAYING_PATH.stat().st_mtime > self.read_at:
+            self.playing, self.read_at = Playing.now(), time.time()
+        return self.playing
+
+    def notice_playing(self) -> bool:
+        """Hands-free's own short notices: their echo was taken for the user ("Now talking to Claude in
+        peace", 2026-11-15), and nobody needs to talk over two seconds of "Now talking to …"."""
+        playing = self.clip()
+        return bool(playing) and playing.agent == BY_HANDSFREE
+
+    def feed(self, frame: np.ndarray, voice: bool, preroll: list[np.ndarray], how: str, clip_text: str) -> Verdict:
+        """One frame while a clip plays (or just after); voice: does it sound like someone talking;
+        clip_text: what we are saying, to tell our echo by."""
+        now = self.clock()
         if self.over is None:
             if voice:
                 self.over = Overlap(now, list(preroll), f"{how}, {now - self.onset:.1f}s after our voice started",
-                                    read_json(PLAYING).get("text", ""), last=now)
+                                    clip_text, last=now)
             return Verdict.WAITING
         over = self.over
         over.frames.append(frame)
@@ -127,7 +142,7 @@ class TalkOver:
                                f"then quiet: kept playing (first: {over.first})")
             self.over = None
             return Verdict.WAITING
-        if over.voiced < over.next_check:
+        if over.voiced < max(SUSTAIN, over.next_check):
             return Verdict.WAITING
         echo = self.echo_of_clip(over)
         if echo is None and over.voiced < UNSURE_LIMIT:
@@ -149,9 +164,7 @@ class TalkOver:
         """
         if not over.clip_text:
             return False
-        audio = np.concatenate(over.frames)
-        text = self.whisper(lambda model: " ".join(
-            seg.text for seg in model.transcribe(audio, language="en", beam_size=1, vad_filter=False)[0]))
+        text = self.quick_text(np.concatenate(over.frames))
         if len(word_keys(text)) < OWN_WORDS_MIN:
             return None
         return our_own_words(text, over.clip_text)

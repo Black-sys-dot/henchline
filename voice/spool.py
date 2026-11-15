@@ -13,7 +13,8 @@ import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
-from voice.state import HOLDS, SPOOL, TALKBACK_LOG, log, read_json, write_json
+from voice.desktop import Tab
+from voice.state import HOLDS, SPOOL, TALKBACK_LOG, log, read_json, tab_from, write_json
 
 HOLD = 90  # seconds a held clip waits for its session before it is dropped
 SENTENCE_END = re.compile(r"(?<=[.!?])\s+")
@@ -26,7 +27,7 @@ class Clip:
     sentences: list[str]
     voice: str = ""  # a Kokoro voice name; empty: the agent's own
     where: str = ""  # the agent's workspace folder name
-    konsole: tuple[str, str] = ("", "")  # where hands-free types replies to this agent
+    tab: Tab = field(default_factory=Tab)  # where hands-free types replies to this agent
     queued: float = field(default_factory=time.time)
 
     @classmethod
@@ -38,11 +39,11 @@ class Clip:
         data = read_json(path)
         if not data.get("sentences"):
             return None
-        data["konsole"] = tuple(data.get("konsole") or ("", ""))
+        data["tab"] = tab_from(data)
         return cls(**{k: data[k] for k in cls.__dataclass_fields__ if k in data})
 
     def save(self, path: Path) -> None:
-        write_json(path, {**asdict(self), "konsole": list(self.konsole)})
+        write_json(path, {**asdict(self), "tab": [self.tab.service, self.tab.session]})
 
 
 def add(clip: Clip, at_ns: int | None = None) -> Path:

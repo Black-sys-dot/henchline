@@ -11,20 +11,22 @@ import select
 import subprocess
 import threading
 import time
-from pathlib import Path
 
 import numpy as np
+from faster_whisper.vad import VadOptions
 
-from voice.state import HANDSFREE_LOG, log
+from voice.state import EC_SOURCE, EC_UNIT, HANDSFREE_LOG, WAKE_MODEL, log
 
 RATE = 16000
 FRAME = 480  # 30 ms at 16 kHz
 PER_SECOND = RATE // FRAME  # 33 frames
 LEVEL_SPAN = PER_SECOND // 2 + 1  # frames compared against the playback: the last half second
+# Silero must find a voice before anything counts. While a clip plays the canceller
+# squashes the user's voice, but 0.3/150 ms cut talkback off on its own echo and
+# 0.45/200 ms on a throat clear (2026-11-14): 0.5/300 ms
+SPEECH = VadOptions(threshold=0.6, min_speech_duration_ms=250, min_silence_duration_ms=100, speech_pad_ms=0)
+SPEECH_OVER = VadOptions(threshold=0.5, min_speech_duration_ms=300, min_silence_duration_ms=100, speech_pad_ms=0)
 VOICE_SHARE = 0.5  # share of a frame's energy below 1 kHz for it to sound like a voice
-EC_SOURCE = "talkback_ec_source"
-EC_UNIT = "talkback-echo-cancel.service"
-WAKE_MODEL = Path.home() / ".local/share/handsfree/hey_claude_personal.pkl"
 
 
 def level(frame: np.ndarray) -> float:
@@ -88,9 +90,9 @@ class EchoWatch:
     SPEAKING = -40.0  # dB: playback quieter than this is a pause, not a voice to compare against
     REST = 5 * 60.0  # seconds between restarts: if a fresh canceller does no better, restarting again won't help
 
-    def __init__(self) -> None:
+    def __init__(self, restarted: float = 0.0) -> None:
         self.closest: float | None = None  # this clip's echo, nearest to the playback (mic minus playback, dB)
-        self.restarted = 0.0
+        self.restarted = restarted  # a canceller younger than REST is still learning: no restart yet
 
     def add(self, mic_db: float, played_db: float | None) -> None:
         """Loudest mic and playback of the last half second, the measure a cut uses."""
@@ -114,7 +116,7 @@ class EchoWatch:
         closest, self.closest = self.closest, None
         if closest is None:
             return False
-        drifting = closest > self.EARLY and self.may_restart()
+        drifting = self.near_miss(closest)
         log(HANDSFREE_LOG, f"clip echo: {abs(closest):.0f} dB {'under' if closest < 0 else 'over'} the playback at the closest"
                            f"{', canceller drifting: restart when quiet' if drifting else ''}")
         return drifting

@@ -15,6 +15,7 @@ from voice.desktop import Desktop, Tab, Terminals, Window
 
 KEYS = {"ctrl": x11.CONTROL, "shift": x11.SHIFT, "alt": x11.ALT, "return": x11.RETURN, "f12": x11.F12, "v": x11.V}
 SHELLS = {"bash", "zsh", "fish", "sh", "dash", "ksh", "tcsh"}
+KLIPPER = ("org.kde.klipper", "/klipper")
 TYPE_PAUSE = 0.15  # seconds between the text and its Enter, so Konsole takes them in order
 
 
@@ -95,11 +96,16 @@ class KdeX11(Desktop):
         wid = x11.active_window()
         return Window(wid, x11.window_class(wid), x11.window_role(wid), x11.window_pid(wid) if wid else 0)
 
-    def windows(self, app: str) -> list[tuple[str, str]]:
-        return [(wid, x11.window_title(wid)) for wid in x11.windows() if f'"{app}"' in x11.window_class(wid)]
+    def windows(self, app: str) -> list[Window]:
+        return [Window(wid, cls, title=x11.window_title(wid)) for wid in x11.windows()
+                if f'"{app}"' in (cls := x11.window_class(wid))]
 
     def set_clipboard(self, text: str) -> bool:
-        return x11.set_clipboard(text)
+        """Through Klipper, KDE's clipboard, and checked."""
+        os.environ.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{os.getuid()}/bus")
+        if subprocess.run(["qdbus", *KLIPPER, "setClipboardContents", text], capture_output=True).returncode != 0:
+            return False
+        return qdbus(*KLIPPER, "getClipboardContents") == text.strip()
 
     def press(self, *keys: str) -> None:
         with x11.Display() as display:
@@ -108,3 +114,10 @@ class KdeX11(Desktop):
     def raise_window(self, window_id: str) -> None:
         with x11.Display() as display:
             display.raise_window(window_id)
+
+    def is_front(self, window_id: str) -> bool:
+        focused = x11.active_window()
+        return bool(focused) and int(focused, 16) == int(window_id, 16)  # xprop and the client list pad ids differently
+
+    def prepare_threads(self) -> None:
+        x11.init_threads()
