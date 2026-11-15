@@ -122,6 +122,9 @@ install_handsfree() {  # the call needs it too: once is enough
   venv_python -m pip install -q --no-deps openwakeword==0.6.0  # its tflite dependency has no Python 3.12 build
   venv_python -c 'from openwakeword.utils import download_models; download_models(model_names=["none"])' >/dev/null 2>&1 ||
     { say "Wake word feature models: download failed (offline?). Run ./install.sh handsfree again later."; exit 1; }
+  # "hey Jarvis": openWakeWord's published model, a wake word that needs no recordings of your voice
+  venv_python -c "from openwakeword.utils import download_models; download_models(['hey_jarvis'], '$share/handsfree')" \
+    >/dev/null 2>&1 || say "The hey Jarvis model did not download (offline?): hey Claude still works once trained."
   mic=$(builtin_mic || true)
   mkdir -p "$units" "$HOME/.config/pipewire" "$bin"
   conf="$HOME/.config/pipewire/talkback-echo-cancel.conf"
@@ -137,7 +140,7 @@ install_handsfree() {  # the call needs it too: once is enough
   ln -sfn "$root/handsfree/handsfree.py" "$bin/handsfree"
   systemctl --user daemon-reload
   start_or_restart talkback-echo-cancel.service handsfree.service
-  say "Hands-free: handsfree on (then it starts again at login). The wake word needs your voice first:"
+  say "Hands-free: handsfree on (then it starts again at login). \"Hey Jarvis\" wakes it; \"hey Claude\" needs your voice first:"
   say "  handsfree/wakeword_collect.py, then handsfree/wakeword_train.py"
 }
 

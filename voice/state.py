@@ -125,6 +125,7 @@ VENV = SHARE / "copilot-ptt/venv"  # the private Python every tool runs on (its 
 KOKORO_MODELS = SHARE / "talkback"  # kokoro-v1.0.onnx and voices-v1.0.bin
 HANDSFREE_DATA = SHARE / "handsfree"
 WAKE_MODEL = HANDSFREE_DATA / "hey_claude_personal.pkl"  # the user's own "hey Claude"
+JARVIS_MODEL = HANDSFREE_DATA / "hey_jarvis_v0.1.onnx"  # openWakeWord's published "hey Jarvis": a second wake word
 WAKE_SAMPLES = HANDSFREE_DATA / "samples"
 ECHO_SET = HANDSFREE_DATA / "echo-set"  # talk-over recordings, one folder per session
 EC_SOURCE = "talkback_ec_source"  # the echo-cancelled mic hands-free listens to

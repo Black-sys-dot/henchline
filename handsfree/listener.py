@@ -272,9 +272,9 @@ class Listener:
         if not self.wake or PAUSE.exists() or ptt_busy() or not self.wake.feed(samples):
             return False
         if not self.transcriber.run(self.wake.confirm):
-            log(HANDSFREE_LOG, "wake candidate rejected")
+            log(HANDSFREE_LOG, f"wake candidate rejected ({self.wake.word})")
             return False
-        log(HANDSFREE_LOG, "woke")
+        log(HANDSFREE_LOG, f"woke ({self.wake.word})")
         self.turn([], Heard.WOKE, floor)
         return True
 

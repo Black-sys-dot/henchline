@@ -15,7 +15,7 @@ import time
 import numpy as np
 from faster_whisper.vad import VadOptions
 
-from voice.state import EC_SOURCE, EC_UNIT, HANDSFREE_LOG, WAKE_MODEL, log, speaker_monitor
+from voice.state import EC_SOURCE, EC_UNIT, HANDSFREE_LOG, JARVIS_MODEL, WAKE_MODEL, log, speaker_monitor
 
 RATE = 16000
 FRAME = 480  # 30 ms at 16 kHz
@@ -136,53 +136,90 @@ class Output:
         return self.speakers
 
 
-class Wake:
-    """ "Hey Claude": a personal detector nominates, Whisper confirms.
+class Detector:
+    """One wake word's scores on openWakeWord speech embeddings (16 frames, 80 ms apart): it fires after RUN
+    scores in a row above its threshold, then not again until a score drops below REARM."""
 
-    The detector (wakeword_train.py) scores openWakeWord speech embeddings
-    every 80 ms and keeps no audio beyond the last two seconds. Only when it
-    fires twice in a row are those two seconds transcribed, to check for
-    "Claude"; the snippet is discarded either way and its words never logged.
+    def __init__(self, word: str, threshold: float, score, run: int = 2) -> None:
+        self.word, self.threshold, self.score, self.need = word, threshold, score, run
+        self.rearm = min(0.3, threshold / 2)  # a score below this lets it fire again
+        self.run, self.armed = 0, True
+
+    def step(self, features: np.ndarray) -> bool:
+        score = self.score(features)
+        self.run = self.run + 1 if score > self.threshold else 0
+        if score < self.rearm:
+            self.armed = True
+        if self.run >= self.need and self.armed:
+            self.armed = False
+            return True
+        return False
+
+
+class Wake:
+    """ "Hey Claude", and "hey Jarvis" as a second: a detector nominates, Whisper confirms.
+
+    "Hey Claude" is the user's personal detector (wakeword_train.py); "hey
+    Jarvis" is openWakeWord's published model. Both score the same speech
+    embeddings every 80 ms, and no audio is kept beyond the last two seconds.
+    Only when one fires are those two seconds transcribed, to check for its
+    word; the snippet is discarded either way and its words never logged.
     """
 
-    THRESHOLD = 0.9
-    RUN = 2  # scores in a row above THRESHOLD
-    REARM = 0.3  # a score below this lets it fire again
     CHUNK = 1280  # samples per openWakeWord step (80 ms)
 
     def __init__(self) -> None:
         from openwakeword.utils import AudioFeatures
 
-        self.clf = pickle.loads(WAKE_MODEL.read_bytes())
         self.features = AudioFeatures(inference_framework="onnx")
         self.ring: collections.deque = collections.deque(maxlen=2 * PER_SECOND)
         self.pending = np.zeros(0, dtype="<i2")
-        self.run, self.armed = 0, True
+        self.detectors = []
+        if WAKE_MODEL.exists():
+            clf = pickle.loads(WAKE_MODEL.read_bytes())
+            self.detectors.append(Detector("Claude", 0.9, lambda f: clf.predict_proba(f.reshape(1, -1))[0, 1]))
+        if JARVIS_MODEL.exists():
+            import onnxruntime
+
+            jarvis = onnxruntime.InferenceSession(str(JARVIS_MODEL), providers=["CPUExecutionProvider"])
+            name = jarvis.get_inputs()[0].name
+            # The published model scores the user's voice low from across the room (2026-11-15: hit or miss
+            # beyond arm's length at 0.5 twice): one score over 0.25 nominates, and Whisper still confirms
+            score = lambda f: jarvis.run(None, {name: f.reshape(1, 16, 96)})[0][0, 0]  # noqa: E731
+            self.detectors.append(Detector("Jarvis", 0.25, score, run=1))
+        self.nominated: set[str] = set()  # words whose detector fired since the last confirm
+        self.word = ""  # the word Whisper confirmed last
 
     @classmethod
     def available(cls) -> Wake | None:
-        return cls() if WAKE_MODEL.exists() else None
+        return cls() if WAKE_MODEL.exists() or JARVIS_MODEL.exists() else None
 
     def feed(self, samples: np.ndarray) -> bool:
-        """Add 30 ms of audio; True when the detector says "maybe hey Claude"."""
+        """Add 30 ms of audio; True when a detector says "maybe hey Claude" (or Jarvis)."""
         self.ring.append(samples)
         self.pending = np.concatenate([self.pending, samples])
         fired = False
         while len(self.pending) >= self.CHUNK:
             chunk, self.pending = self.pending[:self.CHUNK], self.pending[self.CHUNK:]
             self.features._streaming_features(chunk)
-            score = self.clf.predict_proba(self.features.get_features(n_feature_frames=16).reshape(1, -1))[0, 1]
-            self.run = self.run + 1 if score > self.THRESHOLD else 0
-            if score < self.REARM:
-                self.armed = True
-            if self.run >= self.RUN and self.armed:
-                self.armed, fired = False, True
+            features = self.features.get_features(n_feature_frames=16).astype(np.float32)
+            for detector in self.detectors:  # all of them: "hey Claude"'s detector also likes "hey Jarvis"
+                if detector.step(features):
+                    self.nominated.add(detector.word)
+                    fired = True
         return fired
 
     def confirm(self, whisper) -> bool:
+        """Whether Whisper hears one of the nominated words; self.word says which."""
+        words, self.nominated = sorted(self.nominated), set()
+        self.word = "/".join(words)
         audio = np.concatenate(self.ring).astype(np.float32) / 32768
-        segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=False, hotwords="Claude")
-        return bool(re.search(r"\bclaude\b", " ".join(seg.text for seg in segments), re.I))
+        segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=False,
+                                         hotwords=" ".join(words))
+        text = " ".join(seg.text for seg in segments)
+        heard = next((word for word in words if re.search(rf"\b{word}\b", text, re.I)), "")
+        self.word = heard or self.word
+        return bool(heard)
 
 
 class EarbudButton(threading.Thread):
