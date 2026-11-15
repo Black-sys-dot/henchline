@@ -35,8 +35,8 @@ sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree")]  # voice/, and
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
-from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_PORT, CALL_PUSH, CALL_TLS,  # noqa: E402
-                         HANDSFREE_LOG, HANDSFREE_MODE, PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase,
+from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_PORT,  # noqa: E402
+                         CALL_PUSH, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE, PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase,
                          Playing, Sent, in_call, last_speaker, log, phase_now, recent_speakers, turn_on_handsfree,
                          write_json)
 
@@ -47,6 +47,7 @@ CHUNK = SPEAKER_RATE // 50 * 2  # bytes of s16 mono sent to the phone at a time:
 
 STATUS_EVERY = 0.2  # seconds between looks at what hands-free and talkback are doing
 AGENTS_EVERY = 3.0  # seconds between looks at which agents can be switched to
+HANGUP_SAY, HANGUP_MAX = 1.5, 10.0  # a hang-up waits this long for the goodbye to start playing, at most this
 
 
 class Status:
@@ -278,7 +279,16 @@ async def call(request: web.Request) -> web.WebSocketResponse:
         async def show_status() -> None:
             status, shown = Status(), None
             listed, shown_agents = 0.0, None
+            asked = 0.0  # when a hang-up was asked for
             while not ws.closed:
+                if CALL_HANGUP.exists():  # the user said "hang up", or an agent ran `handsfree hangup`
+                    asked = asked or time.monotonic()
+                    waited = time.monotonic() - asked
+                    if (waited > HANGUP_SAY and Playing.now() is None) or waited > HANGUP_MAX:  # after the goodbye
+                        CALL_HANGUP.unlink(missing_ok=True)
+                        log(HANDSFREE_LOG, "call: hung up from the laptop")
+                        await ws.close(message=b"Hung up from the laptop")
+                        return
                 if time.monotonic() - listed > AGENTS_EVERY:  # the menu: who is reachable, who is current
                     listed = time.monotonic()
                     now_agents = await asyncio.get_running_loop().run_in_executor(None, agents)
@@ -363,7 +373,8 @@ def main() -> int:
     if in_call():  # another server has a call up: starting would repoint the proxy away from it
         print("a call is up on another call server; not starting", file=sys.stderr)
         return 1
-    CALL.unlink(missing_ok=True)  # leftovers from a crash: the marker, and the call's sinks
+    CALL.unlink(missing_ok=True)  # leftovers from a crash: the marker, a hang-up never done, the call's sinks
+    CALL_HANGUP.unlink(missing_ok=True)
     for line in pactl("list", "short", "modules").splitlines():
         found = re.search(r"sink_name=(\S+)", line)
         if "module-null-sink" in line and found and found.group(1) in (PHONE_MIC, PHONE_SPEAKER):

@@ -5,6 +5,7 @@
     handsfree switch AGENT [WORKSPACE] hand the user over to that agent, announced
     handsfree listen [SECONDS]         keep listening that long (default 180)
     handsfree close                    stop listening until the wake word
+    handsfree hangup                   end the phone call (call/), once talkback has finished speaking
 
 The built-in mic runs through the echo canceller (sensing.py). The listener
 (listener.py) records a turn when the user talks after a clip, over a clip,
@@ -29,8 +30,8 @@ import tray  # noqa: E402
 from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import whisper  # noqa: E402
-from voice.state import (ANNOUNCE, BY_HANDSFREE, CLOSE, HANDSFREE_LOG, HANDSFREE_ON, LISTEN,  # noqa: E402
-                         log, release_phase, turn_on_handsfree)
+from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CLOSE, HANDSFREE_LOG, HANDSFREE_ON, LISTEN,  # noqa: E402
+                         in_call, log, release_phase, turn_on_handsfree)
 from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
 
 
@@ -84,6 +85,12 @@ def main() -> int:
         return switch(args)
     if command == "listen":
         LISTEN.write_text(str(time.time() + float(args[0] if args else 180)))
+        return 0
+    if command == "hangup":
+        if not in_call():
+            print("no phone call is up")
+            return 1
+        CALL_HANGUP.touch()
         return 0
     if command == "close":
         CLOSE.touch()

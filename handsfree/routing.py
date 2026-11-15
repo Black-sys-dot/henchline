@@ -17,7 +17,7 @@ from pathlib import Path
 
 from voice.agents import SPOKEN_TO
 from voice.desktop import current as desktop
-from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, Sent, Speaker, last_speaker, log,
+from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, Sent, Speaker, in_call, last_speaker, log,
                          recent_speakers)
 
 SAY = Path(__file__).resolve().parent.parent / "talkback/scripts/say.py"
@@ -61,6 +61,9 @@ THINK = re.compile(r"\b(give me a (minute|moment|second|sec)|let me think|hold o
 JUST_TIME = 12  # words: "hold on, let me think about that" asks for time and says nothing else
 CANCEL = re.compile(r"^\W*(never ?mind|cancel( that)?|scratch that)\W*$", re.I)
 OFF = re.compile(r"\b(hands[- ]?free (mode )?off|stop hands[- ]?free|turn off hands[- ]?free)\b", re.I)
+# On a phone call only: the whole turn is the request, so "how do I hang up?" is still a message
+HANGUP = re.compile(r"^\W*(okay\W+|ok\W+|alright\W+)?(please\s+)?(hang up|end (the|this) call)(\s+(now|please))?\W*$",
+                    re.I)
 # One word is a real answer ("yes", "go", "stop"); only bare fillers are noise
 FILLER = re.compile(r"\W*(um+|uh+|hmm+|mm+|ah+|oh|eh)\W*", re.I)
 
@@ -71,6 +74,7 @@ class Meaning(str, Enum):
     TIME = "time"  # only "give me a minute"
     ROUTING = "routing"  # who am I talking to, switch, send that
     OFF = "off"
+    HANGUP = "hang up"  # end the phone call
     CANCEL = "cancel"
     NOTHING = "nothing"  # empty or a bare filler
     MESSAGE = "message"
@@ -83,6 +87,8 @@ def meaning(text: str) -> Meaning:
         return Meaning.ROUTING
     if OFF.search(text):
         return Meaning.OFF
+    if HANGUP.match(text) and in_call():
+        return Meaning.HANGUP
     if CANCEL.match(text):
         return Meaning.CANCEL
     if not text.strip() or FILLER.fullmatch(text):

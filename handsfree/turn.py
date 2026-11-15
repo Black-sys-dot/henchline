@@ -23,8 +23,8 @@ from sensing import PER_SECOND, RATE, SPEECH, level
 from talkover import TalkOver, our_own_words
 from voicegate import START_DB
 from voice import whisper
-from voice.state import (BY_HANDSFREE, CALL_PUSH, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call, log, ptt_busy,
-                         release_phase, set_phase, set_target)
+from voice.state import (BY_HANDSFREE, CALL_HANGUP, CALL_PUSH, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call, log,
+                         ptt_busy, release_phase, set_phase, set_target)
 
 THINK_WINDOW = 180  # seconds after "give me a minute"
 WAIT_FOR_WORDS = 5.0  # after the wake word, seconds to start talking before it gives up
@@ -174,6 +174,11 @@ class Turn:
             if routing.route(text, self.last_message):
                 whisper.ding(self.cfg)
             return 0.0
+        if meaning is Meaning.HANGUP:
+            log(HANDSFREE_LOG, "heard: hang up")
+            routing.say("Bye! Hanging up.")
+            CALL_HANGUP.touch()  # the call server ends the call once that has been said
+            return None
         if meaning is Meaning.OFF:
             log(HANDSFREE_LOG, "heard: hands-free off")
             self.stop.set()

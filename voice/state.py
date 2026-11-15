@@ -51,6 +51,7 @@ HANDSFREE_WAV = STATE / "handsfree.wav"  # a turn being transcribed, deleted aft
 CALL = STATE / "call"
 CALL_PUSH = STATE / "call.push"  # exists while the call page's talk button is held
 CALL_BUTTON_ONLY = STATE / "call.button-only"  # in a noisy place: only the talk button gets in, nothing else
+CALL_HANGUP = STATE / "call.hangup"  # end the phone call once talkback is done: the user said so, or an agent
 CALL_PORT = 8790
 HANDSFREE_MODE = STATE / "handsfree.mode"  # waiting / listening / recording / transcribing: the tray's colours
 PHONE_MIC = "phone_mic"  # a virtual sink the call page writes the phone's mic into; listened to as its monitor
