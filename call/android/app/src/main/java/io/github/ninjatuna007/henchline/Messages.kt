@@ -68,6 +68,21 @@ object Messages {
             .build())
     }
 
+    /** Words to an agent session over Tailscale, within 8 s: "" when an agent took them, else why not. */
+    fun text(context: Context, session: String, words: String): String = try {
+        val origin = Files.origin(context) ?: throw IllegalStateException("no laptop address set")
+        QUICK.newCall(Request.Builder().url("$origin/text").header("Origin", origin)
+            .post(JSONObject().put("text", words).put("session", session).toString()
+                .toRequestBody("application/json".toMediaType())).build()).execute().use { answer ->
+            val body = try { JSONObject(answer.body?.string() ?: "") } catch (_: Exception) { JSONObject() }
+            if (body.has("to")) "" else body.optString("note", "the laptop said ${answer.code}")
+        }
+    } catch (e: Exception) {
+        "Not sent: ${e.message ?: "the laptop couldn't be reached"} (is Tailscale on?)"
+    }
+
+    private val QUICK = okhttp3.OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
+
     /** A reply typed into the notification: to the laptop, then into the chat and the notification. */
     class ReplyReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -86,24 +101,10 @@ object Messages {
 
         /** Within the receiver's ten seconds: an unreachable laptop is "not sent", not a hang. */
         private fun send(context: Context, agent: String, session: String, words: String) {
-            val note = try {
-                val origin = Files.origin(context) ?: throw IllegalStateException("no laptop address set")
-                QUICK.newCall(Request.Builder().url("$origin/text").header("Origin", origin)
-                    .post(JSONObject().put("text", words).put("session", session).toString()
-                        .toRequestBody("application/json".toMediaType())).build()).execute().use { answer ->
-                    val body = try { JSONObject(answer.body?.string() ?: "") } catch (_: Exception) { JSONObject() }
-                    if (body.has("to")) "" else body.optString("note", "the laptop said ${answer.code}")
-                }
-            } catch (e: Exception) {
-                "not sent: ${e.message ?: "the laptop couldn't be reached"} (is Tailscale on?)"
-            }
+            val note = text(context, session, words)
             Chats.add(context, session, JSONObject().put("from", "you").put("mine", true)
                 .put("text", if (note.isEmpty()) words else "$words  ($note)"))
             post(context, agent, session, sending = true)
-        }
-
-        companion object {
-            private val QUICK = okhttp3.OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
         }
     }
 }

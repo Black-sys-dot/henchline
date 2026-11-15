@@ -72,6 +72,10 @@ class MainActivity : Activity() {
         clear = findViewById(R.id.clear)
         showMode("waiting")
         current = prefs().getString("current", "") ?: ""
+        names = try {  // the crew as last seen on a call: each agent's chat can be read and texted off a call
+            val list = org.json.JSONArray(prefs().getString("crew", "[]"))
+            (0 until list.length()).associate { list.getJSONObject(it).getString("session") to list.getJSONObject(it).getString("name") }
+        } catch (_: Exception) { emptyMap() }
         showCrew()
 
         findViewById<ImageButton>(R.id.menu).setOnClickListener { drawer.openDrawer(Gravity.START) }
@@ -324,6 +328,7 @@ class MainActivity : Activity() {
         names = (0 until list.length()).associate {
             list.getJSONObject(it).getString("session") to list.getJSONObject(it).getString("name")
         }
+        prefs().edit().putString("crew", list.toString()).apply()  // to pick from, and text, off a call
         val now = status.optString("current")
         if (now.isNotEmpty() && now != current) {
             current = now
@@ -338,7 +343,7 @@ class MainActivity : Activity() {
         crew.removeAllViews()
         if (names.isEmpty()) {
             crew.addView(TextView(this).apply {
-                text = if (CallService.Bus.connected) "Nobody has spoken lately." else "Call to see your crew."
+                text = if (CallService.Bus.connected) "Nobody has spoken lately." else "Call once to meet your crew."
                 setTextColor(getColor(R.color.muted))
                 setPadding(0, 12, 0, 12)
             })
@@ -350,7 +355,15 @@ class MainActivity : Activity() {
                 setPadding(12, 12, 12, 12)
                 if (session == current) setBackgroundResource(R.drawable.row_current)
                 setOnClickListener {
-                    if (session != current) CallService.Bus.service?.send(JSONObject().put("switch", session).toString())
+                    if (session != current) {
+                        if (CallService.Bus.connected) CallService.Bus.service?.send(JSONObject().put("switch", session).toString())
+                        else {  // off a call: that agent's chat, and texts go to it
+                            current = session
+                            prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
+                            showHistory()
+                            showCrew()
+                        }
+                    }
                     drawer.closeDrawer(Gravity.START)
                 }
             }
@@ -399,7 +412,22 @@ class MainActivity : Activity() {
 
     private fun sendTyped() {
         val words = text.text.toString().trim()
-        if (words.isEmpty() || !CallService.Bus.connected) return
+        if (words.isEmpty()) return
+        if (!CallService.Bus.connected) {  // off a call: a text, to the agent whose chat this is
+            if (current.isEmpty()) return
+            val bubble = say("you", words, mine = true, session = current)
+            text.setText("")
+            val to = current
+            Thread {
+                val note = Messages.text(this, to, words)
+                if (note.isNotEmpty()) main.post {
+                    bubble.alpha = 0.5f
+                    bubble.paintFlags = bubble.paintFlags or Paint.STRIKE_THRU_TEXT_FLAG
+                    say("", note, note = true)
+                }
+            }.start()
+            return
+        }
         val id = (++typed).toString()
         CallService.Bus.service?.send(JSONObject().put("chat", words).put("session", current).put("id", id).toString())
         say("you", words, mine = true, session = current).tag = "typed-$id"
@@ -426,14 +454,17 @@ class MainActivity : Activity() {
         callButton.setImageResource(if (on) R.drawable.ic_call_end else R.drawable.ic_phone)
         callButton.setBackgroundResource(if (on) R.drawable.round_hang else R.drawable.round_call)
         callButton.contentDescription = if (on) "Hang up" else "Call"
+        // Off a call the message box stays when an agent's chat is shown: what is typed (or attached) is a text
+        val typing = on || current.isNotEmpty()
         talk.isEnabled = on
-        text.isEnabled = on
-        send.isEnabled = on
-        attach.isEnabled = on
+        text.isEnabled = typing
+        send.isEnabled = typing
+        attach.isEnabled = typing
+        text.hint = if (on) "Message your crew…" else "Text ${names[current]?.substringBefore(",") ?: "this agent"}…"
         // Off a call there is nothing to hold or type to: just the henchman and how to call
         val shown = if (on) View.VISIBLE else View.GONE
         talk.visibility = shown
-        findViewById<View>(R.id.inputRow).visibility = shown
+        findViewById<View>(R.id.inputRow).visibility = if (typing) View.VISIBLE else View.GONE
         // Off a call: the kept chat with the last agent, read-only, or the henchman and how to call
         val readable = on || chat.childCount > 0
         chatScroll.visibility = if (readable) View.VISIBLE else View.GONE
