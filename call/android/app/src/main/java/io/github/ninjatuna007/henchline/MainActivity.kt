@@ -356,7 +356,9 @@ class MainActivity : Activity() {
                     } else if (event.actionMasked == MotionEvent.ACTION_UP) {
                         buttonOnly = !buttonOnly
                         CallService.Bus.service?.send(JSONObject().put("button_only", buttonOnly).toString())
-                        say("", if (buttonOnly) "Open line off: hold to talk" else "Open line on: just talk", note = true)
+                        // A brief notice, not a chat line: these piled up in the chat (2026-11-15); the top bar says it too
+                        android.widget.Toast.makeText(this, if (buttonOnly) "Open line off: hold to talk" else "Open line on: just talk",
+                            android.widget.Toast.LENGTH_SHORT).show()
                         view.performClick()
                     }
                 }
@@ -385,7 +387,8 @@ class MainActivity : Activity() {
                 return@setOnCheckedChangeListener
             }
             prefs().edit().putBoolean("clear", flipped).apply()
-            if (service != null) say("", if (flipped) "Clear sound" else "Call sound", note = true)
+            if (service != null) android.widget.Toast.makeText(this, if (flipped) "Clear sound" else "Call sound",
+                android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
