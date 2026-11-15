@@ -418,7 +418,8 @@ class MainActivity : Activity() {
                 }
             }
             status.has("agents") -> showAgents(status)
-            status.has("reload") || status.has("delivered") -> showHistory()  // a share was put in the kept chat (UploadService)
+            status.has("delivered") -> tick(status.getString("delivered"), "delivered")  // in place: no jump
+            status.has("reload") -> showHistory()  // a share was put in the kept chat (UploadService)
             status.has("talking") ->  // the earbuds or the notification started or ended a turn
                 android.widget.Toast.makeText(this, if (status.getBoolean("talking")) "Talking: tap again to send" else "Sent",
                     android.widget.Toast.LENGTH_SHORT).show()
@@ -557,13 +558,14 @@ class MainActivity : Activity() {
             if (current.isEmpty()) return
             Chats.add(this, current, JSONObject().put("from", "you").put("text", words).put("mine", true).put("id", id).put("status", "sent"))
             val bubble = say("you", words, mine = true, session = current, keep = false, status = "sent")
+            sentBubbles[id] = bubble to words
             text.setText("")
             val to = current
             Thread {
                 val note = Messages.text(this, to, words)
                 if (note.isEmpty()) {
                     Chats.setStatus(this, to, id, "delivered")
-                    main.post { if (to == current) showHistory() }
+                    main.post { tick(id, "delivered") }  // in place: no redraw under you
                 }
                 if (note.isNotEmpty()) main.post {
                     bubble.alpha = 0.5f
@@ -576,7 +578,9 @@ class MainActivity : Activity() {
         CallService.Bus.service?.lastSession = current
         CallService.Bus.service?.send(JSONObject().put("chat", words).put("session", current).put("id", id).toString())
         Chats.add(this, current, JSONObject().put("from", "you").put("text", words).put("mine", true).put("id", id).put("status", "sent"))
-        say("you", words, mine = true, session = current, keep = false, status = "sent").tag = "typed-$id"
+        val bubble = say("you", words, mine = true, session = current, keep = false, status = "sent")
+        bubble.tag = "typed-$id"
+        sentBubbles[id] = bubble to words
         text.setText("")
     }
 
@@ -685,6 +689,13 @@ class MainActivity : Activity() {
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
     private val myBubbles = mutableListOf<Pair<TextView, String>>()  // your lines on screen not yet read
+    private val sentBubbles = HashMap<String, Pair<TextView, String>>()  // your lines on screen by id, for their ticks
+
+    /** A line of yours moved on (delivered): its ticks change where it is, nothing else redrawn. */
+    private fun tick(id: String, status: String) {
+        val (bubble, words) = sentBubbles[id] ?: return
+        bubble.text = ticked(words, status)
+    }
 
     /** Your words with their ticks at the end: ✓ sent, ✓✓ delivered, ✓✓ in cyan once read. */
     private fun ticked(words: String, status: String): CharSequence {
