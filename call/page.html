@@ -28,6 +28,7 @@
   .msg.you { align-self: flex-end; background: color-mix(in srgb, var(--call) 18%, var(--card)); }
   .msg.note { align-self: center; background: none; border: 0; color: var(--muted); font-size: .85rem; }
   .msg[hidden] { display: none; }
+  .msg.unsent { opacity: .55; text-decoration: line-through; }
   #talk-area { display: flex; flex-direction: column; align-items: center; gap: .4rem; padding: .8rem 16px .4rem; }
   #talk { width: 92px; height: 92px; border-radius: 50%; border: 0; background: var(--waiting); color: #fff;
           font-size: .9rem; font-weight: 600; touch-action: none; user-select: none; -webkit-user-select: none;
@@ -176,7 +177,13 @@ async function start() {
       return;
     }
     if (status.agents) { showAgents(status.agents, status.current); return; }
-    if (status.note) { say('', status.note, 'note'); return; }
+    if (status.note) {
+      // The typed line it refers to was put in the chat when sent: mark it, so it doesn't look delivered
+      const mine = chat.querySelectorAll('.msg.you:not([hidden])');
+      if (status.unsent && mine.length) mine[mine.length - 1].classList.add('unsent');
+      say('', status.note, 'note');
+      return;
+    }
     state.textContent = status.state;
     talk.dataset.mode = status.mode || 'waiting';
   };

@@ -200,7 +200,7 @@ def typed(words: str, session: str) -> str:
     if session:
         target = next((s for s in recent_speakers() if s.session == session), None)
         if not target or not routing.reachable(target):
-            return "That agent can't be reached any more, so I didn't send that. Pick another and send again."
+            return "That agent isn't reachable, so I didn't send that. Pick another and send again."
         current = last_speaker()
         if not current or current.session != session:
             routing.switch_to(target)
@@ -267,7 +267,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                     mic.stdin.write(msg.data)
                     await mic.stdin.drain()
                 elif msg.type == WSMsgType.TEXT and (note := await from_page(msg.json(), ear)):
-                    await ws.send_json({"note": note})
+                    await ws.send_json({"note": note, "unsent": True})  # only a refused typed line has one
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:
