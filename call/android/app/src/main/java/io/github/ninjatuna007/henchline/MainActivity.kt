@@ -119,34 +119,26 @@ class MainActivity : Activity() {
         val uris = data.clipData?.let { clip -> (0 until clip.itemCount).map { clip.getItemAt(it).uri } }
             ?: listOfNotNull(data.data)
         if (uris.isEmpty()) return
-        val names = uris.map { Files.nameOf(this, it) }
-        val words = text.text.toString().trim()  // anything typed goes with them
+        // The same sheet as sharing from another app (the user's wish, 2026-11-15): what it is, who gets it (this
+        // chat's agent first), a caption; anything already typed in the box comes along as the caption
+        val words = text.text.toString().trim()
         text.setText("")
-        if (words.isNotEmpty()) say("you", words, mine = true, session = current)
-        uris.zip(names).forEach { (uri, name) -> attachedCard(uri, name) }
-        startForegroundService(UploadService.intent(this, uris, names, "", words, current))
+        val crew = names.toList().ifEmpty { listOf(current to (prefs().getString("current_name", "") ?: "")) }
+        Sheet(this, uris, uris.map { Files.nameOf(this, it) }, "", crew, current, over = true, note0 = words).show()
     }
 
     /** What you attached, on your side of the chat: a picture small, anything else its name. */
-    private fun attachedCard(uri: android.net.Uri, name: String) {
-        val session = current
-        Thread {  // the small copy off the main thread; the line once it's there
-            val thumb = Files.keepThumb(this, uri)
-            val line = JSONObject().put("from", "you").put("mine", true).put("text", "📎 $name")
-            thumb?.let { line.put("thumb", it) }
-            Chats.add(this, session, line)
-            main.post {
-                if (thumb != null) picture(thumb, "📎 $name", session)
-                else say("you", "📎 $name", mine = true, session = session, keep = false)
-            }
-        }.start()
-    }
-
     /** A picture you sent, from its small copy: shown on your side of the chat, its name under it. */
     private fun picture(thumb: String, caption: String, session: String) {
         val bubble = say("you", caption, mine = true, session = session, keep = false)
         val width = dp(220)
-        Thread {  // decoded small and off the main thread: a chat may hold many pictures
+        val cached = pictures.get(thumb)
+        if (cached != null) {
+            bubble.setCompoundDrawablesWithIntrinsicBounds(null, android.graphics.drawable.BitmapDrawable(resources, cached), null, null)
+            bubble.compoundDrawablePadding = dp(8)
+            return
+        }
+        decoder.execute {  // decoded small, two at a time, off the main thread: a chat may hold many pictures
             val shown = try {
                 val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 android.graphics.BitmapFactory.decodeFile(thumb, bounds)
@@ -159,12 +151,18 @@ class MainActivity : Activity() {
                 }
             } catch (_: Exception) {
                 null
-            } ?: return@Thread
+            } ?: return@execute
+            pictures.put(thumb, shown)
             main.post {
                 bubble.setCompoundDrawablesWithIntrinsicBounds(null, android.graphics.drawable.BitmapDrawable(resources, shown), null, null)
                 bubble.compoundDrawablePadding = dp(8)
             }
-        }.start()
+        }
+    }
+
+    private val decoder = java.util.concurrent.Executors.newFixedThreadPool(2)
+    private val pictures = object : android.util.LruCache<String, android.graphics.Bitmap>(16 * 1024 * 1024) {  // 16 MB
+        override fun sizeOf(key: String, value: android.graphics.Bitmap) = value.byteCount
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -329,6 +327,7 @@ class MainActivity : Activity() {
                 if (file != null) fileCard(from, file, line.optString("session"), keep = false)
             }
             status.has("agents") -> showAgents(status)
+            status.has("reload") -> showHistory()  // a share was put in the kept chat (UploadService)
             status.has("talking") ->  // the earbuds or the notification started or ended a turn
                 android.widget.Toast.makeText(this, if (status.getBoolean("talking")) "Talking: tap again to send" else "Sent",
                     android.widget.Toast.LENGTH_SHORT).show()

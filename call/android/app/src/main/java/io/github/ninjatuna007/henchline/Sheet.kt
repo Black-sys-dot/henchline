@@ -32,6 +32,8 @@ class Sheet(
     private val text: String,
     private val crew: List<Pair<String, String>>,  // session, name
     private var picked: String,
+    private val over: Boolean = false,  // over the app's own screen (the paperclip), not a share screen of its own
+    private val note0: String = "",  // words already typed in the chat's box
 ) {
     private val dp = activity.resources.displayMetrics.density
     private fun px(v: Int) = (v * dp).toInt()
@@ -99,7 +101,7 @@ class Sheet(
         sheet.addView(HorizontalScrollView(activity).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = px(10) })
         val note = EditText(activity).apply {
-            hint = "Add a few words (optional)"; setHintTextColor(colour(R.color.muted)); setTextColor(colour(R.color.text))
+            hint = "Add a few words (optional)"; setText(note0); setHintTextColor(colour(R.color.muted)); setTextColor(colour(R.color.text))
             background = rounded(colour(R.color.navy), 16f, 1, colour(R.color.surface_high))
             setPadding(px(16), px(14), px(16), px(14)); textSize = 15f
             imeOptions = EditorInfo.IME_ACTION_DONE; inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
@@ -115,23 +117,10 @@ class Sheet(
         buttons.addView(send, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, px(48)).apply { marginStart = px(8) })
         send.setPadding(px(24), 0, px(24), 0)
         send.setOnClickListener {
-            activity.startForegroundService(UploadService.intent(activity, uris, names, text, note.text.toString(), picked))
+            activity.startForegroundService(UploadService.intent(activity, uris, names, text, note.text.toString(), picked)
+                .putExtra(UploadService.INTO_CHAT, true))
             // In that agent's chat too, as the paperclip's are (2026-11-15: a share reached the agent but never
             // showed in the app's chat)
-            // The share's line in the chat comes from here only (the laptop no longer adds its own): once, not twice
-            val app = activity.applicationContext
-            val said = note.text.toString().trim()
-            Thread {  // the pictures' small copies off the main thread; the sheet closes meanwhile
-
-                if (uris.isEmpty()) Chats.add(app, picked, org.json.JSONObject().put("from", "you").put("mine", true)
-                    .put("text", if (said.isEmpty()) text.take(300) else "${text.take(300)}\n$said"))
-                uris.zip(names).forEachIndexed { i, (uri, name) ->  // a line each, a picture with its small copy
-                    val line = org.json.JSONObject().put("from", "you").put("mine", true)
-                        .put("text", "📎 $name" + if (i == uris.size - 1 && said.isNotEmpty()) "\n$said" else "")
-                    Files.keepThumb(app, uri)?.let { line.put("thumb", it) }
-                    Chats.add(app, picked, line)
-                }
-            }.start()
             close()
         }
         sheet.addView(buttons, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
@@ -139,7 +128,9 @@ class Sheet(
         draw()
         root.addView(sheet, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         root.setOnClickListener { close() }
-        activity.setContentView(root)
+        if (over) activity.addContentView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT,
+            ViewGroup.LayoutParams.MATCH_PARENT)) else activity.setContentView(root)
+        this.root = root
         sheet.translationY = 800 * dp
         sheet.animate().translationY(0f).setDuration(280).setInterpolator(DecelerateInterpolator()).start()
         this.sheet = sheet
@@ -147,9 +138,12 @@ class Sheet(
 
     private var sheet: View? = null
 
+    private var root: View? = null
+
     private fun close() {
-        val s = sheet ?: return activity.finish()
-        s.animate().translationY(s.height.toFloat()).setDuration(200).withEndAction { activity.finish() }.start()
+        val done: () -> Unit = { if (over) { (root?.parent as? ViewGroup)?.removeView(root) } else activity.finish() }
+        val s = sheet ?: return done()
+        s.animate().translationY(s.height.toFloat()).setDuration(200).withEndAction { done() }.start()
     }
 
     /** What is being shared: a picture's thumbnail, else the names (or the text). */

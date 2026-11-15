@@ -42,7 +42,8 @@ object Chats {
         val named = folder.listFiles { f -> f.isFile && f.name.endsWith(".jsonl") }.orEmpty()
             .flatMap { it.readLines() }.mapNotNull { try { JSONObject(it).optString("thumb").ifEmpty { null } } catch (_: Exception) { null } }
             .toSet()
-        File(folder, "thumbs").listFiles()?.filter { it.path !in named }?.forEach { it.delete() }
+        val settled = System.currentTimeMillis() - 10 * 60_000L  // newer: its line may not be written yet
+        File(folder, "thumbs").listFiles()?.filter { it.path !in named && it.lastModified() < settled }?.forEach { it.delete() }
     }
 
     @Synchronized

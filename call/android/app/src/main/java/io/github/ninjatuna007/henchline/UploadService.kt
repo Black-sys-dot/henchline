@@ -43,6 +43,13 @@ class UploadService : Service() {
         val uris = intent.clipData?.let { clip -> (0 until clip.itemCount).map { clip.getItemAt(it).uri } } ?: emptyList()
         val names = intent.getStringArrayListExtra(NAMES) ?: arrayListOf()
         Thread {
+            if (intent.getBooleanExtra(INTO_CHAT, false)) try {
+                intoChat(uris, names, intent.getStringExtra(TEXT) ?: "", intent.getStringExtra(NOTE) ?: "",
+                    intent.getStringExtra(SESSION) ?: "")
+                CallService.Bus.listener?.invoke("""{"reload": true}""")  // the app, if open, shows it at once
+            } catch (e: Exception) {
+                android.util.Log.w("Henchline", "share not put in the chat: ${e.message}")
+            }
             val result = try {
                 share(uris, names, intent.getStringExtra(TEXT) ?: "", intent.getStringExtra(NOTE) ?: "",
                     intent.getStringExtra(SESSION) ?: "")
@@ -59,6 +66,22 @@ class UploadService : Service() {
     }
 
     /** Each file up, then the agent told; what to say about it. */
+    /** The share in that agent's chat on the phone, a line a file (a picture with its small copy): made here, where
+     *  the read grant lasts the whole upload (the share screen's ends as it closes). The only line it gets: the
+     *  laptop adds none for a share. */
+    private fun intoChat(uris: List<Uri>, names: List<String>, text: String, note: String, session: String) {
+        val said = note.trim()
+        if (uris.isEmpty()) Chats.add(this, session, JSONObject().put("from", "you").put("mine", true)
+            .put("text", if (said.isEmpty()) text.take(300) else "${text.take(300)}\n$said"))
+        uris.forEachIndexed { i, uri ->
+            val name = names.getOrNull(i) ?: "file"
+            val line = JSONObject().put("from", "you").put("mine", true)
+                .put("text", "📎 $name" + if (i == uris.size - 1 && said.isNotEmpty()) "\n$said" else "")
+            Files.keepThumb(this, uri)?.let { line.put("thumb", it) }
+            Chats.add(this, session, line)
+        }
+    }
+
     private fun share(uris: List<Uri>, names: List<String>, text: String, note: String, session: String): String {
         val origin = Files.origin(this) ?: return "Set the laptop's address in Henchline first."
         val saved = JSONArray()
@@ -142,6 +165,7 @@ class UploadService : Service() {
         }
 
         const val NAMES = "names"
+        const val INTO_CHAT = "into_chat"  // a share from another app: its lines in the chat come from here
         const val TEXT = "text"
         const val NOTE = "note"
         const val SESSION = "session"
