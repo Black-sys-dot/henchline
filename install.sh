@@ -140,7 +140,9 @@ install_handsfree() {  # the call needs it too: once is enough
   ln -sfn "$root/handsfree/handsfree.py" "$bin/handsfree"
   systemctl --user daemon-reload
   start_or_restart talkback-echo-cancel.service handsfree.service
-  say "Hands-free: handsfree on (then it starts again at login). \"Hey Jarvis\" wakes it; \"hey Claude\" needs your voice first:"
+  say "Hands-free: handsfree on (then it starts again at login)."
+  [ -f "$share/handsfree/hey_jarvis_v0.1.onnx" ] && say "\"Hey Jarvis\" wakes it."
+  say "\"Hey Claude\" needs your voice first:"
   say "  handsfree/wakeword_collect.py, then handsfree/wakeword_train.py"
 }
 

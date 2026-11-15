@@ -140,8 +140,9 @@ class Detector:
     """One wake word's scores on openWakeWord speech embeddings (16 frames, 80 ms apart): it fires after RUN
     scores in a row above its threshold, then not again until a score drops below REARM."""
 
-    def __init__(self, word: str, threshold: float, score, run: int = 2) -> None:
+    def __init__(self, word: str, threshold: float, score, run: int = 2, hint: bool = True) -> None:
         self.word, self.threshold, self.score, self.need = word, threshold, score, run
+        self.hint = hint  # whether Whisper is told to expect the word when confirming it
         self.rearm = min(0.3, threshold / 2)  # a score below this lets it fire again
         self.run, self.armed = 0, True
 
@@ -186,7 +187,9 @@ class Wake:
             # The published model scores the user's voice low from across the room (2026-11-15: hit or miss
             # beyond arm's length at 0.5 twice): one score over 0.25 nominates, and Whisper still confirms
             score = lambda f: jarvis.run(None, {name: f.reshape(1, 16, 96)})[0][0, 0]  # noqa: E731
-            self.detectors.append(Detector("Jarvis", 0.25, score, run=1))
+            # No hint for Whisper: told to expect "Jarvis", it heard it in 19 of 20 clips of plain noise; without,
+            # 0 of 20, and every synthetic "hey Jarvis" still came out right ("Claude" with its hint: 0 of 20)
+            self.detectors.append(Detector("Jarvis", 0.25, score, run=1, hint=False))
         self.nominated: set[str] = set()  # words whose detector fired since the last confirm
         self.word = ""  # the word Whisper confirmed last
 
@@ -213,9 +216,9 @@ class Wake:
         """Whether Whisper hears one of the nominated words; self.word says which."""
         words, self.nominated = sorted(self.nominated), set()
         self.word = "/".join(words)
+        hints = " ".join(d.word for d in self.detectors if d.hint and d.word in words) or None
         audio = np.concatenate(self.ring).astype(np.float32) / 32768
-        segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=False,
-                                         hotwords=" ".join(words))
+        segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=False, hotwords=hints)
         text = " ".join(seg.text for seg in segments)
         heard = next((word for word in words if re.search(rf"\b{word}\b", text, re.I)), "")
         self.word = heard or self.word
