@@ -334,6 +334,7 @@ def trusted(request: web.Request) -> None:
         raise web.HTTPForbidden(text="only the call page may connect")
     if CALL_ORIGIN.exists() and CALL_ORIGIN.read_text() == origin:
         return
+    CALL_ORIGIN.parent.mkdir(parents=True, exist_ok=True)  # a fresh install has no state folder yet
     CALL_ORIGIN.write_text(origin)  # where `handsfree send` points a notification's link
 
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
 """Take one real hands-free turn offline: a recording of the user's voice as the mic, delivery stubbed.
 
-    tests/turn_offline.py [WAV]   (default: the "talk normally" wake-word sample)
+    tests/handsfree/turn_offline.py [WAV]   (default: the "talk normally" wake-word sample)
 
 Runs Listener.turn (record, transcribe, act) on the recording and checks it
 was delivered as a reply, without typing anywhere; exits 1 if not. A refactor
@@ -17,7 +17,7 @@ import time
 import wave
 from pathlib import Path
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parents[2]
 sys.path[:0] = [str(REPO / "handsfree/core"), str(REPO / "handsfree/tools"), str(REPO)]
 import numpy as np  # noqa: E402
 

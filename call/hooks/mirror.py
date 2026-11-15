@@ -50,8 +50,9 @@ def reply(transcript: Path) -> str:
     """Claude's written reply to the last prompt: its text blocks since then, in order."""
     try:
         with transcript.open("rb") as f:
-            f.seek(max(0, f.seek(0, 2) - TAIL))
-            lines = f.read().decode(errors="replace").splitlines()[1:]  # the first may be cut: dropped
+            start = max(0, f.seek(0, 2) - TAIL)
+            f.seek(start)
+            lines = f.read().decode(errors="replace").splitlines()[1 if start else 0:]  # a cut first line: dropped
     except OSError:
         return ""
     said = []
