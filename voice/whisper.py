@@ -11,7 +11,7 @@ import time
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
-from voice.state import log
+from voice.state import in_call, log
 
 CONFIG = Path.home() / ".config/ptt/config.json"
 AC_ONLINE = Path("/sys/class/power_supply/AC/online")
@@ -110,7 +110,8 @@ def transcribe(model, path: Path, cfg: Config, log_to: Path) -> tuple[str, str]:
 
 
 def ding(cfg: Config) -> None:
-    if cfg.chime and os.path.exists(cfg.chime_sound):
+    # Not on a phone call: the app shows the same state, and the laptop may be chiming to an empty office
+    if cfg.chime and os.path.exists(cfg.chime_sound) and not in_call():
         subprocess.Popen(["pw-play", cfg.chime_sound], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                          start_new_session=True)
 

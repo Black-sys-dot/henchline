@@ -32,6 +32,10 @@ END_DB, END_FRAMES = 6, 50  # 1.5 s at most END_DB over the floor ends the turn
 CALL_END_FRAMES = 30  # 0.9 s on a phone call: the user found 1.5 s slow there; a longer pause becomes a follow-on
 BELOW_PEAK = 25  # dB under their loudest also counts as quiet, for a noisy room
 OVER_FRAMES = 20  # after 0.6 s of quiet, check whether the last word was "over"
+# On a call the line can carry steady hiss (Henchline's clear sound has no call-mode noise suppression) that never
+# gets quiet enough to end a turn: "Hearing you…" for 55 s (2026-11-15). There a second without speech (Silero),
+# looked at every 0.3 s, ends the turn as well
+VOICE_EVERY, VOICE_GONE = 10, 1.0
 OVER_TAIL = 4 * PER_SECOND  # frames Whisper looks at for "over"
 PTT_CHECK = 10  # frames between checks that push-to-talk has not taken the mic
 MAX_SECONDS = 120  # the user talks in long stretches; 60 s cut them off
@@ -95,7 +99,10 @@ class Turn:
         self.show(Mode.RECORDING)
         since, quiet, peak = time.monotonic(), 0, -120.0
         started = heard is not Heard.WOKE  # after "hey Claude" people pause for the chime
-        end = CALL_END_FRAMES if in_call() else END_FRAMES
+        calling = in_call()
+        end = CALL_END_FRAMES if calling else END_FRAMES
+        voice_at, spoke = since, False  # when Silero last heard speech in the turn, and whether it ever did (calls)
+        voiceless = False
         held = heard is Heard.PUSHED  # the button decides when it ends, not a pause
         released = False
         while (quiet < end or held) and time.monotonic() - since < MAX_SECONDS:
@@ -118,7 +125,15 @@ class Turn:
             quiet = quiet + 1 if db < max(floor + END_DB, peak - BELOW_PEAK) else 0
             if quiet == OVER_FRAMES and self.ends_with_over(frames):
                 break
+            if calling and not held and len(frames) % VOICE_EVERY == 0:
+                recent = np.concatenate(frames[-int(VOICE_GONE * PER_SECOND):])
+                if get_speech_timestamps(recent, SPEECH):
+                    voice_at, spoke = time.monotonic(), True
+                elif time.monotonic() - voice_at > (VOICE_GONE if spoke else WAIT_FOR_WORDS):
+                    voiceless = True  # their words ended a second ago, or none came at all
+                    break
         reason = ("the button" if released else "limit" if time.monotonic() - since >= MAX_SECONDS
+                  else "no voice for a second (steady sound on the line)" if voiceless
                   else "over" if quiet == OVER_FRAMES else "pause")
         log(HANDSFREE_LOG, f"recorded {time.monotonic() - since:.1f}s, ended by {reason} (floor {floor:.0f} dB)")
         return frames

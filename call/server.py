@@ -160,6 +160,24 @@ class Ear:
                 f"{self.while_speaking} 2-s spans while talkback played")
 
 
+async def keep_unmuted() -> None:
+    """The laptop's mute key mutes every output, the call's two sinks too: the phone then hears nothing and
+    hands-free hears nothing from the phone (2026-11-15). They are the call's own plumbing, not speakers,
+    so while the call lasts they are unmuted again at once; the laptop's speakers stay muted."""
+    watch = await asyncio.create_subprocess_exec("pactl", "subscribe", stdout=asyncio.subprocess.PIPE)
+    try:
+        while line := await watch.stdout.readline():
+            if b"'change' on sink" not in line:
+                continue
+            for sink in (PHONE_MIC, PHONE_SPEAKER):
+                if pactl("get-sink-mute", sink).endswith("yes"):
+                    pactl("set-sink-mute", sink, "0")
+                    log(HANDSFREE_LOG, f"call: {sink} was muted (the laptop's mute key?): unmuted, the call goes on")
+    finally:
+        if watch.returncode is None:
+            watch.terminate()
+
+
 def flag(path: Path, on: bool) -> None:
     if on:
         path.touch()
@@ -272,6 +290,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
 
         sender = asyncio.create_task(to_phone())
         shower = asyncio.create_task(show_status())
+        unmuter = asyncio.create_task(keep_unmuted())
         heard = 0  # bytes of the phone's mic, for the log
         ear = Ear()
         try:
@@ -289,6 +308,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             CALL_BUTTON_ONLY.unlink(missing_ok=True)  # the next call starts with an open line again
             sender.cancel()
             shower.cancel()
+            unmuter.cancel()
             CALL.unlink(missing_ok=True)  # hands-free and talkback go back to the laptop first
             for proc in (mic, speaker):
                 if proc.returncode is None:
