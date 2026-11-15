@@ -94,12 +94,18 @@ class MainActivity : Activity() {
         answer(intent)
     }
 
-    /** Opened from henchline://call (an agent rang): connect, unless a call is up already. */
+    /** Opened from henchline://call (an agent rang): ask, as a phone does. Any app or web page can open the
+     *  link, so it never turns the mic on by itself: only Answer connects. */
     private fun answer(intent: Intent?) {
         if (intent?.data?.scheme == "henchline" && intent.data?.host == "call" && CallService.Bus.service == null) {
-            intent.data = null  // once: rotating the screen must not call again
-            say("", "Answering…", note = true)
-            call()
+            intent.data = null  // once: rotating the screen must not ask again
+            AlertDialog.Builder(this)
+                .setIcon(R.mipmap.ic_launcher)
+                .setTitle("Your crew is calling")
+                .setMessage("An agent wants to talk.")
+                .setPositiveButton("Answer") { _, _ -> say("", "Answering…", note = true); call() }
+                .setNegativeButton("Decline", null)
+                .show()
         }
     }
 

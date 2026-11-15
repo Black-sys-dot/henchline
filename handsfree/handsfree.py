@@ -21,8 +21,8 @@ import signal
 import subprocess
 import sys
 import threading
-import urllib.request
 import time
+import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -40,6 +40,8 @@ from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
 
 RING_TOPIC = Path.home() / ".config/ptt/ntfy-topic"  # the user's own ntfy topic: never printed or logged
 RING_SERVER = "https://ntfy.sh"
+RING_EVERY = 120  # seconds: an agent can't keep ringing
+RANG = Path.home() / ".local/state/ptt/call.rang"  # when the user was last rung
 
 
 def ring(why: str) -> int:
@@ -47,21 +49,26 @@ def ring(why: str) -> int:
     if in_call():
         print("a phone call is up already")
         return 1
+    if RANG.exists() and time.time() - RANG.stat().st_mtime < RING_EVERY:
+        print(f"rang less than {RING_EVERY} s ago; not again yet")
+        return 1
     try:
         topic = RING_TOPIC.read_text().strip()
     except OSError:
         print(f"no ntfy topic in {RING_TOPIC}: put the topic your phone's ntfy app follows there")
         return 1
-    who = (last_speaker().agent.capitalize() if last_speaker() else "Your crew")
+    speaker = last_speaker()
+    who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
     request = urllib.request.Request(f"{RING_SERVER}/{topic}", data=(why or "Tap Answer to talk.").encode(),
                                      headers={"Title": f"{who} is calling", "Priority": "high", "Tags": "telephone",
                                               "Click": "henchline://call",
                                               "Actions": "view, Answer, henchline://call, clear=true"})
     try:
         urllib.request.urlopen(request, timeout=10).close()
-    except OSError as exc:
+    except (OSError, ValueError) as exc:
         print(f"couldn't ring: {exc}")
         return 1
+    RANG.touch()
     log(HANDSFREE_LOG, f"rang the user ({who})")
     print("rang")
     return 0

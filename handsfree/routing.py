@@ -96,10 +96,11 @@ def meaning(text: str) -> Meaning:
     return Meaning.MESSAGE
 
 
-def say(text: str) -> None:
-    """A hands-free notice, in its own voice; it never takes the user's replies."""
-    subprocess.Popen([str(SAY), "--agent", BY_HANDSFREE, "--session", BY_HANDSFREE, text],
-                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+def say(text: str) -> subprocess.Popen:
+    """A hands-free notice, in its own voice; it never takes the user's replies. The process ends once the
+    notice is in talkback's queue (the worker renders it), so waiting for it means it will be said."""
+    return subprocess.Popen([str(SAY), "--agent", BY_HANDSFREE, "--session", BY_HANDSFREE, text],
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
 
 def squash(words: str) -> str:

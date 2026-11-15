@@ -177,8 +177,10 @@ class Turn:
         if meaning is Meaning.HANGUP:
             log(HANDSFREE_LOG, "heard: hang up")
             if in_call():  # it may have ended while the words were transcribed
-                routing.say("Bye! Hanging up.")
-                CALL_HANGUP.touch()  # the call server ends the call once that has been said
+                goodbye = routing.say("Bye! Hanging up.")
+                # Only once the goodbye is queued: the server ends the call when talkback has nothing left to say,
+                # and until say.py has run, there is nothing in the queue yet
+                threading.Thread(target=lambda: (goodbye.wait(timeout=15), CALL_HANGUP.touch()), daemon=True).start()
             return None
         if meaning is Meaning.OFF:
             log(HANDSFREE_LOG, "heard: hands-free off")
