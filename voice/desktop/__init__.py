@@ -65,6 +65,11 @@ class Terminals(ABC):
     def only_a_shell(self, window: Window) -> bool:
         """Does that focused terminal window show a tab running nothing but a shell? Unsure: False."""
 
+    def agent_tabs(self) -> list[tuple[Tab, int]]:
+        """Every tab whose foreground program is an agent, with that program's pid: for finding an agent the user
+        asks for that hasn't spoken yet. A terminal that can't be asked lists none."""
+        return []
+
 
 class Desktop(ABC):
     terminals: Terminals

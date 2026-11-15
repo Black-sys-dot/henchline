@@ -15,9 +15,9 @@ import time
 from enum import Enum
 from pathlib import Path
 
-from voice.agents import SPOKEN_TO
+from voice.agents import SPOKEN_TO, identity, process
 from voice.desktop import current as desktop
-from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, Sent, Speaker, in_call, last_speaker, log,
+from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, SPEAKERS, Sent, Speaker, in_call, last_speaker, log,
                          recent_speakers)
 
 SAY = Path(__file__).resolve().parents[2] / "talkback/scripts/say.py"
@@ -117,6 +117,41 @@ def find(agent: str, where: str | None = None) -> Speaker | None:
     return max(found, key=lambda s: s.at) if found else None
 
 
+def discover(agent: str, where: str | None) -> list[Speaker]:
+    """An agent the user asks for that hasn't spoken through talkback yet, found running (the user's idea,
+    2026-11-16): in a terminal tab whose foreground program is that agent, or for Cursor its editor window, by
+    its workspace's name. route() registers it when it is the only one (several are not guessed between)."""
+    agent = agent.lower()
+    found = []
+    for tab, pid in desktop().terminals.agent_tabs():
+        p = process(pid)
+        if not p or p.agent != agent:
+            continue
+        try:
+            folder = p.folder
+        except OSError:
+            continue
+        if where and not (squash(where) in squash(folder.name) or squash(folder.name) in squash(where)):
+            continue
+        session = ""
+        if agent == "claude":
+            try:
+                env = Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+                key = b"CLAUDE_CODE_SESSION_ID="
+                session = next((e[len(key):].decode() for e in env if e.startswith(key)), "")
+            except OSError:
+                pass
+        _, key = identity(agent, session or str(folder))
+        found.append(Speaker(key, agent, "home" if folder == Path.home() else folder.name, tab))
+    if agent == "cursor" and where:  # the editor: its window title ends "<workspace> - Cursor"
+        for window in desktop().windows("cursor"):
+            name = window.title.removesuffix(" - Cursor").rsplit(" - ", 1)[-1]
+            if name and (squash(where) in squash(name) or squash(name) in squash(where)):
+                found.append(Speaker(identity("cursor", f"/{name}")[1], "cursor", name))
+                break
+    return found
+
+
 def switch_to(speaker: Speaker) -> None:
     """Replies go to this agent now, with time to start talking."""
     speaker.save(LAST)
@@ -153,10 +188,19 @@ def route(text: str, last_message: tuple[str, Heard] | None) -> bool:
         return False
     agent, where, forward = switch_request(text)
     target = find(agent, where)
+    if target is None:  # not heard yet: running, though? Found, registered, switched to (2026-11-16)
+        running = discover(agent, where)
+        if len(running) > 1:
+            say(f"I see {len(running)} of {agent.capitalize()}{' in ' + where if where else ''}, so I won't guess. "
+                "Say the folder, or talk to the one you want from its tab once.")
+            return False
+        if running:
+            target = running[0]
+            target.save(SPEAKERS / f"{target.session}.json")
+            log(HANDSFREE_LOG, f"found {target.agent} in {target.where or '?'} running, not yet heard: registered")
     if target is None:
         log(HANDSFREE_LOG, f"heard: route to {agent}, none found")
-        say(f"I can't find {agent.capitalize()}{' in ' + where if where else ''}. "
-            "It has to have spoken through talkback first.")
+        say(f"I can't find {agent.capitalize()}{' in ' + where if where else ''} running.")
         return False
     if not reachable(target):
         current = last_speaker()

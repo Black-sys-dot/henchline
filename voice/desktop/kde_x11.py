@@ -22,6 +22,16 @@ def qdbus(service: str, *args: str) -> str:
 
 
 class Konsole(AnyTerminal):
+    def agent_tabs(self) -> list[tuple[Tab, int]]:
+        found = []
+        services = subprocess.run(["qdbus"], capture_output=True, text=True).stdout.split()
+        for service in (s for s in services if s.startswith("org.kde.konsole")):
+            for session in (s for s in qdbus(service).split() if s.startswith("/Sessions/")):
+                foreground = qdbus(service, session, "foregroundProcessId")
+                if foreground.isdigit() and (p := process(int(foreground))) and p.agent:
+                    found.append((Tab(service, session), int(foreground)))
+        return found
+
     def tab_of_caller(self) -> Tab:
         """KONSOLE_DBUS_SESSION is trusted only when that tab's foreground program is
         one of our ancestors with no Claude daemon in between. Otherwise the tab is
