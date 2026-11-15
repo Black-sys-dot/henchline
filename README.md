@@ -116,7 +116,7 @@ echo "sdk.dir=$HOME/Android/Sdk" > local.properties   # where your SDK is
 ./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-On first Call it asks for the page's address (`https://<laptop's Tailscale name>/`); the ⚙ button changes it, and "Clear voice" (on by default: media sound; off: the phone-call path, muffled but with the phone's call processing). The app trusts only real certificates, so it needs the `tailscale serve` address, not the self-signed fallback (`--host tailscale`).
+On first Call it asks for the page's address (`https://<laptop's Tailscale name>/`); the ⚙ button changes it, and "Clear voice" for the next call (on by default: media sound, with the phone's own echo canceller where it has one; off: the phone-call path, muffled but with the phone's call processing). The Sound button under the talk button switches the current call between the two. The app trusts only real certificates, so it needs the `tailscale serve` address, not the self-signed fallback (`--host tailscale`).
 
 ## License
 

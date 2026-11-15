@@ -68,8 +68,8 @@ class MainActivity : Activity() {
         sound.setOnClickListener {
             val service = CallService.Bus.service ?: return@setOnClickListener
             val toClear = !service.clear
+            if (!service.switchSound(toClear)) return@setOnClickListener  // still switching from the last tap
             prefs().edit().putBoolean("clear", toClear).apply()
-            service.switchSound(toClear)
             showSound(toClear)
             say("", if (toClear) "Sound: clear (media)" else "Sound: call (the phone-call path)", note = true)
         }
@@ -130,7 +130,8 @@ class MainActivity : Activity() {
             hint = "https://laptop.your-tailnet.ts.net/"
         }
         val clear = android.widget.CheckBox(this).apply {
-            text = "Clear voice: media sound, not the muffled phone-call sound. Untick if your voice echoes back."
+            text = "Clear voice (from the next call; the Sound button switches the current one): media sound, " +
+                "not the muffled phone-call sound. Untick if your voice echoes back."
             isChecked = prefs().getBoolean("clear", true)
         }
         val form = LinearLayout(this).apply {

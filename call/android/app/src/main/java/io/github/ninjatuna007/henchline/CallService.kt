@@ -57,7 +57,9 @@ class CallService : Service() {
     // echo of a 22 s clip came back. Off: the phone-call path, its routing and processing
     @Volatile var clear = true
         private set
-    @Volatile private var generation = 0  // the audio threads' round: a switch of sound starts a new one
+    private val generation = java.util.concurrent.atomic.AtomicInteger()  // the audio threads' round
+    private val switching = java.util.concurrent.atomic.AtomicBoolean()  // a sound switch under way: taps wait
+    private val audioLock = Any()  // starting the audio and switching its sound take turns
     private val attributes get() = if (clear) MEDIA else VOICE
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var running = false
@@ -111,16 +113,24 @@ class CallService : Service() {
     }
 
     /** Clear or call sound, mid-call: the audio starts again in the other mode, the connection stays. */
-    fun switchSound(toClear: Boolean) {
+    fun switchSound(toClear: Boolean): Boolean {
+        if (!switching.compareAndSet(false, true)) return false  // a second quick tap: the first is still switching
         Thread {
-            val (mic, speaker) = recorder to player
-            clear = toClear
-            generation++  // the running threads see this and stop
-            mic?.join(1000)
-            speaker?.join(1000)
-            applySound()
-            if (running) startAudio()
+            try {
+                synchronized(audioLock) {
+                    val (mic, speaker) = recorder to player
+                    clear = toClear
+                    generation.incrementAndGet()  // the running threads see this and stop
+                    mic?.join(1000)
+                    speaker?.join(1000)
+                    applySound()
+                    if (running) startAudio()
+                }
+            } finally {
+                switching.set(false)
+            }
         }.start()
+        return true
     }
 
     /** The phone's audio for this sound: call mode and routing, or plain media; focus to match. */
@@ -177,8 +187,8 @@ class CallService : Service() {
         })
     }
 
-    private fun startAudio() {
-        val round = generation
+    private fun startAudio() = synchronized(audioLock) {
+        val round = generation.get()
         // The server logs each sound, so turns can be compared by it (transcription, turn taking)
         socket?.send(org.json.JSONObject().put("sound", if (clear) "clear" else "call").toString())
         recorder = Thread {
@@ -201,7 +211,7 @@ class CallService : Service() {
                     "Clear voice: phone echo canceller ${if (effects.any { it is AcousticEchoCanceler }) "on" else "not available"}").toString())
                 try {
                     mic.startRecording()
-                    while (running && generation == round) {
+                    while (running && generation.get() == round) {
                         val got = mic.read(buffer, 0, buffer.size)
                         if (got < 0) {
                             fail("The microphone stopped working (error $got).")
@@ -230,7 +240,7 @@ class CallService : Service() {
                     .build()
                 try {
                     track.play()
-                    while (running && generation == round) {
+                    while (running && generation.get() == round) {
                         val chunk = heard.poll(200, TimeUnit.MILLISECONDS) ?: continue
                         val written = track.write(chunk, 0, chunk.size)
                         if (written < 0) {

@@ -164,7 +164,11 @@ async def keep_unmuted() -> None:
     """The laptop's mute key mutes every output, the call's two sinks too: the phone then hears nothing and
     hands-free hears nothing from the phone (2026-11-15). They are the call's own plumbing, not speakers,
     so while the call lasts they are unmuted again at once; the laptop's speakers stay muted."""
-    watch = await asyncio.create_subprocess_exec("pactl", "subscribe", stdout=asyncio.subprocess.PIPE)
+    try:
+        watch = await asyncio.create_subprocess_exec("pactl", "subscribe", stdout=asyncio.subprocess.PIPE)
+    except OSError as exc:
+        log(HANDSFREE_LOG, f"call: can't watch for mutes ({exc}): the laptop's mute key would silence this call")
+        return
     try:
         while line := await watch.stdout.readline():
             if b"'change' on sink" not in line:
@@ -176,6 +180,7 @@ async def keep_unmuted() -> None:
     finally:
         if watch.returncode is None:
             watch.terminate()
+            await watch.wait()
 
 
 def flag(path: Path, on: bool) -> None:
