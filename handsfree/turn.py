@@ -23,12 +23,13 @@ from sensing import PER_SECOND, RATE, SPEECH, level
 from talkover import TalkOver, our_own_words
 from voicegate import START_DB
 from voice import whisper
-from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, HANDSFREE_WAV, Phase, log, ptt_busy, release_phase, set_phase,
-                         set_target)
+from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call, log, ptt_busy, release_phase,
+                         set_phase, set_target)
 
 THINK_WINDOW = 180  # seconds after "give me a minute"
 WAIT_FOR_WORDS = 5.0  # after the wake word, seconds to start talking before it gives up
 END_DB, END_FRAMES = 6, 50  # 1.5 s at most END_DB over the floor ends the turn
+CALL_END_FRAMES = 30  # 0.9 s on a phone call: the user found 1.5 s slow there; a longer pause becomes a follow-on
 BELOW_PEAK = 25  # dB under their loudest also counts as quiet, for a noisy room
 OVER_FRAMES = 20  # after 0.6 s of quiet, check whether the last word was "over"
 OVER_TAIL = 4 * PER_SECOND  # frames Whisper looks at for "over"
@@ -83,7 +84,8 @@ class Turn:
         self.show(Mode.RECORDING)
         since, quiet, peak = time.monotonic(), 0, -120.0
         started = heard is not Heard.WOKE  # after "hey Claude" people pause for the chime
-        while quiet < END_FRAMES and time.monotonic() - since < MAX_SECONDS:
+        end = CALL_END_FRAMES if in_call() else END_FRAMES
+        while quiet < end and time.monotonic() - since < MAX_SECONDS:
             samples = self.read()
             if samples is None:
                 break
@@ -100,7 +102,7 @@ class Turn:
             quiet = quiet + 1 if db < max(floor + END_DB, peak - BELOW_PEAK) else 0
             if quiet == OVER_FRAMES and self.ends_with_over(frames):
                 break
-        reason = "over" if quiet == OVER_FRAMES else "pause" if quiet >= END_FRAMES else "limit"
+        reason = "over" if quiet == OVER_FRAMES else "pause" if quiet >= end else "limit"
         log(HANDSFREE_LOG, f"recorded {time.monotonic() - since:.1f}s, ended by {reason} (floor {floor:.0f} dB)")
         return frames
 

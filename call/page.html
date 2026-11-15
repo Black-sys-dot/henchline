@@ -17,6 +17,10 @@
   button.on { background: var(--stop); }
   #state { margin-top: 1rem; min-height: 1.5em; }
   meter { width: 100%; height: 10px; margin-top: .8rem; }
+  #state { font-weight: 600; }
+  #caption { margin-top: .8rem; padding: .8rem 1rem; border-radius: 12px; background: var(--card); text-align: left;
+             min-height: 3em; color: var(--fg); }
+  #caption:empty { display: none; }
 </style>
 </head>
 <body>
@@ -26,19 +30,26 @@
   <button id="call">Call</button>
   <meter id="level" min="0" max="1" value="0"></meter>
   <div id="state">Not connected</div>
+  <div id="caption"></div>
 </main>
 <script>
 // Two small audio worklets: one sends the mic as 16 kHz 16-bit, one plays what the laptop sends (24 kHz 16-bit)
 const worklets = `
 class Mic extends AudioWorkletProcessor {
-  constructor() { super(); this.step = sampleRate / 16000; this.pos = 0; this.buf = []; }
+  // Down to 16 kHz by averaging each output sample's input span: picking single samples aliased
+  // the high frequencies into the voice and Whisper misheard it (2026-11-15)
+  constructor() { super(); this.step = sampleRate / 16000; this.acc = 0; this.n = 0; this.left = this.step; this.buf = []; }
   process([input]) {
     const ch = input[0]; if (!ch) return true;
     let peak = 0;
-    for (; this.pos < ch.length; this.pos += this.step) {
-      const s = Math.max(-1, Math.min(1, ch[Math.floor(this.pos)])); this.buf.push(s * 32767); peak = Math.max(peak, Math.abs(s));
+    for (let i = 0; i < ch.length; i++) {
+      this.acc += ch[i]; this.n++; this.left -= 1;
+      if (this.left <= 0) {
+        const s = Math.max(-1, Math.min(1, this.acc / this.n));
+        this.buf.push(s * 32767); peak = Math.max(peak, Math.abs(s));
+        this.acc = 0; this.n = 0; this.left += this.step;
+      }
     }
-    this.pos -= ch.length;
     if (this.buf.length >= 320) { this.port.postMessage({pcm: Int16Array.from(this.buf).buffer, peak}); this.buf = []; }
     return true;
   }
@@ -61,6 +72,7 @@ class Speaker extends AudioWorkletProcessor {
 registerProcessor('mic', Mic); registerProcessor('speaker', Speaker);`;
 
 const button = document.getElementById('call'), state = document.getElementById('state'), meter = document.getElementById('level');
+const caption = document.getElementById('caption');
 let ws = null, ctx = null, stream = null, wakeLock = null;
 
 async function start() {
@@ -75,7 +87,13 @@ async function start() {
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/call`);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => { state.textContent = 'Connected: talk any time'; button.textContent = 'Hang up'; button.classList.add('on'); };
-  ws.onmessage = (e) => speaker.port.postMessage(e.data, [e.data]);
+  ws.onmessage = (e) => {
+    if (typeof e.data === 'string') {  // what hands-free and the agent are doing, and the agent's words
+      const status = JSON.parse(e.data);
+      state.textContent = status.state;
+      if (status.caption !== undefined) caption.textContent = status.caption;
+    } else speaker.port.postMessage(e.data, [e.data]);
+  };
   ws.onclose = (e) => { stop(); state.textContent = e.reason || 'Call ended'; };
   mic.port.onmessage = (e) => { meter.value = e.data.peak; if (ws.readyState === 1) ws.send(e.data.pcm); };
   try { wakeLock = await navigator.wakeLock.request('screen'); } catch (_) {}
