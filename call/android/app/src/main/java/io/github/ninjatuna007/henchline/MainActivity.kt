@@ -397,8 +397,10 @@ class MainActivity : Activity() {
                     say(from, line.getString("text"), mine = from == "you", session = line.optString("session"), keep = false)
                 if (file != null) fileCard(from, file, line.optString("session"), keep = false)
                 // An agent's text arriving in the chat you're looking at: read at once
-                if (line.has("tid") && line.optString("session") == current && chatScreen.visibility == View.VISIBLE)
-                    Messages.seen(this, current)
+                if (line.optString("session") == current && chatScreen.visibility == View.VISIBLE) {
+                    if (line.has("tid")) Messages.seen(this, current)
+                    markRead(current)
+                }
             }
             status.has("agents") -> showAgents(status)
             status.has("reload") || status.has("delivered") -> showHistory()  // a share was put in the kept chat (UploadService)
@@ -679,10 +681,21 @@ class MainActivity : Activity() {
     private val searchSoon = Runnable { showCrew() }
     private var searched: Pair<String, Map<String, String>>? = null  // a content search's result, for its query
 
+    /** When you last looked at a chat: what its agent said after that is unread (bold in the list). */
+    private fun markRead(session: String) = prefs().edit().putLong("seen_$session", System.currentTimeMillis()).apply()
+
+    /** How many of the agent's lines you haven't seen: read from the file only when the newest one is unseen. */
+    private fun unread(session: String, last: JSONObject?): Int {
+        val seen = prefs().getLong("seen_$session", 0)
+        if (last == null || last.optBoolean("mine") || last.optLong("at") <= seen) return 0
+        return Chats.load(this, session).takeLastWhile { !it.optBoolean("mine") }.count { it.optLong("at") > seen }
+    }
+
     private fun sortMode() = prefs().getString("sort", "recent") ?: "recent"
 
     /** A chat in the list: henchman, project, the agent's name and the last line (or the line a search found). */
     private fun chatRow(session: String, agent: String, project: String, last: JSONObject?, found: String): View {
+        val unread = unread(session, last)
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
@@ -700,17 +713,27 @@ class MainActivity : Activity() {
         }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         top.addView(TextView(this).apply {
             text = last?.optLong("at")?.takeIf { it > 0 }?.let { android.text.format.DateUtils.getRelativeTimeSpanString(it).toString() } ?: ""
-            setTextColor(getColor(R.color.muted)); textSize = 12f
+            setTextColor(getColor(if (unread > 0) R.color.cyan else R.color.muted)); textSize = 12f
         })
         words.addView(top)
-        words.addView(TextView(this).apply {
+        val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        TextView(this).apply {
             val line = found.ifEmpty {
                 last?.let { (if (it.optBoolean("mine")) "You: " else "") + it.optString("text").ifEmpty { "📎 file" } } ?: ""
             }
             text = listOf(agent, line.replace("\n", " ")).filter { it.isNotEmpty() }.joinToString(" · ")
-            setTextColor(getColor(if (found.isNotEmpty()) R.color.cyan else R.color.muted)); textSize = 14f; maxLines = 1
+            setTextColor(getColor(when { found.isNotEmpty() -> R.color.cyan; unread > 0 -> R.color.text; else -> R.color.muted }))
+            textSize = 14f; maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
-        })
+            if (unread > 0) typeface = android.graphics.Typeface.DEFAULT_BOLD  // unread: something to look at
+        }.let { line -> bottom.addView(line, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)) }
+        if (unread > 0) bottom.addView(TextView(this).apply {  // the count, as a messaging app shows it
+            text = if (unread > 99) "99+" else unread.toString()
+            setTextColor(getColor(R.color.navy)); textSize = 12f; typeface = android.graphics.Typeface.DEFAULT_BOLD
+            gravity = Gravity.CENTER; minWidth = dp(22); setPadding(dp(6), dp(1), dp(6), dp(1))
+            background = GradientDrawable().apply { setColor(getColor(R.color.cyan)); cornerRadius = dp(11).toFloat() }
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
+        words.addView(bottom)
         row.addView(words, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         return row
     }
@@ -734,7 +757,7 @@ class MainActivity : Activity() {
         }
         showCrew()
         show(chatScreen)
-        if (current.isNotEmpty()) Messages.seen(this, current)  // opened: its agents' texts are read
+        if (current.isNotEmpty()) { Messages.seen(this, current); markRead(current) }  // opened: read
     }
 
     /** Pull down on the list: the laptop looks for every agent running (as "switch me to" does) and lists them. */
@@ -811,7 +834,10 @@ class MainActivity : Activity() {
     /** The current agent's kept chat, from the start: on opening the app, and on switching agents. */
     private fun showHistory() {
         chat.removeAllViews()
-        if (current.isNotEmpty() && chatScreen.visibility == View.VISIBLE) Messages.seen(this, current)  // you're looking
+        if (current.isNotEmpty() && chatScreen.visibility == View.VISIBLE) {  // you're looking: read
+            Messages.seen(this, current)
+            markRead(current)
+        }
         for (line in Chats.load(this, current)) {
             val file = line.optJSONObject("file")
             if (file != null) fileCard(line.optString("from"), file, current, keep = false)
