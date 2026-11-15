@@ -46,7 +46,8 @@ from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
 RING_TOPIC = Path.home() / ".config/ptt/ntfy-topic"  # the user's own ntfy topic: never printed or logged
 RING_SERVER = "https://ntfy.sh"
 RING_EVERY = 120  # seconds: an agent can't keep ringing
-RING_WAIT = 40  # seconds a ring waits for the answer: the phone rings for 30, and connecting takes a few
+RING_WAIT = 60  # seconds a ring waits for the answer: it rings for 30, and on a locked phone Answer connects
+               # only once it is unlocked
 RANG = Path.home() / ".local/state/ptt/call.rang"  # when the user was last rung
 
 
@@ -60,18 +61,17 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
     if not now and RANG.exists() and time.time() - RANG.stat().st_mtime < RING_EVERY:
         print(f"rang less than {RING_EVERY} s ago; not again yet (--now if the user asked for it)")
         return 1
-    try:
+    try:  # only for the ntfy fallback and the missed call: Henchline's push address works without it
         topic = RING_TOPIC.read_text().strip()
     except OSError:
-        print(f"no ntfy topic in {RING_TOPIC}: put the topic your phone's ntfy app follows there")
-        return 1
+        topic = ""
     speaker = last_speaker()
     who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
     if not (ring_henchline(speaker.agent if speaker else "handsfree", why, who)
-            or ntfy(topic, f"{who} is calling", why or "Tap Answer to talk.",
+            or topic and ntfy(topic, f"{who} is calling", why or "Tap Answer to talk.",
                     {"Priority": "high", "Tags": "telephone", "Click": "henchline://call",
                      "Actions": "view, Answer, henchline://call, clear=true"})):
-        print("couldn't ring")
+        print("couldn't ring" + ("" if topic else f": no Henchline push address, and no ntfy topic in {RING_TOPIC}"))
         return 1
     RANG.parent.mkdir(parents=True, exist_ok=True)
     RANG.touch()
@@ -86,7 +86,8 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
             print("answered")
             return 0
         time.sleep(1)
-    ntfy(topic, f"Missed call from {who}", why or "They wanted to talk.", {"Tags": "telephone_receiver"})
+    if topic:
+        ntfy(topic, f"Missed call from {who}", why or "They wanted to talk.", {"Tags": "telephone_receiver"})
     log(HANDSFREE_LOG, f"no answer to {who}'s call: left a missed call")
     print("no answer (a missed call was left in ntfy)")
     return 2
@@ -116,6 +117,7 @@ def ntfy(topic: str, title: str, message: str, headers: dict[str, str]) -> bool:
     except (OSError, ValueError) as exc:
         print(f"ntfy failed: {exc.__class__.__name__}")
         return False
+
 
 def run() -> int:
     cfg = whisper.Config.load(HANDSFREE_LOG)
