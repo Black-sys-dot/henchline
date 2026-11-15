@@ -89,19 +89,25 @@ class RingService : PushService() {
                 .setAction(RingActions.DECLINE).putExtra(IncomingActivity.REPLY, reply),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val name = IncomingActivity.nameOf(agent)
-            val caller = android.app.Person.Builder().setName(name)
-                .setIcon(android.graphics.drawable.Icon.createWithResource(context, MainActivity.avatarOf(flavour)))
-                .setImportant(true).build()
             val ring = Notification.Builder(context, channel)
                 .setSmallIcon(R.drawable.ic_notify)
                 .setContentTitle("$name is calling")
                 .setContentText(why.ifEmpty { "Your crew wants to talk." })
                 .setCategory(Notification.CATEGORY_CALL)
-                .setStyle(Notification.CallStyle.forIncomingCall(caller, decline, answer))
                 .setFullScreenIntent(open, true)
                 .setContentIntent(open)
                 .setOngoing(true)
                 .setTimeoutAfter(RING_SECONDS * 1000)
+                .apply {
+                    if (android.os.Build.VERSION.SDK_INT >= 31) {  // a call's own banner: Android 12 and later
+                        val caller = android.app.Person.Builder().setName(name).setImportant(true)
+                            .setIcon(android.graphics.drawable.Icon.createWithResource(context, MainActivity.avatarOf(flavour))).build()
+                        setStyle(Notification.CallStyle.forIncomingCall(caller, decline, answer))
+                    } else {
+                        addAction(Notification.Action.Builder(null, "Decline", decline).build())
+                        addAction(Notification.Action.Builder(null, "Answer", answer).build())
+                    }
+                }
                 .build()
             if (inUse) ring.flags = ring.flags or Notification.FLAG_INSISTENT  // the tone repeats until answered
             manager.notify(NOTIFICATION, ring)

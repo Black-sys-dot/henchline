@@ -22,6 +22,7 @@ import asyncio
 import json
 import os
 import re
+import secrets
 import shutil
 import ssl
 import subprocess
@@ -53,6 +54,7 @@ STATUS_EVERY = 0.2  # seconds between looks at what hands-free and talkback are 
 AGENTS_EVERY = 3.0  # seconds between looks at which agents can be switched to
 RING_HOSTS = ("ntfy.sh",)  # where Henchline's UnifiedPush addresses may live: the ntfy app's server
 RINGER_FRESH = 180  # seconds a ring stays the one a call answers (it rings 30; Answer may wait for an unlock)
+MAX_UPLOAD = 16 * 1024 ** 3  # bytes in one shared file: a long video fits
 KEEP_FREE = 2 * 1024 ** 3  # bytes an upload leaves free on the laptop's disk: past that it is refused
 HANGUP_SAY, HANGUP_MAX = 0.5, 10.0  # a hang-up waits for talkback to finish (its queue empty, nothing playing),
 # at least this long for the goodbye to be queued, and at most this: past it the call ends even mid-sentence
@@ -70,7 +72,6 @@ class Status:
         self.since = time.time()
         self.waiting_for = ""  # the agent a message went to, until it starts speaking
         self.clip = ""  # the clip last put in the chat
-        self.files_since = time.time()  # files agents send from now on are shown
 
     def events(self) -> list[dict]:
         """New chat lines: what an agent started saying, and that a spoken message went out."""
@@ -88,8 +89,8 @@ class Status:
             self.clip = playing.clip
             lines.append({"chat": {"from": playing.agent.capitalize(), "text": playing.text,
                                    "session": playing.session}})
-        for meta in files.sent_since(self.files_since):  # `handsfree send`: a file in the chat
-            self.files_since = meta["at"]
+        for meta in files.undelivered():  # `handsfree send`: a file in the chat, or one that never reached the phone
+            files.delivered(meta)
             lines.append({"chat": {"from": meta["agent"].capitalize(), "text": meta["text"], "session": meta["session"],
                                    "file": {"url": files.link(meta), "name": meta["name"], "type": meta["type"],
                                             "size": meta["size"]}}})
@@ -317,20 +318,28 @@ async def share_file(request: web.Request) -> web.Response:
     Nothing is overwritten, and an upload that would leave under KEEP_FREE on the disk is refused."""
     trusted(request)
     folder = files.inbox_today()
-    path = files.unused(folder, files.safe_name(request.query.get("name", "file")))
-    part = path.with_name(f".{path.name}.part")
+    name = files.safe_name(request.query.get("name", "file"))
+    part = folder / f".{secrets.token_hex(8)}.part"  # its own: two uploads of one name don't share it
     size = 0
     try:
-        with part.open("wb") as out:
+        with part.open("xb") as out:
             while chunk := await request.content.read(1 << 20):
                 size += len(chunk)
+                if size > MAX_UPLOAD:
+                    raise OSError(f"bigger than {files.size_text(MAX_UPLOAD)}")
                 if size % (64 << 20) < len(chunk) and shutil.disk_usage(folder).free < KEEP_FREE:
                     raise OSError("the laptop's disk is nearly full")
                 out.write(chunk)
         if shutil.disk_usage(folder).free < KEEP_FREE:
             raise OSError("the laptop's disk is nearly full")
-        path = files.unused(folder, path.name)  # another upload of the same name may have finished meanwhile
-        part.rename(path)
+        while True:  # a link never replaces a file: another upload of the same name may land meanwhile
+            path = files.unused(folder, name)
+            try:
+                os.link(part, path)
+                break
+            except FileExistsError:
+                continue
+        part.unlink()
     except (OSError, ConnectionError) as exc:
         part.unlink(missing_ok=True)
         log(HANDSFREE_LOG, f"call: a shared file didn't arrive whole ({exc})")
@@ -365,9 +374,7 @@ async def sent_file(request: web.Request) -> web.StreamResponse:
     path = files.find(request.match_info["secret"], request.match_info["name"])
     if not path:
         raise web.HTTPNotFound()
-    quoted = urllib.parse.quote(path.name)
-    return web.FileResponse(path, headers={"Content-Type": files.kind(path),
-                                           "Content-Disposition": f"inline; filename*=UTF-8''{quoted}"})
+    return web.FileResponse(path, headers=files.headers(path))
 
 
 async def call(request: web.Request) -> web.WebSocketResponse:

@@ -18,6 +18,7 @@ import re
 import secrets
 import shutil
 import time
+import urllib.parse
 from pathlib import Path
 
 from voice.state import INBOX, OUTBOX, read_json
@@ -67,7 +68,7 @@ def post(path: Path, words: str, agent: str, session: str) -> dict:
     except OSError:  # another disk, or a file system without links
         shutil.copyfile(path, copy)
     meta = {"secret": secret, "name": copy.name, "type": kind(copy), "size": copy.stat().st_size,
-            "text": words, "agent": agent, "session": session, "at": time.time()}
+            "text": words, "agent": agent, "session": session, "at": time.time(), "delivered": False}
     (folder / "meta.json").write_text(json.dumps(meta))
     return meta
 
@@ -77,10 +78,29 @@ def link(meta: dict) -> str:
     return f"/files/{meta['secret']}/{meta['name']}"
 
 
-def sent_since(since: float) -> list[dict]:
-    """The files agents sent after `since`, oldest first."""
+def undelivered() -> list[dict]:
+    """The files agents sent that the phone hasn't been shown yet (no call was up, and the push didn't reach
+    it), oldest first: the next call's chat shows them."""
     metas = [read_json(meta) for meta in OUTBOX.glob("*/meta.json")]
-    return sorted((m for m in metas if m and m.get("at", 0) > since), key=lambda m: m["at"])
+    return sorted((m for m in metas if m and not m.get("delivered")), key=lambda m: m["at"])
+
+
+def delivered(meta: dict) -> None:
+    meta["delivered"] = True
+    (OUTBOX / meta["secret"] / "meta.json").write_text(json.dumps(meta))
+
+
+# Where credentials live: an agent steered by something it read must not be able to put these on the phone
+PRIVATE = (".ssh", ".gnupg", ".aws", ".kube", ".docker", ".password-store", ".config/notify-user", ".config/ptt",
+           ".local/share/keyrings", ".mozilla", ".config/google-chrome", ".config/chromium", ".netrc", ".pgpass")
+
+
+def private(path: Path) -> bool:
+    """A file under one of PRIVATE, a key or certificate, or one only its owner may read in a folder of secrets."""
+    path, home = path.resolve(), Path.home().resolve()
+    if any(path == home / p or home / p in path.parents for p in PRIVATE):
+        return True
+    return path.suffix in (".pem", ".key", ".p12", ".pfx", ".kdbx") or path.name.startswith("id_")
 
 
 def find(secret: str, name: str) -> Path | None:
@@ -89,6 +109,21 @@ def find(secret: str, name: str) -> Path | None:
         return None
     path = OUTBOX / secret / name
     return path if name != "meta.json" and path.is_file() else None
+
+
+# Shown in the browser only these: anything else (HTML, SVG, XML, scripts…) would run on the call page's own
+# address, where it could open the call's connection and type to the agents. They download instead
+INLINE = re.compile(r"(image/(png|jpeg|gif|webp|heic|avif|bmp)|audio/[\w.+-]+|video/[\w.+-]+)")
+
+
+def headers(path: Path) -> dict[str, str]:
+    """How a sent file is served: pictures, audio and video shown, sandboxed; everything else a download."""
+    quoted = urllib.parse.quote(path.name)
+    safe = {"X-Content-Type-Options": "nosniff", "Content-Security-Policy": "sandbox; default-src 'none'"}
+    if INLINE.fullmatch(kind(path)):
+        return {**safe, "Content-Type": kind(path), "Content-Disposition": f"inline; filename*=UTF-8''{quoted}"}
+    return {**safe, "Content-Type": "application/octet-stream",
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quoted}"}
 
 
 def clean() -> None:

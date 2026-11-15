@@ -144,6 +144,9 @@ def send(args: list[str]) -> int:
     paths = []
     while args and Path(args[0]).expanduser().is_file():
         paths.append(Path(args.pop(0)).expanduser())
+    if refused := [p for p in paths if files.private(p)]:
+        print(f"not sent: {', '.join(map(str, refused))} looks like keys or credentials, which stay on the laptop")
+        return 1
     if not paths:
         print("usage: handsfree send FILE [FILE ...] [WORDS]  (no such file: " + (args[0] if args else "none given") + ")")
         return 1
@@ -165,16 +168,17 @@ def send(args: list[str]) -> int:
         body = {"agent": agent, "why": meta["text"], "file": {"url": url, "name": meta["name"],
                                                              "type": meta["type"], "size": meta["size"]}}
         if CALL_RING.exists() and push(json.dumps(body).encode()):
+            files.delivered(meta)
             pushed += 1
-            continue
+    if pushed < len(metas):  # kept for the next call's chat; ntfy only says so, the link (a secret) stays here
         topic = RING_TOPIC.read_text().strip() if RING_TOPIC.exists() else ""
-        if topic and ntfy(topic, f"{agent.capitalize()} sent you {meta['name']}",
-                          meta["text"] or f"{files.size_text(meta['size'])}: tap to open (needs Tailscale on)",
-                          {"Click": url, "Tags": "paperclip"}):
-            pushed += 1
-    log(HANDSFREE_LOG, f"{agent} sent {pushed} of {len(metas)} file(s) to the phone")
-    print(f"sent {pushed} of {len(metas)} to the phone as notifications" if pushed else "couldn't reach the phone")
-    return 0 if pushed == len(metas) else 1
+        if topic:
+            ntfy(topic, f"{agent.capitalize()} sent you {len(metas) - pushed} file(s)",
+                 "They'll be in the chat when you next call from Henchline (kept a week).", {"Tags": "paperclip"})
+    log(HANDSFREE_LOG, f"{agent} sent {len(metas)} file(s), {pushed} pushed to the phone")
+    print(f"pushed {pushed} of {len(metas)} to the phone as notifications"
+          + ("; the rest show in the chat on the next call" if pushed < len(metas) else ""))
+    return 0 if pushed == len(metas) else 2
 
 
 def push(body: bytes) -> bool:
