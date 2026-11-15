@@ -867,6 +867,7 @@ class MainActivity : Activity() {
     private fun showHistory() {
         chat.removeAllViews()
         myBubbles.clear()
+        sentBubbles.clear()  // their views are gone with the old rows
         val history = Chats.load(this, current)
         val lastAgent = history.indexOfLast { !it.optBoolean("mine") && it.optString("from").isNotEmpty() }
         if (current.isNotEmpty() && chatScreen.visibility == View.VISIBLE && sheet?.isOpen != true) {  // you're looking: read
