@@ -349,6 +349,8 @@ def voice_note(transcriber: whisper.Transcriber, meta_path: Path) -> None:
                    private=True)
         wav.unlink(missing_ok=True)
         return
+    # Taken: the call server's status check no longer drops it as stale while it is transcribed
+    write_json(meta_path, {**meta, "status": "transcribing"}, private=True)
     try:
         plain, rich = transcriber.file(wav)
     except Exception as exc:  # a bad file, or Whisper failing: said, not left waiting
@@ -358,6 +360,8 @@ def voice_note(transcriber: whisper.Transcriber, meta_path: Path) -> None:
     target = next((s for s in recent_speakers() if s.session == meta.get("session")), None)
     if not plain.strip():
         result = {"status": "failed", "note": "Nothing heard in it."}
+    elif time.time() - meta.get("at", 0) > VOICE_NOTE_STALE + 25:  # transcribed after the phone gave up (180 s)
+        result = {"status": "failed", "text": plain, "note": "Not sent: transcribed too late."}
     elif not target or not routing.reachable(target):
         result = {"status": "failed", "text": plain, "note": "That agent isn't reachable."}
     elif routing.deliver(rich or plain, routing.Heard.VOICE_NOTE, to=target):

@@ -465,7 +465,7 @@ async def voice_note(request: web.Request) -> web.Response:
     if not any(s.session == session for s in recent_speakers()):
         return web.json_response({"note": "That agent isn't known to the laptop."}, status=400)
     VOICE_NOTES.mkdir(parents=True, exist_ok=True)
-    if sum(1 for m in VOICE_NOTES.glob("*.json") if read_json(m).get("status") == "waiting") >= 5:
+    if sum(1 for m in VOICE_NOTES.glob("*.json") if read_json(m).get("status") in ("waiting", "transcribing")) >= 5:
         return web.json_response({"note": "Too many voice messages waiting."}, status=429)
     nid = secrets.token_hex(8)
     wav = VOICE_NOTES / f"{nid}.wav"
