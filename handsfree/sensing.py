@@ -221,6 +221,7 @@ class Wake:
         self.due = 0  # 30 ms frames still to take in before the nominated words are checked
         self.word = ""  # the word Whisper confirmed last
         self.near: float | None = None  # how near the nearest heard word came to an unhinted name
+        self.unchecked = False  # the last wake stood on a trusted detector and a voice, not on Whisper
 
     @classmethod
     def available(cls) -> Wake | None:
@@ -258,11 +259,9 @@ class Wake:
         self.word = "/".join(words)
         hints = " ".join(d.word for d in self.detectors if d.hint and d.word in words) or None
         audio = np.concatenate(self.ring).astype(np.float32) / 32768
-        self.near = None
+        self.near, self.unchecked = None, False
         trusted = [d.word for d in self.detectors if d.trusted and d.word in words]
-        if trusted and get_speech_timestamps(audio, SPEECH):  # a voice, not a bang: the detector's word stands
-            self.word = trusted[0]
-            return True
+        voice = bool(trusted) and bool(get_speech_timestamps(audio, SPEECH))
         segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=False, hotwords=hints)
         text = " ".join(seg.text for seg in segments)
         close = {d.word for d in self.detectors if not d.hint}  # unhinted names are spelled freely; "Claude" exact
@@ -271,6 +270,9 @@ class Wake:
         self.word = heard or self.word
         # A number, never the words: how near a rejected unhinted name came, to tune CLOSE from the room
         self.near = max((closeness(word, text) for word in words if word in close), default=None)
+        if not heard and voice:  # a voice, not a bang: the trusted detector's word stands; Whisper only shadows,
+            self.word, self.unchecked = trusted[0], True  # so the log shows how often it would have said no
+            return True
         return bool(heard)
 
 

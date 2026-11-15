@@ -280,7 +280,9 @@ class Listener:
             near = f", nearest {self.wake.near:.2f}" if self.wake.near is not None else ""
             log(HANDSFREE_LOG, f"wake candidate rejected ({self.wake.word}{near})")
             return False
-        log(HANDSFREE_LOG, f"woke ({self.wake.word})")
+        unchecked = f", word not heard by Whisper (nearest {self.wake.near:.2f}), detector trusted" \
+            if self.wake.unchecked else ""
+        log(HANDSFREE_LOG, f"woke ({self.wake.word}{unchecked})")
         self.turn([], Heard.WOKE, floor)
         return True
 
