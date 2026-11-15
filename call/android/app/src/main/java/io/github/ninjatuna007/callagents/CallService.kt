@@ -52,6 +52,7 @@ class CallService : Service() {
     private var focus: AudioFocusRequest? = null
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var running = false
+    @Volatile private var ended = false  // the screen was already told why the call ended
     private val heard = LinkedBlockingDeque<ByteArray>()  // the agents' voices, waiting to be played
     private val audio by lazy { getSystemService(AudioManager::class.java) }
 
@@ -95,7 +96,7 @@ class CallService : Service() {
         wakeLock?.let { if (it.isHeld) it.release() }
         Bus.connected = false
         Bus.service = null
-        Bus.listener?.invoke("""{"closed": "Call ended"}""")
+        if (!ended) Bus.listener?.invoke("""{"closed": "Call ended"}""")
         super.onDestroy()
     }
 
@@ -131,8 +132,7 @@ class CallService : Service() {
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 webSocket.close(1000, null)
-                Bus.listener?.invoke(org.json.JSONObject().put("closed", reason.ifEmpty { "Call ended" }).toString())
-                stopSelf()
+                fail(reason.ifEmpty { "Call ended" })  // "busy: another call is up", or the server stopping
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
@@ -207,6 +207,8 @@ class CallService : Service() {
 
     /** End the call with a reason the screen shows; safe from any thread. */
     private fun fail(why: String) {
+        if (ended) return
+        ended = true
         Bus.listener?.invoke(org.json.JSONObject().put("closed", why).toString())
         android.os.Handler(mainLooper).post { stopSelf() }
     }
