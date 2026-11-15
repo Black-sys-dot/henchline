@@ -64,7 +64,7 @@ PHONE_MIC_MONITOR, PHONE_SPEAKER_MONITOR = f"{PHONE_MIC}.monitor", f"{PHONE_SPEA
 DEFAULT_SINK, DEFAULT_MONITOR = "@DEFAULT_SINK@", "@DEFAULT_MONITOR@"
 
 
-SENT = STATE / "handsfree.sent"  # the last message hands-free delivered: to whom and how heard, never the words
+SENT = STATE / "handsfree.sent"  # the last message hands-free delivered: to whom and how heard; the words only during a call
 
 
 @dataclass
@@ -83,6 +83,8 @@ class Sent:
     def last(cls) -> Sent | None:
         data = read_json(SENT)
         known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}  # newer fields: left out
+        if not in_call():  # words left by a delivery racing the call's end are never read as said on a call
+            known.pop("words", None)
         return cls(**known) if known.keys() >= {"agent", "heard", "at"} else None
 
     def save(self) -> None:
@@ -173,8 +175,8 @@ def read_json(path: Path) -> dict:
 def write_json(path: Path, data: dict, private: bool = False) -> None:
     """Write whole or not at all: readers never see half a file. `private`: readable by this user only."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.parent / f".{path.name}.tmp"
-    tmp.unlink(missing_ok=True)  # so a private file is created 0600, never left with an older mode
+    # Its own name: the call server and hands-free both write some files, and must not share one temp file
+    tmp = path.parent / f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp"
     with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600 if private else 0o644), "w") as out:
         out.write(json.dumps(data))
     tmp.replace(path)

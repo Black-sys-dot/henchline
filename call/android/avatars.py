@@ -94,7 +94,8 @@ def boss():
     out += stripes(bezier((25, 62), (38, 70.5), (70, 70.5), (83, 61)), bezier((26, 78), (38, 87), (70, 87), (82, 77)), 11)
     out.append(("path", dict(d="M27,70.5 C39,78.5 69,78.5 82.5,69.5", stroke="#000000", sw=1.2, alpha=0.2)))
     out += [("ellipse", dict(cx=25.6, cy=70, rx=3.6, ry=8, fill=GREY)), ("ellipse", dict(cx=82.4, cy=69, rx=3.6, ry=8, fill=GREY))]
-    return out
+    # Zoomed in on the face (the user's wish, 2026-11-15): the shoulders and scarf still in, cut by the circle
+    return out[:2] + [("group", dict(scale=1.3, px=54, py=40, items=out[2:]))]
 
 
 def circle_path(cx, cy, r):
@@ -118,7 +119,11 @@ def svg(items, top=True):
         if kind == "clip":
             body.append(f'<clipPath id="round"><path d="{a["d"]}"/></clipPath>')
         elif kind == "group":
-            body.append(f'<g transform="translate(0,{a["dy"]})">' + svg(a["items"], False) + "</g>")
+            if "scale" in a:
+                z, px, py = a["scale"], a["px"], a["py"]
+                body.append(f'<g transform="translate({px},{py}) scale({z}) translate({-px},{-py})">' + svg(a["items"], False) + "</g>")
+            else:
+                body.append(f'<g transform="translate(0,{a["dy"]})">' + svg(a["items"], False) + "</g>")
         elif kind == "ellipse":
             body.append(f'<ellipse cx="{a["cx"]}" cy="{a["cy"]}" rx="{a["rx"]}" ry="{a["ry"]}" fill="{a["fill"]}"/>')
         elif kind == "circle":
@@ -144,8 +149,9 @@ def vector_paths(items):
         if kind == "clip":
             paths.append(f'<clip-path android:pathData="{a["d"]}" />')
         elif kind == "group":
-            paths.append(f'<group android:translateY="{a["dy"]}">\n        ' + "\n        ".join(vector_paths(a["items"]))
-                         + "\n    </group>")
+            how = (f'android:pivotX="{a["px"]}" android:pivotY="{a["py"]}" android:scaleX="{a["scale"]}" '
+                   f'android:scaleY="{a["scale"]}"' if "scale" in a else f'android:translateY="{a["dy"]}"')
+            paths.append(f'<group {how}>\n        ' + "\n        ".join(vector_paths(a["items"])) + "\n    </group>")
         elif kind == "ellipse":
             paths.append(f'<path android:fillColor="{a["fill"]}" android:pathData="{ellipse_path(a["cx"], a["cy"], a["rx"], a["ry"])}" />')
         elif kind == "circle":

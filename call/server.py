@@ -41,7 +41,7 @@ from voice import files  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_ORIGIN, CALL_PORT, CALL_PUSH,  # noqa: E402
                          CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
-                         PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SPEAKERS,
+                         PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SENT, SPEAKERS,
                          SPOOL, Sent, Speaker, in_call, last_speaker, log, phase_now, read_json,
                          recent_speakers, turn_on_handsfree, write_json)
 
@@ -65,7 +65,7 @@ class Status:
 
     Read from the shared state: hands-free's mode, the phase, the clip
     playing, and the record of the last message delivered (to whom, how
-    heard, never the words). The agents' own words become chat.
+    heard, and during a call the words as heard). The agents' own words become chat.
     """
 
     def __init__(self) -> None:
@@ -219,6 +219,17 @@ def route_to_ringer(reply: str) -> None:
     where = f"so your words go to {now.spoken()}. Say switch me to, to change" if now else "so pick someone: say switch me to"
     routing.say(f"{name} rang, but I can't type to it yet, {where}.")
     log(HANDSFREE_LOG, f"call: answering {name}'s ring, but it can't be reached yet")
+
+
+def blank_words() -> None:
+    """The record of the last delivery keeps the words only during a call: blanked when one starts and ends.
+    Sent.last never returns words outside a call, so a delivery racing the end shows nothing either."""
+    try:
+        data = read_json(SENT)
+        if data.get("words"):
+            write_json(SENT, {**data, "words": ""}, private=True)
+    except OSError as exc:
+        log(HANDSFREE_LOG, f"call: couldn't blank the last message's words ({exc})")
 
 
 def flag(path: Path, on: bool) -> None:
@@ -394,6 +405,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             "parec", "--raw", f"--device={PHONE_SPEAKER_MONITOR}", "--format=s16le", f"--rate={SPEAKER_RATE}",
             "--channels=1", "--latency-msec=40", "--client-name=phone-call", stdout=asyncio.subprocess.PIPE)
         CALL_HANGUP.unlink(missing_ok=True)  # a hang-up asked for when no call was up is not for this one
+        blank_words()  # words a killed server never blanked
         write_json(CALL, {"from": request.remote or "", "pid": os.getpid(),
                           "cmdline": Path("/proc/self/cmdline").read_text()})
         await asyncio.get_running_loop().run_in_executor(None, turn_on_handsfree, False)  # with talkback
@@ -457,9 +469,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             shower.cancel()
             unmuter.cancel()
             CALL.unlink(missing_ok=True)  # hands-free and talkback go back to the laptop first
-            if (sent := Sent.last()) and sent.words:  # the call's words don't outlast it
-                sent.words = ""
-                sent.save()
+            blank_words()  # the call's words don't outlast it
             for proc in (mic, speaker):
                 if proc.returncode is None:
                     try:
