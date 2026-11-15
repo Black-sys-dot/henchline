@@ -36,6 +36,10 @@ object Messages {
     fun show(context: Context, agent: String, session: String, text: String) {
         Chats.add(context, session, JSONObject().put("from", IncomingActivity.nameOf(agent)).put("text", text).put("mine", false))
         post(context, agent, session)
+        // The app open on that chat shows it at once, as a line from a call would (2026-11-15: a text reached the
+        // notification and the kept chat, but the open screen didn't redraw)
+        CallService.Bus.listener?.invoke(JSONObject().put("chat", JSONObject().put("from", IncomingActivity.nameOf(agent))
+            .put("text", text).put("session", session)).toString())
     }
 
     /** The notification for that session, from its kept chat: the latest lines, yours and the agent's. */
