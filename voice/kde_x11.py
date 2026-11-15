@@ -9,12 +9,9 @@ import subprocess
 import time
 from pathlib import Path
 
-from voice import x11
-from voice.agents import CLAUDE_DAEMON, ancestors, cmdline_has, nearest_agent, process, terminal_foreground
-from voice.desktop import Desktop, Tab, Terminals, Window
-
-KEYS = {"ctrl": x11.CONTROL, "shift": x11.SHIFT, "alt": x11.ALT, "return": x11.RETURN, "f12": x11.F12, "v": x11.V}
-SHELLS = {"bash", "zsh", "fish", "sh", "dash", "ksh", "tcsh"}
+from voice.agents import CLAUDE_DAEMON, SHELLS, ancestors, cmdline_has, comm, nearest_agent, process
+from voice.desktop import Tab, Window
+from voice.generic_x11 import AnyTerminal, GenericX11
 KLIPPER = ("org.kde.klipper", "/klipper")
 TYPE_PAUSE = 0.15  # seconds between the text and its Enter, so Konsole takes them in order
 
@@ -23,11 +20,7 @@ def qdbus(service: str, *args: str) -> str:
     return subprocess.run(["qdbus", service, *args], capture_output=True, text=True).stdout.strip()
 
 
-def comm(pid: int | str) -> str:
-    return Path(f"/proc/{pid}/comm").read_text().strip()
-
-
-class Konsole(Terminals):
+class Konsole(AnyTerminal):
     def tab_of_caller(self) -> Tab:
         """KONSOLE_DBUS_SESSION is trusted only when that tab's foreground program is
         one of our ancestors with no Claude daemon in between. Otherwise the tab is
@@ -68,37 +61,25 @@ class Konsole(Terminals):
         return True
 
     def only_a_shell(self, window: Window) -> bool:
+        if not window.is_app("konsole"):
+            return super().only_a_shell(window)  # another terminal: its one shell child's foreground job
         try:
-            if window.is_app("konsole"):
-                service = f"org.kde.konsole-{window.pid}"
-                windows = [p for p in qdbus(service).split() if re.fullmatch(r"/Windows/\d+", p)]
-                if len(windows) != 1:
-                    return False
-                tab = qdbus(service, windows[0], "currentSession")
-                fg = int(qdbus(service, f"/Sessions/{tab}", "foregroundProcessId"))
-            else:  # another terminal: its one shell child, and that shell's foreground job
-                children = Path(f"/proc/{window.pid}/task/{window.pid}/children").read_text().split()
-                shells = [c for c in children if comm(c) in SHELLS]
-                if len(shells) != 1:
-                    return False
-                fg = terminal_foreground(int(shells[0]))
-            return comm(fg) in SHELLS
+            service = f"org.kde.konsole-{window.pid}"
+            windows = [p for p in qdbus(service).split() if re.fullmatch(r"/Windows/\d+", p)]
+            if len(windows) != 1:
+                return False
+            tab = qdbus(service, windows[0], "currentSession")
+            return comm(int(qdbus(service, f"/Sessions/{tab}", "foregroundProcessId"))) in SHELLS
         except (OSError, ValueError, IndexError):
             return False
 
 
-class KdeX11(Desktop):
+class KdeX11(GenericX11):
+    """Plain X11 windows and keys, with KDE's clipboard (Klipper) and terminal (Konsole)."""
+
     def __init__(self) -> None:
-        os.environ.setdefault("DISPLAY", ":0")  # xprop and Xlib, when started outside the session
-        self.terminals = Konsole()
-
-    def focused(self) -> Window:
-        wid = x11.active_window()
-        return Window(wid, x11.window_class(wid), x11.window_role(wid), x11.window_pid(wid) if wid else 0)
-
-    def windows(self, app: str) -> list[Window]:
-        return [Window(wid, cls, title=x11.window_title(wid)) for wid in x11.windows()
-                if f'"{app}"' in (cls := x11.window_class(wid))]
+        super().__init__()
+        self.terminals = Konsole(self)
 
     def set_clipboard(self, text: str) -> bool:
         """Through Klipper, KDE's clipboard, and checked."""
@@ -106,18 +87,3 @@ class KdeX11(Desktop):
         if subprocess.run(["qdbus", *KLIPPER, "setClipboardContents", text], capture_output=True).returncode != 0:
             return False
         return qdbus(*KLIPPER, "getClipboardContents") == text.strip()
-
-    def press(self, *keys: str) -> None:
-        with x11.Display() as display:
-            display.press(*(KEYS[key.lower()] for key in keys))
-
-    def raise_window(self, window_id: str) -> None:
-        with x11.Display() as display:
-            display.raise_window(window_id)
-
-    def is_front(self, window_id: str) -> bool:
-        focused = x11.active_window()
-        return bool(focused) and int(focused, 16) == int(window_id, 16)  # xprop and the client list pad ids differently
-
-    def prepare_threads(self) -> None:
-        x11.init_threads()

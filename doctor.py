@@ -22,6 +22,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))  # voice/state.py: standard library only
+from voice.desktop import kde_session  # noqa: E402
 from voice.state import EC_CONF as CANCELLER_CONF, EC_SOURCE, KOKORO_MODELS as KOKORO, VENV, WAKE_MODEL  # noqa: E402
 
 HOME = Path.home()
@@ -83,7 +84,8 @@ def check(piece: str, what: str, ok: bool, detail: str = "", fix: str = "", warn
 
 def common() -> list[Check]:
     session = os.environ.get("XDG_SESSION_TYPE", "")
-    rc, klipper = run("qdbus", "org.kde.klipper", "/klipper", "getClipboardContents")
+    kde = kde_session()
+    rc, klipper = run("qdbus", "org.kde.klipper", "/klipper", "getClipboardContents") if kde else (1, "")
     return [
         check("all", "X11 session", session in ("x11", ""), session or "unknown",
               "log in to the Plasma (X11) session; Wayland is not supported yet"),
@@ -92,7 +94,9 @@ def common() -> list[Check]:
               (VENV / "system/PyQt5").exists() and (VENV / "system/evdev").exists(), "",
               "sudo apt install python3-pyqt5 python3-evdev && ./install.sh ptt"),
         check("all", "Klipper clipboard (KDE)", rc == 0, "" if rc == 0 else klipper[:80],
-              "start Klipper (KDE clipboard), or enable it in the system tray"),
+              "start Klipper (KDE clipboard), or enable it in the system tray") if kde else
+        check("all", "xclip and xprop (a desktop without KDE)", bool(shutil.which("xclip") and shutil.which("xprop")),
+              "", "install xclip and xprop (Debian/Ubuntu: x11-utils; Fedora: xprop) with your package manager"),
     ]
 
 

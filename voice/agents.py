@@ -50,6 +50,14 @@ class Process:
         return Path(os.readlink(f"/proc/{self.pid}/cwd"))
 
 
+SHELLS = {"bash", "zsh", "fish", "sh", "dash", "ksh", "tcsh"}
+
+
+def comm(pid: int | str) -> str:
+    """A process's program name, e.g. "bash"."""
+    return Path(f"/proc/{pid}/comm").read_text().strip()
+
+
 def _stat(pid: int, field: int) -> int:
     """A number from /proc/<pid>/stat, counted from the field after the name."""
     return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[field])

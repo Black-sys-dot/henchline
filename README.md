@@ -16,9 +16,16 @@ On some laptops the Copilot key sends the chord down and up immediately, so it c
 | `agents/` | What the agents need to be told: one snippet for Claude Code, Cursor, Codex and anything reading `AGENTS.md`. | `talkback/` |
 | `voice/` | What the three share: the state files in `~/.local/state/ptt/` and their names (`state.py`), the settings, Whisper and the chime (`whisper.py`), tone marks (`tone.py`), talkback's queue of clips (`spool.py`), which agent and terminal tab a process belongs to (`agents.py`), windows, keys and the clipboard on X11 (`x11.py`). | nothing |
 
-## Wayland
+## Desktops
 
-Wayland is not implemented. Paste sends keys with the X11 test extension, and the focused window is read with `xprop`. Pull requests that make paste work on Wayland are welcome.
+Everything the tools need from the desktop (the focused window, raising a window, keys, the clipboard, typing into a terminal tab) goes through one interface, `voice/desktop.py`. Two implementations exist:
+
+- **KDE Plasma on X11** (`voice/kde_x11.py`): Klipper for the clipboard, Konsole's D-Bus interface for terminal tabs.
+- **Any other X11 desktop** (`voice/generic_x11.py`): `xclip` for the clipboard; any terminal that sets `WINDOWID` (xterm, kitty, alacritty, …) and pastes with Ctrl+Shift+V. Hands-free raises the terminal, checks it really is in front, pastes and presses Enter.
+
+`tests/generic_x11/run.sh` proves the second one without touching your system: a throwaway Fedora container with a virtual screen, the Openbox window manager and two xterms, one running a pretend agent; it checks window lookup, focus, the clipboard, finding an agent's tab and typing a line into it (10 checks). It found two bugs that this laptop's KDE setup hid.
+
+Wayland is not implemented: a new module filling in the same interface is the way in, and pull requests are welcome.
 
 ## Requirements
 

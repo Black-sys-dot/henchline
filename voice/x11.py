@@ -19,6 +19,8 @@ RETURN = 0xFF0D
 F12 = 0xFFC9
 V = 0x76
 
+KEY_NAMES = {"ctrl": CONTROL, "shift": SHIFT, "alt": ALT, "return": RETURN, "f12": F12, "v": V}  # Desktop.press
+
 _CLIENT_MESSAGE = 33
 _SUBSTRUCTURE = (1 << 20) | (1 << 19)  # SubstructureRedirect | SubstructureNotify
 
@@ -43,7 +45,12 @@ def window_role(wid: str) -> str:
 
 
 def window_title(wid: str) -> str:
-    return _xprop("-id", wid, "_NET_WM_NAME").split("=", 1)[-1].strip().strip('"')
+    """The title: _NET_WM_NAME, or the older WM_NAME that xterm and friends set instead."""
+    for atom in ("_NET_WM_NAME", "WM_NAME"):
+        line = _xprop("-id", wid, atom)
+        if "=" in line:
+            return line.split("=", 1)[1].strip().strip('"')
+    return ""
 
 
 def window_pid(wid: str) -> int:
@@ -66,7 +73,11 @@ class Display:
     def __init__(self) -> None:
         self.x11 = ctypes.CDLL("libX11.so.6")
         self.xtst = ctypes.CDLL("libXtst.so.6")
+        self.x11.XOpenDisplay.argtypes = [ctypes.c_char_p]
         self.x11.XOpenDisplay.restype = ctypes.c_void_p
+        # Without argtypes ctypes passes the display pointer as a C int: fine where it happens to fit
+        # in 32 bits, a segfault elsewhere (Fedora 41, found by tests/generic_x11, 2026-11-15)
+        self.x11.XCloseDisplay.argtypes = [ctypes.c_void_p]
         self.x11.XDefaultRootWindow.argtypes = [ctypes.c_void_p]
         self.x11.XDefaultRootWindow.restype = ctypes.c_ulong
         self.x11.XInternAtom.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.c_int]

@@ -85,10 +85,19 @@ class Desktop(ABC):
         """Called once before threads use the desktop (Xlib needs it); nothing by default."""
 
 
+def kde_session() -> bool:
+    return "KDE" in os.environ.get("XDG_CURRENT_DESKTOP", "").upper().split(":") or bool(os.environ.get("KDE_FULL_SESSION"))
+
+
 @cache
 def current() -> Desktop:
+    """KDE when it is running (Klipper, Konsole), any other X11 desktop otherwise."""
     if os.environ.get("XDG_SESSION_TYPE") == "wayland":
         raise NotImplementedError("Wayland is not supported yet: log in to the X11 session (see the README)")
-    from voice.kde_x11 import KdeX11
+    if kde_session():
+        from voice.kde_x11 import KdeX11
 
-    return KdeX11()
+        return KdeX11()
+    from voice.generic_x11 import GenericX11
+
+    return GenericX11()
