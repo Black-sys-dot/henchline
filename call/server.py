@@ -124,8 +124,8 @@ def flag(path: Path, on: bool) -> None:
         path.unlink(missing_ok=True)
 
 
-async def from_page(message: dict) -> None:
-    """The talk button held or let go, or a typed chat message for the agent that spoke last."""
+async def from_page(message: dict) -> str:
+    """The talk button held or let go, a switch, or a typed chat message; a note for the page, if any."""
     if "push" in message:
         flag(CALL_PUSH, message["push"])
     elif "button_only" in message:
@@ -133,7 +133,8 @@ async def from_page(message: dict) -> None:
     elif "switch" in message:
         await asyncio.get_running_loop().run_in_executor(None, switch, message["switch"])
     elif words := message.get("chat", "").strip():
-        await asyncio.get_running_loop().run_in_executor(None, typed, words, message.get("session", ""))
+        return await asyncio.get_running_loop().run_in_executor(None, typed, words, message.get("session", ""))
+    return ""
 
 
 def agents() -> dict:
@@ -153,20 +154,24 @@ def switch(session: str) -> None:
         routing.say(f"Now talking to {target.spoken()}.")
 
 
-def typed(words: str, session: str) -> None:
+def typed(words: str, session: str) -> str:
     """A typed line, to the agent whose chat it was typed in; a switch ("switch me to Cursor") works as spoken.
 
     Another agent may have spoken since the page last heard who is current: the chat shown wins, so the words
-    go where the page put them.
+    go where the page put them, or nowhere (and a note says so). No session: no agent yet, to the last one.
     """
     if routing.meaning(words) is routing.Meaning.ROUTING:
         routing.route(words, None)
-        return
-    target = next((s for s in recent_speakers() if s.session == session), None)
-    current = last_speaker()
-    if target and routing.reachable(target) and (not current or current.session != session):
-        routing.switch_to(target)
+        return ""
+    if session:
+        target = next((s for s in recent_speakers() if s.session == session), None)
+        if not target or not routing.reachable(target):
+            return "That agent can't be reached any more, so I didn't send that. Pick another and send again."
+        current = last_speaker()
+        if not current or current.session != session:
+            routing.switch_to(target)
     routing.deliver(words, Heard.TYPED)
+    return ""
 
 
 async def call(request: web.Request) -> web.WebSocketResponse:
@@ -226,8 +231,8 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                     heard += len(msg.data)
                     mic.stdin.write(msg.data)
                     await mic.stdin.drain()
-                elif msg.type == WSMsgType.TEXT:
-                    await from_page(msg.json())
+                elif msg.type == WSMsgType.TEXT and (note := await from_page(msg.json())):
+                    await ws.send_json({"note": note})
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:

@@ -161,6 +161,7 @@ async function start() {
       return;
     }
     if (status.agents) { showAgents(status.agents, status.current); return; }
+    if (status.note) { say('', status.note, 'note'); return; }
     state.textContent = status.state;
     talk.dataset.mode = status.mode || 'waiting';
   };
