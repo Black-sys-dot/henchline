@@ -9,6 +9,7 @@ running on the system Python, reads these names too.
 from __future__ import annotations
 
 import json
+import os
 import re
 import subprocess
 import time
@@ -162,11 +163,13 @@ def read_json(path: Path) -> dict:
         return {}
 
 
-def write_json(path: Path, data: dict) -> None:
-    """Write whole or not at all: readers never see half a file."""
+def write_json(path: Path, data: dict, private: bool = False) -> None:
+    """Write whole or not at all: readers never see half a file. `private`: readable by this user only."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.parent / f".{path.name}.tmp"
-    tmp.write_text(json.dumps(data))
+    tmp.unlink(missing_ok=True)  # so a private file is created 0600, never left with an older mode
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600 if private else 0o644), "w") as out:
+        out.write(json.dumps(data))
     tmp.replace(path)
 
 

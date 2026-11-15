@@ -91,7 +91,7 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
     RANG.touch()
     if speaker:  # whenever the user answers, even after this stops waiting: the call server routes it there
         write_json(CALL_RINGER, {"session": speaker.session, "agent": speaker.agent, "reply": reply,
-                                 "at": time.time()})
+                                 "at": time.time()}, private=True)  # the reply name is the ring's secret
     log(HANDSFREE_LOG, f"rang the user ({who})")
     print("rang", flush=True)
     if not wait:
