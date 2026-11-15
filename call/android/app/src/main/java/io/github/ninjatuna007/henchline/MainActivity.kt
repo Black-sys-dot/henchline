@@ -395,9 +395,15 @@ class MainActivity : Activity() {
                 val from = line.getString("from")
                 val file = line.optJSONObject("file")
                 if (from != "you" && line.optString("session") == current && file == null) {
-                    showHistory()  // drawn with the rest, so your earlier lines' ticks turn blue right away
-                    if (line.has("tid") && chatScreen.visibility == View.VISIBLE) Messages.seen(this, current)
-                    if (chatScreen.visibility == View.VISIBLE) markRead(current)
+                    // Added at the end, your ticks before it turned blue in place: no redraw, so the chat
+                    // doesn't jump (a full redraw shifted it, 2026-11-16)
+                    say(from, line.getString("text"), session = current, keep = false)
+                    for ((bubble, words) in myBubbles) bubble.text = ticked(words, "read")
+                    myBubbles.clear()
+                    if (chatScreen.visibility == View.VISIBLE) {
+                        if (line.has("tid")) Messages.seen(this, current)
+                        markRead(current)
+                    }
                     return
                 }
                 // The call has kept it already (CallService): drawn here only
@@ -646,6 +652,7 @@ class MainActivity : Activity() {
                 setPadding(dp(14), dp(10), dp(14), dp(10))
             }
         }
+        if (mine && (status == "sent" || status == "delivered")) myBubbles.add(bubble to words)  // to turn blue
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = when {
@@ -676,6 +683,8 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    private val myBubbles = mutableListOf<Pair<TextView, String>>()  // your lines on screen not yet read
 
     /** Your words with their ticks at the end: ✓ sent, ✓✓ delivered, ✓✓ in cyan once read. */
     private fun ticked(words: String, status: String): CharSequence {
@@ -846,6 +855,7 @@ class MainActivity : Activity() {
     /** The current agent's kept chat, from the start: on opening the app, and on switching agents. */
     private fun showHistory() {
         chat.removeAllViews()
+        myBubbles.clear()
         val history = Chats.load(this, current)
         val lastAgent = history.indexOfLast { !it.optBoolean("mine") && it.optString("from").isNotEmpty() }
         if (current.isNotEmpty() && chatScreen.visibility == View.VISIBLE && sheet?.isOpen != true) {  // you're looking: read

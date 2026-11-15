@@ -123,6 +123,8 @@ object Messages {
 
     /** You've seen that chat: its agents' texts not yet marked read are, and the laptop is told. */
     fun seen(context: Context, session: String) {
+        // Its notification goes too: you're reading that chat (2026-11-16)
+        context.getSystemService(NotificationManager::class.java).cancel(session.hashCode())
         receipt(context, Chats.markSeen(context, session), "read")  // also sends any earlier ones still waiting
     }
 
