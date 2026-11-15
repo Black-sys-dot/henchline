@@ -63,6 +63,9 @@ SPEECH = VadOptions(threshold=0.6, min_speech_duration_ms=250, min_silence_durat
 SPEECH_OVER = VadOptions(threshold=0.5, min_speech_duration_ms=300, min_silence_duration_ms=100, speech_pad_ms=0)
 WAKE_PREFIX = re.compile(r"^\W*((hey|hi|okay|ok)\W+)?claude\W*", re.I)
 OVER = re.compile(r"[\s,.!?]*\bover\b[\s.!?]*$", re.I)
+OWN_WORDS_MIN = 2  # words heard before telling our echo from the user
+UNSURE_LIMIT = 2.0  # seconds of voice after which it stops the clip even if the words stayed too few
+RECHECK = 0.3  # more seconds of voice before looking at the words again
 OWN_WORDS = 0.6  # share of what was heard over a clip that must be the clip's own words, in order, to call it echo
 TONE_NOTE = re.compile(r"\s*\[tone: [^\]]*\]$")
 
@@ -108,6 +111,7 @@ class Overlap:
     frames: list
     first: str  # how the first check looked, for the log
     clip_text: str = ""  # what we were saying, to tell our own echo from the user
+    next_check: float = 0.0  # seconds of voice before the next look at its words
     voiced: float = STEP  # seconds that sounded like speech, added up
 
     def speaking_for(self) -> float:
@@ -124,6 +128,17 @@ def ptt_busy() -> bool:
     return phase is not Phase.IDLE and by != BY_HANDSFREE
 
 
+NUMBERS = dict(enumerate("zero one two three four five six seven eight nine ten eleven twelve".split()))
+
+
+def word_keys(text: str) -> list[str]:
+    """Words as Whisper and talkback may spell them differently: "5" and "five", "recognize" and
+    "recognised" (2026-11-15) match on their number word and first four letters."""
+    words = re.findall(r"[a-z0-9']+", text.lower())
+    words = [NUMBERS.get(int(w), w) if w.isdigit() else w for w in words]
+    return [w[:4] for w in words]
+
+
 def our_own_words(heard: str, said: str) -> bool:
     """Is what stopped a clip mostly that clip's own words, in order? Then it was our echo.
 
@@ -132,8 +147,8 @@ def our_own_words(heard: str, said: str) -> bool:
     ("Your Cursor test worked", 2026-11-15). The user talking over us says
     something else. A single word is too little to tell.
     """
-    heard_words, said_words = re.findall(r"[a-z0-9']+", heard.lower()), re.findall(r"[a-z0-9']+", said.lower())
-    if len(heard_words) < 2 or not said_words:
+    heard_words, said_words = word_keys(heard), word_keys(said)
+    if len(heard_words) < OWN_WORDS_MIN or not said_words:
         return False
     # longest common subsequence of words
     row = [0] * (len(said_words) + 1)
@@ -338,10 +353,14 @@ class Listener:
                                f"then quiet: kept playing (first: {self.over.first})")
             self.over = None
             return False
-        if self.over.voiced < SUSTAIN:
+        if self.over.voiced < max(SUSTAIN, self.over.next_check):
+            return False
+        verdict = self.echo_of_clip(self.over)
+        if verdict is None and self.over.voiced < UNSURE_LIMIT:
+            self.over.next_check = self.over.voiced + RECHECK  # too few words to tell yet: listen a little longer
             return False
         over, self.over = self.over, None
-        if self.echo_of_clip(over):
+        if verdict:
             log(HANDSFREE_LOG, f"talking over: {over.voiced:.1f}s of voice, but the clip's own words: "
                                f"our echo, kept playing (first: {over.first})")
             self.restart_due |= self.echo_watch.may_restart()
@@ -353,16 +372,20 @@ class Listener:
         self.turn(over.frames, Heard.OVER_YOU, floor)
         return True
 
-    def echo_of_clip(self, over: Overlap) -> bool:
+    def echo_of_clip(self, over: Overlap) -> bool | None:
         """Before stopping a clip: are the words heard over it the clip's own? Then keep playing.
 
-        Checking after the stop let the resumed clip's echo cut it again, over and over.
+        None when there are too few words to tell. Checking only after the stop
+        let the resumed clip's echo cut it again, over and over; deciding on one
+        word did the same (2026-11-15).
         """
         if not over.clip_text:
             return False
         audio = np.concatenate(over.frames)
         text = self.whisper(lambda model: " ".join(
             seg.text for seg in model.transcribe(audio, language="en", beam_size=1, vad_filter=False)[0]))
+        if len(re.findall(r"[a-z0-9']+", text.lower())) < OWN_WORDS_MIN:
+            return None
         return our_own_words(text, over.clip_text)
 
     def talking(self, frame: np.ndarray, db: float, floor: float, playing: bool) -> bool:
