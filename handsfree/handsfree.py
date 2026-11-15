@@ -165,7 +165,7 @@ def send(args: list[str]) -> int:
     pushed = 0
     for meta in metas:
         url = origin + files.link(meta)
-        body = {"agent": agent, "why": meta["text"], "file": {"url": url, "name": meta["name"],
+        body = {"agent": agent, "session": session, "why": meta["text"], "file": {"url": url, "name": meta["name"],
                                                              "type": meta["type"], "size": meta["size"]}}
         if CALL_RING.exists() and push(json.dumps(body).encode()):
             files.delivered(meta)

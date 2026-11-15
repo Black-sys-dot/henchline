@@ -31,7 +31,12 @@ class RingService : PushService() {
         } catch (_: Exception) {
             JSONObject()
         }
-        ring.optJSONObject("file")?.let { file ->  // `handsfree send` while no call was up
+        ring.optJSONObject("file")?.let { file ->  // `handsfree send` while no call was up: kept in that agent's chat too
+            val from = IncomingActivity.nameOf(ring.optString("agent"))
+            val session = ring.optString("session")
+            if (ring.optString("why").isNotEmpty())
+                Chats.add(this, session, JSONObject().put("from", from).put("text", ring.optString("why")).put("mine", false))
+            Chats.add(this, session, JSONObject().put("from", from).put("file", file))
             Files.notify(this, ring.optString("agent", "handsfree"), ring.optString("why"), file.optString("url"),
                 file.optString("name", "file"), file.optString("type", "application/octet-stream"), file.optLong("size"))
             return

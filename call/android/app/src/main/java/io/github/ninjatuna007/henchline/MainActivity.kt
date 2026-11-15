@@ -71,6 +71,7 @@ class MainActivity : Activity() {
         crew = findViewById(R.id.crew)
         clear = findViewById(R.id.clear)
         showMode("waiting")
+        current = prefs().getString("current", "") ?: ""
         showCrew()
 
         findViewById<ImageButton>(R.id.menu).setOnClickListener { drawer.openDrawer(Gravity.START) }
@@ -83,6 +84,7 @@ class MainActivity : Activity() {
         text.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_SEND).also { if (it) sendTyped() } }
         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.BLUETOOTH_CONNECT), 1)
+        showHistory()
         RingService.register(this)  // so agents can ring this phone
         askFullScreen()
         answer(intent)
@@ -295,12 +297,8 @@ class MainActivity : Activity() {
         val now = status.optString("current")
         if (now.isNotEmpty() && now != current) {
             current = now
-            for (i in 0 until chat.childCount) {
-                val line = chat.getChildAt(i)
-                val session = line.getTag(R.id.chat) as String? ?: ""
-                line.visibility = if (session.isEmpty() || session == current) View.VISIBLE else View.GONE
-            }
-            chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+            prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
+            showHistory()
         }
         showCrew()
     }
@@ -335,7 +333,7 @@ class MainActivity : Activity() {
             })
             crew.addView(row)
         }
-        val name = names[current]
+        val name = names[current] ?: prefs().getString("current_name", "")?.ifEmpty { null }.takeIf { current.isNotEmpty() }
         who.text = name?.substringBefore(",") ?: "Henchline"
         avatar.setImageResource(if (name != null) avatarOf(current) else R.drawable.avatar_handsfree)
     }
@@ -404,8 +402,10 @@ class MainActivity : Activity() {
         val shown = if (on) View.VISIBLE else View.GONE
         talk.visibility = shown
         findViewById<View>(R.id.inputRow).visibility = shown
-        chatScroll.visibility = shown  // off a call: the henchman and how to call, not the last call's chat
-        findViewById<View>(R.id.idle).visibility = if (on) View.GONE else View.VISIBLE
+        // Off a call: the kept chat with the last agent, read-only, or the henchman and how to call
+        val readable = on || chat.childCount > 0
+        chatScroll.visibility = if (readable) View.VISIBLE else View.GONE
+        findViewById<View>(R.id.idle).visibility = if (readable) View.GONE else View.VISIBLE
         showClear(CallService.Bus.service?.clear ?: prefs().getBoolean("clear", true))
         if (!on) {
             state.text = "Not connected"
@@ -430,7 +430,9 @@ class MainActivity : Activity() {
     }
 
     /** A chat line: the agent's henchman and a bubble on the left, yours on the right, notes in the middle. */
-    private fun say(from: String, words: String, mine: Boolean = false, note: Boolean = false, session: String = ""): TextView {
+    private fun say(from: String, words: String, mine: Boolean = false, note: Boolean = false, session: String = "",
+                    keep: Boolean = true): TextView {
+        if (keep && !note) Chats.add(this, session, JSONObject().put("from", from).put("text", words).put("mine", mine))
         val bubble = TextView(this).apply {
             text = words
             setTextColor(getColor(if (note) R.color.muted else R.color.text))
@@ -470,9 +472,21 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
+    /** The current agent's kept chat, from the start: on opening the app, and on switching agents. */
+    private fun showHistory() {
+        chat.removeAllViews()
+        for (line in Chats.load(this, current)) {
+            val file = line.optJSONObject("file")
+            if (file != null) fileCard(line.optString("from"), file, current, keep = false)
+            else say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"), session = current, keep = false)
+        }
+        if (!CallService.Bus.connected) showConnected(false)  // off a call: the chat if there is one, else the henchman
+    }
+
     /** A file an agent sent: a picture shown small (tap for it whole), audio with its own play button, anything
      *  else as a card that saves and opens it. Long-press any of them to save it and open it in another app. */
-    private fun fileCard(from: String, file: JSONObject, session: String) {
+    private fun fileCard(from: String, file: JSONObject, session: String, keep: Boolean = true) {
+        if (keep) Chats.add(this, session, JSONObject().put("from", from).put("file", file))
         val url = file.getString("url")
         val name = file.optString("name", "file")
         val type = file.optString("type", "application/octet-stream")
