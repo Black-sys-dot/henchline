@@ -98,7 +98,11 @@ class CallService : Service() {
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "henchline:call").apply { acquire() }
         applySound()
         connect(server)
-        listenToButtons()
+        try {
+            listenToButtons()
+        } catch (e: Exception) {  // the call goes on without the earbud button
+            android.util.Log.w("Henchline", "no earbud button: ${e.message}")
+        }
         return START_NOT_STICKY
     }
 
@@ -137,7 +141,9 @@ class CallService : Service() {
     }
 
     /** Start talking, or send what was said: as holding the talk button. */
+    @Synchronized
     fun toggleTalk() {
+        if (!Bus.connected) return  // the laptop isn't there yet: nothing to start or send
         talking = !talking
         socket?.send(org.json.JSONObject().put("push", talking).toString())
         beep(talking)

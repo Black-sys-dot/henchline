@@ -76,9 +76,19 @@ object Messages {
             val session = intent.getStringExtra("session") ?: ""
             val pending = goAsync()
             Thread {
+                try {
+                    send(context, agent, session, words)
+                } finally {
+                    pending.finish()
+                }
+            }.start()
+        }
+
+        /** Within the receiver's ten seconds: an unreachable laptop is "not sent", not a hang. */
+        private fun send(context: Context, agent: String, session: String, words: String) {
                 val note = try {
                     val origin = Files.origin(context) ?: throw IllegalStateException("no laptop address set")
-                    Files.client.newCall(Request.Builder().url("$origin/text").header("Origin", origin)
+                    QUICK.newCall(Request.Builder().url("$origin/text").header("Origin", origin)
                         .post(JSONObject().put("text", words).put("session", session).toString()
                             .toRequestBody("application/json".toMediaType())).build()).execute().use { answer ->
                         val body = try { JSONObject(answer.body?.string() ?: "") } catch (_: Exception) { JSONObject() }
@@ -90,8 +100,10 @@ object Messages {
                 Chats.add(context, session, JSONObject().put("from", "you").put("mine", true)
                     .put("text", if (note.isEmpty()) words else "$words  ($note)"))
                 post(context, agent, session, sending = true)
-                pending.finish()
-            }.start()
+        }
+
+        companion object {
+            private val QUICK = okhttp3.OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
         }
     }
 }
