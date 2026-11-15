@@ -29,6 +29,7 @@ TAKES = Path.home() / ".local/share/handsfree/phrase-takes"
 OUT = Path(__file__).resolve().parent / "app/src/debug/res/raw"
 PITCH_UP, FORMANTS_UP = 1.35, 1.25  # about five semitones; a smaller head
 EDGE = 0.15  # seconds of room kept before and after the performance
+QUIETEST = 0.02  # a take whose loudest moment is under this (full scale 1) is the room, not a performance
 
 
 def clean(audio: np.ndarray, rate: int) -> np.ndarray:
@@ -39,20 +40,28 @@ def clean(audio: np.ndarray, rate: int) -> np.ndarray:
     audio = noisereduce.reduce_noise(y=audio, sr=rate, y_noise=room, prop_decrease=0.75, stationary=True)
     audio = sosfilt(butter(4, 90, "highpass", fs=rate, output="sos"), audio)
     level = 10 * np.log10(energy + 1e-12)
-    loud = np.flatnonzero(level > level.max() - 30)  # the performance, not the room
+    voiced = np.percentile(level, 90)  # the performance's level, so a single loud click can't set it
+    loud = np.flatnonzero(level > voiced - 30)  # the performance, not the room
     start, end = max(0, loud[0] * frame - int(EDGE * rate)), min(len(audio), (loud[-1] + 1) * frame + int(EDGE * rate))
     audio = audio[start:end]
     return audio / np.abs(audio).max() * 0.9  # by the loudest peak only: a soft clipper made it sound brittle
 
 
-def henchify(path: Path, out: Path) -> None:
+def henchify(path: Path, out: Path) -> str:
+    """Makes the henchman phrase; or why not (left out, so the app keeps its default phrase)."""
     audio, rate = soundfile.read(str(path))
+    if len(audio) < rate // 2 or np.abs(audio).max() < QUIETEST:
+        return "too short or too quiet: re-record it"
     tmp = out.with_suffix(".clean.wav")
     soundfile.write(str(tmp), clean(audio, rate), rate)
     sound = parselmouth.Sound(str(tmp))
     median = call(sound.to_pitch(), "Get quantile", 0, 0, 0.5, "Hertz")
+    if not np.isfinite(median):  # whispered, or no voice at all
+        tmp.unlink()
+        return "no voiced pitch found: re-record it out loud"
     call(sound, "Change gender", 75, 600, FORMANTS_UP, median * PITCH_UP, 1.2, 1.0).save(str(out), "WAV")
     tmp.unlink()
+    return ""
 
 
 def main() -> int:
@@ -62,8 +71,11 @@ def main() -> int:
         return 1
     OUT.mkdir(parents=True, exist_ok=True)
     for take in takes:
-        henchify(take, OUT / f"phrase_{take.stem}.wav")
-        print(take.stem, "ok", flush=True)
+        out = OUT / f"phrase_{take.stem}.wav"
+        problem = henchify(take, out)
+        if problem:
+            out.unlink(missing_ok=True)  # the app's default phrase, rather than a broken one
+        print(take.stem, problem or "ok", flush=True)
     return 0
 
 

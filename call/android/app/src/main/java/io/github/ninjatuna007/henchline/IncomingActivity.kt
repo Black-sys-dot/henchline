@@ -88,10 +88,13 @@ class IncomingActivity : Activity() {
         main.postDelayed({ stop() }, RingService.RING_SECONDS * 1000)
     }
 
-    /** The phrase over the ringtone, again every few seconds, as a ringtone repeats. */
+    /** The phrase over the ringtone, again a moment after it ends, as a ringtone repeats. A fixed six
+     *  seconds left a long gap after a short phrase (2026-11-15). */
     private fun sayAgain() {
-        phrase?.let { if (!it.isPlaying) { it.seekTo(0); it.start() } }
-        main.postDelayed({ sayAgain() }, SAY_EVERY)
+        val sound = phrase ?: return
+        sound.setOnCompletionListener { main.postDelayed({ sayAgain() }, SAY_GAP) }
+        sound.seekTo(0)
+        sound.start()
     }
 
     /** A sound that won't load just isn't played: the screen, its buttons and the time-out go on. */
@@ -141,7 +144,7 @@ class IncomingActivity : Activity() {
     companion object {
         const val AGENT = "agent"
         const val WHY = "why"
-        const val SAY_EVERY = 6000L
+        const val SAY_GAP = 700L  // ms between the phrase ending and starting again
         val FLAVOURS = setOf("claude", "cursor", "codex", "handsfree")  // henchmen, tones and phrases there are
 
         fun nameOf(agent: String) = when (agent) {

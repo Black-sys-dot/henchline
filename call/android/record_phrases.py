@@ -31,13 +31,14 @@ RATE = 48000
 FRAME = RATE // 50  # 20 ms
 DONE_AFTER, LONGEST = 2.0, 20.0  # seconds quiet after they started, and at most
 LOUDER = 15  # dB over the room's own sound counts as performing
+SUSTAINED = 15  # frames (0.3 s) that loud in a row before the performance counts as started: not a click
 
 
-def record_take(device: str) -> np.ndarray:
+def record_take(device: str) -> np.ndarray | None:
     """From the chime until they have finished, with a little of the room before their first sound."""
     stream = subprocess.Popen(["parec", f"--device={device}", "--format=s16le", f"--rate={RATE}", "--channels=1",
                                "--raw", "--latency-msec=20"], stdout=subprocess.PIPE)
-    frames, levels, started, quiet = [], [], None, 0
+    frames, levels, started, quiet, loud_run = [], [], None, 0, 0
     try:
         while len(frames) * FRAME / RATE < LONGEST:
             chunk = stream.stdout.read(FRAME * 2)
@@ -49,16 +50,28 @@ def record_take(device: str) -> np.ndarray:
             levels.append(db)
             room = np.percentile(levels, 10)
             if started is None:
-                if len(levels) > 10 and db > room + LOUDER:
-                    started = len(frames)
+                loud_run = loud_run + 1 if len(levels) > 10 and db > room + LOUDER else 0
+                if loud_run >= SUSTAINED:
+                    started = len(frames) - SUSTAINED
                 continue
             quiet = quiet + 1 if db < room + LOUDER else 0
             if quiet * FRAME / RATE >= DONE_AFTER:
                 break
     finally:
         stream.terminate()
-    begin = max(0, (started or 0) - 15)  # 0.3 s before their first sound
-    return np.concatenate(frames[begin:]) if frames else np.zeros(0, "<i2")
+        stream.wait()
+    if started is None:  # nothing but the room: not a take
+        return None
+    begin = max(0, started - 15)  # 0.3 s before their first sound
+    return np.concatenate(frames[begin:])
+
+
+def run_quietly(command: list[str]) -> None:
+    """A helper the recording can do without (the notification, the chime): missing, it is said once."""
+    try:
+        subprocess.run(command, check=False)
+    except FileNotFoundError:
+        print(f"  ({command[0]} is not installed: going on without it)", flush=True)
 
 
 def save(path: Path, audio: np.ndarray) -> None:
@@ -85,14 +98,19 @@ def main() -> int:
             for n, line in enumerate(PHRASES[agent]):
                 print(f"\n{agent} {n + 1}: {line}", flush=True)
                 # The words on screen, so the performer needn't look anywhere else
-                subprocess.run(["notify-send", "--app-name=Henchline", "--expire-time=20000",
-                                f"{agent.capitalize()}, phrase {n + 1}", line], check=False)
-                say(f"{agent.capitalize()}, phrase {n + 1}.")
-                time.sleep(1.5)
-                subprocess.run(["pw-play", CHIME])
-                take = record_take(device)
-                save(TAKES / f"{agent}_{n}.wav", take)
-                print(f"  {len(take) / RATE:.1f} s", flush=True)
+                run_quietly(["notify-send", "--app-name=Henchline", "--expire-time=20000",
+                             f"{agent.capitalize()}, phrase {n + 1}", line])
+                for attempt in range(2):
+                    say(f"{agent.capitalize()}, phrase {n + 1}." if attempt == 0 else "I didn't hear you. Once more.")
+                    time.sleep(1.5)
+                    run_quietly(["pw-play", CHIME])
+                    take = record_take(device)
+                    if take is not None:
+                        save(TAKES / f"{agent}_{n}.wav", take)
+                        print(f"  {len(take) / RATE:.1f} s", flush=True)
+                        break
+                else:
+                    print("  nothing heard twice: the earlier take, if any, is kept", flush=True)
         say("That's all, thank you!")
     finally:
         PAUSE.unlink(missing_ok=True)
