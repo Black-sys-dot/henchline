@@ -3,9 +3,11 @@
 import unittest
 from unittest import mock
 
-from tests import sandbox  # noqa: F401  (first: a throwaway HOME)
+from tests import sandbox  # first: a throwaway HOME
 import routing
 from routing import Meaning
+
+assert sandbox.HOME  # imported for its effect
 
 
 class Switching(unittest.TestCase):
