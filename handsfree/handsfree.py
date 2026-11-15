@@ -6,7 +6,7 @@
     handsfree listen [SECONDS]         keep listening that long (default 180)
     handsfree close                    stop listening until the wake word
     handsfree hangup                   end the phone call (call/), once talkback has finished speaking
-    handsfree ring [WHY]               ask the user to call: an ntfy notification whose Answer opens Henchline
+    handsfree ring [--now] [WHY]       ask the user to call: an ntfy notification whose Answer opens Henchline
                                        and connects (the topic is read from ~/.config/ptt/ntfy-topic)
 
 The built-in mic runs through the echo canceller (sensing.py). The listener
@@ -46,13 +46,13 @@ RING_EVERY = 120  # seconds: an agent can't keep ringing
 RANG = Path.home() / ".local/state/ptt/call.rang"  # when the user was last rung
 
 
-def ring(why: str) -> int:
+def ring(why: str, now: bool = False) -> int:
     """An agent wants to talk: a loud notification whose Answer button opens Henchline's call (henchline://call)."""
     if in_call():
         print("a phone call is up already")
         return 1
-    if RANG.exists() and time.time() - RANG.stat().st_mtime < RING_EVERY:
-        print(f"rang less than {RING_EVERY} s ago; not again yet")
+    if not now and RANG.exists() and time.time() - RANG.stat().st_mtime < RING_EVERY:
+        print(f"rang less than {RING_EVERY} s ago; not again yet (--now if the user asked for it)")
         return 1
     try:
         topic = RING_TOPIC.read_text().strip()
@@ -142,7 +142,8 @@ def main() -> int:
         LISTEN.write_text(str(time.time() + float(args[0] if args else 180)))
         return 0
     if command == "ring":
-        return ring(" ".join(args))
+        now = "--now" in args  # the user asked for this ring: past the limit meant for agents
+        return ring(" ".join(a for a in args if a != "--now"), now)
     if command == "hangup":
         if not in_call():
             print("no phone call is up")
