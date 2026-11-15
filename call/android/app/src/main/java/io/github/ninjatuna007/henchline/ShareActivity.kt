@@ -32,6 +32,12 @@ class ShareActivity : Activity() {
         }
         val names = uris.map { Files.nameOf(this, it) }
         val (session, agent) = current()
+        if (session.isEmpty() && CallService.Bus.service == null) {  // asked now, not after the files have gone up
+            AlertDialog.Builder(this).setTitle("Henchline")
+                .setMessage("Open an agent's chat in Henchline first (the menu, top left), then share again.")
+                .setPositiveButton("OK", null).setOnDismissListener { finish() }.show()
+            return
+        }
         val note = EditText(this).apply { hint = "Add a few words (optional)" }
         AlertDialog.Builder(this)
             .setIcon(R.mipmap.ic_launcher)
