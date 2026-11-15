@@ -346,9 +346,12 @@ def main() -> int:
     app.router.add_get("/call", call)
     proxied = False
     if args.host in ("serve", "tailscale"):
-        found = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True).stdout.split()
+        try:
+            found = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True).stdout.split()
+        except OSError:
+            found = []
         if not found:  # the page is only for your own devices: no tailnet, no page
-            print("Tailscale has no address: sudo tailscale up", file=sys.stderr)
+            print("Tailscale has no address (or is not installed): sudo tailscale up", file=sys.stderr)
             return 1
         mode, args.host = args.host, found[0]
         proxied = mode == "serve" and args.cert is None and serve(args.host, args.port)
