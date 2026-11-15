@@ -93,14 +93,7 @@ class IncomingActivity : Activity() {
         // The very sound the banner rings with (banner_mix.py: the tone, the phrases on its beat), so the two
         // never differ (2026-11-15: they said different phrases)
         ring = player(listOf("banner_${agent}_$phrase", "banner_$agent", "ring_$agent").map { resourceId(it) }.firstOrNull { it != 0 } ?: 0, loop = true,
-            volume = loudness())
-        // Carry on where the banner's sound is, not from the start (the user's wish, 2026-11-15): it began when the
-        // ring did and loops, so the place is the time since then, round the file's length
-        ring?.let { sound ->
-            val started = (Ringing.now(this)?.optLong("until") ?: 0) - RingService.RING_SECONDS * 1000
-            val into = System.currentTimeMillis() - started + LATENCY
-            if (started > 0 && into > 0 && sound.duration > 0) sound.seekTo((into % sound.duration).toInt())
-        }
+            volume = loudness(), from = ::bannerPlace)
         // This screen rings now: the notification stays, silent, for Answer and Decline and to come back to (after
         // the screen's sound has started, so the banner's stops into it rather than before it)
         RingService.ringNow(this, agent, why, reply, quiet = true, seconds = maxOf(1, Ringing.secondsLeft(this)), phrase = phrase)
@@ -118,8 +111,16 @@ class IncomingActivity : Activity() {
         return if (alarm <= 0f) 1f else (level(android.media.AudioManager.STREAM_RING) / alarm).coerceIn(0.15f, 1f)
     }
 
+    /** Where the banner's sound is now, to carry on from rather than start again (the user's wish, 2026-11-15):
+     *  it began when the ring did and loops, so it is the time since then (player() takes it round the file's
+     *  length). About 0 when this screen is the ring's first. */
+    private fun bannerPlace(): Int {
+        val started = (Ringing.now(this)?.optLong("until") ?: 0) - RingService.RING_SECONDS * 1000
+        return if (started > 0) (System.currentTimeMillis() - started + LATENCY).toInt() else 0
+    }
+
     /** A sound that won't load just isn't played: the screen, its buttons and the time-out go on. */
-    private fun player(id: Int, loop: Boolean, volume: Float): MediaPlayer? {
+    private fun player(id: Int, loop: Boolean, volume: Float, from: () -> Int = { 0 }): MediaPlayer? {
         if (id == 0) return null
         val sound = MediaPlayer()
         return try {
@@ -132,6 +133,7 @@ class IncomingActivity : Activity() {
                 isLooping = loop
                 setVolume(volume, volume)
                 prepare()
+                seekTo(from().coerceAtLeast(0) % duration.coerceAtLeast(1))  // before it starts: never heard jumping
                 start()
             }
         } catch (e: Exception) {

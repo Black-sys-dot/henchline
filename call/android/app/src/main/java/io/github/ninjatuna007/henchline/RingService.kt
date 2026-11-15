@@ -164,7 +164,10 @@ class RingService : PushService() {
             // "_v2": the tone with its phrases (banner_mix.py) since 2026-11-15; a channel's sound is fixed when made
             // "_v3": one line each since 2026-11-15 (a channel's sound is fixed when made)
             val id = if (quiet) "calls_banner_dnd_v3_${flavour}_$phrase" else "calls_banner_v3_${flavour}_$phrase"
-            val tone = android.net.Uri.parse("android.resource://${context.packageName}/raw/banner_${flavour}_$phrase")
+            // The line's own file; a build without it (banner_mix.py not run) rings with both lines, else the bare tone
+            val raw = listOf("banner_${flavour}_$phrase", "banner_$flavour", "ring_$flavour")
+                .first { it == "ring_$flavour" || context.resources.getIdentifier(it, "raw", context.packageName) != 0 }
+            val tone = android.net.Uri.parse("android.resource://${context.packageName}/raw/$raw")
             val name = "${IncomingActivity.nameOf(flavour)} calling while you use the phone" + if (quiet) " (Do Not Disturb)" else ""
             manager.createNotificationChannel(NotificationChannel(id, name, NotificationManager.IMPORTANCE_HIGH).apply {
                 setSound(tone, android.media.AudioAttributes.Builder()

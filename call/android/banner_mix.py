@@ -54,6 +54,12 @@ def mix(ring_path: Path, phrase_paths: list[Path], out: Path) -> None:
         f.writeframes((track * 32767).astype("<i2").tobytes())
 
 
+def check() -> list[str]:
+    """Every agent's two one-line ring files, which a ring's banner plays: what is missing (empty when fine)."""
+    return [f"{folder.name}/banner_{agent}_{n}.wav" for folder in (MAIN,) for agent in AGENTS for n in (0, 1)
+            if not (folder / f"banner_{agent}_{n}.wav").exists()]
+
+
 def main() -> int:
     for folder in (MAIN, DEBUG):
         for agent in AGENTS:
@@ -63,7 +69,10 @@ def main() -> int:
                 for n, phrase in enumerate(phrases):  # one each: a ring says the one its kind calls for
                     mix(MAIN / f"ring_{agent}.wav", [phrase], folder / f"banner_{agent}_{n}.wav")
                 print(folder.parent.parent.name, agent, "ok")
-    return 0
+    missing = check()
+    if missing:
+        print("missing:", ", ".join(missing))
+    return 1 if missing else 0
 
 
 if __name__ == "__main__":
