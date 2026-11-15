@@ -200,7 +200,7 @@ class IncomingActivity : Activity() {
         const val WHY = "why"
         const val REPLY = "reply"
         const val PHRASE = "phrase"
-        const val LATENCY = 150L  // ms the banner's sound runs ahead of the post time (the system starting it)
+        const val LATENCY = 150L  // ms: this screen's sound starts this much after the seek, so it seeks that far ahead
         const val SAY_GAP = 700L  // ms between the phrase ending and starting again
         val FLAVOURS = setOf("claude", "cursor", "codex", "handsfree")  // henchmen, tones and phrases there are
 
