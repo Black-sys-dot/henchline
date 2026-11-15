@@ -234,9 +234,15 @@ def mic_busy() -> bool:
     return phase_now()[0] is not Phase.IDLE
 
 
-def set_target(to_agent: bool) -> None:
-    """Whether the words just went into an agent's window (never the words)."""
-    write_json(TARGET, {"agent": to_agent, "at": time.time()})
+def set_target(to_agent: bool, session: str = "") -> None:
+    """Whether the words just went into an agent's window (never the words), and which agent's when known."""
+    write_json(TARGET, {"agent": to_agent, "session": session, "at": time.time()})
+
+
+def target_session_since(since: float) -> str:
+    """The agent session the words noted after `since` went to, when the one who sent them knew it (hands-free)."""
+    data = read_json(TARGET)
+    return str(data.get("session") or "") if data.get("at", 0) >= since else ""
 
 
 def target_since(since: float) -> bool | None:

@@ -20,8 +20,9 @@ import time
 from pathlib import Path
 
 from voice import spool
-from voice.state import (BY_HANDSFREE, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing, Sent, Speaker,
-                         last_speaker, log, mic_busy, read_json, speaker_sink, target_since)
+from voice.state import (BY_HANDSFREE, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing, Speaker,
+                         last_speaker, log, mic_busy, read_json, speaker_sink, target_session_since,
+                         target_since)
 
 THREADS = int(os.environ.get("TALKBACK_THREADS", "4"))  # CPU threads: 4 measured best (latency vs load)
 RATE = 24000
@@ -152,11 +153,11 @@ def after_input(since: float) -> None:
         return
     deadline = time.time() + 2
     while time.time() < deadline:
-        sent = Sent.last()
-        if sent and sent.at >= since and sent.session:
+        session = target_session_since(since)
+        if session:
             # Hands-free knows which agent the words went to: only its clips wait for its answer; the others play
             # on (Cursor's reply was held for a minute and a half while the user talked to Claude, 2026-11-15)
-            spool.hold(waiting & {sent.session})
+            spool.hold(waiting & {session})
             return
         to_agent = target_since(since)
         if to_agent is not None:

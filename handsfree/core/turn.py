@@ -23,8 +23,8 @@ from sensing import PER_SECOND, RATE, SPEECH, level
 from talkover import TalkOver, our_own_words
 from voicegate import START_DB
 from voice.speech import whisper
-from voice.state import (BY_HANDSFREE, CALL_HANGUP, CALL_PUSH, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call, log,
-                         ptt_busy, release_phase, set_phase, set_target)
+from voice.state import (BY_HANDSFREE, CALL_HANGUP, CALL_PUSH, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call,
+                         last_speaker, log, ptt_busy, release_phase, set_phase, set_target)
 
 THINK_WINDOW = 180  # seconds after "give me a minute"
 WAIT_FOR_WORDS = 5.0  # after the wake word, seconds to start talking before it gives up
@@ -164,7 +164,8 @@ class Turn:
     def act(self, text: str, rich: str, heard: Heard) -> float | None:
         meaning = routing.meaning(text)
         # Before anything is said or sent: talkback may speak again, and knows whether an agent got words
-        set_target(meaning is Meaning.MESSAGE)
+        to = last_speaker() if meaning is Meaning.MESSAGE else None  # who deliver() will type it to
+        set_target(meaning is Meaning.MESSAGE, to.session if to else "")
         set_phase(Phase.IDLE, BY_HANDSFREE)
         if meaning is Meaning.TIME:
             log(HANDSFREE_LOG, "heard: give me a minute")
