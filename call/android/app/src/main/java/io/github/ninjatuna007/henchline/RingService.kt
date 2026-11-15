@@ -137,7 +137,7 @@ class RingService : PushService() {
                         .setTimeoutAfter(seconds * 1000)
                         .addAction(Notification.Action.Builder(null, "Decline", decline).build())
                         .addAction(Notification.Action.Builder(null, "Answer", answer).build())
-                        .build())
+                        .build().apply { if (inUse && !quiet) flags = flags or Notification.FLAG_INSISTENT })
                 } catch (again: IllegalArgumentException) {
                     android.util.Log.w("Henchline", "plain ring notification refused too: ${again.message}")
                 }
