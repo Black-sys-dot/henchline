@@ -82,7 +82,7 @@ Hold the Copilot key (or any key you choose), speak, let go: Whisper writes it d
 
 ## Talkback
 
-<img src="docs/peek_claude.svg" align="right" width="300" alt="">
+<img src="docs/peek_claude.svg" align="right" width="190" alt="">
 
 Your agents speak their replies aloud, each in its own voice, one at a time, through Kokoro on your machine. They go quiet the moment you start talking. One snippet teaches every agent when and how to speak. More: [talkback/README.md](talkback/README.md).
 
@@ -90,7 +90,7 @@ Your agents speak their replies aloud, each in its own voice, one at a time, thr
 
 ## Hands-free
 
-<img src="docs/peek_handsfree.svg" align="left" width="300" alt="">
+<img src="docs/peek_handsfree.svg" align="left" width="190" alt="">
 
 Talk to your agents without touching a key. Answer right after they speak; say *"hey Claude"* (your own trained wake word) or tap your earbuds the rest of the time. Talk over a reply to cut it off; *"over"* sends at once, *"give me a minute"* keeps listening, *"switch me to Cursor"* hands you over, announced out loud. An echo canceller keeps it from hearing itself. More: [handsfree/README.md](handsfree/README.md).
 
@@ -98,7 +98,7 @@ Talk to your agents without touching a key. Answer right after they speak; say *
 
 ## Phone call
 
-<img src="docs/peek_cursor.svg" align="right" width="300" alt="">
+<img src="docs/peek_cursor.svg" align="right" width="190" alt="">
 
 The same conversation from your phone, over your own Tailscale network: `./install.sh call` runs a small server only your devices can reach. Your phone becomes the mic and speaker; the computer stays quiet. Open line, hold-to-talk or typed, a chat per agent, and switching by voice as at your desk. More: [call/README.md](call/README.md).
 
@@ -106,17 +106,11 @@ The same conversation from your phone, over your own Tailscale network: `./insta
 
 ### Henchline, the Android app
 
-<img src="docs/peek_codex.svg" align="left" width="300" alt="">
+<img src="docs/peek_codex.svg" align="left" width="190" alt="">
 
 The call as a real app (Android 10+): it keeps going with the screen off, rings full screen with each henchman's own tone, takes texts you reply to from the notification, carries files both ways, keeps a chat per agent, and turns your earbuds into push-to-talk. Build it with `./gradlew assembleDebug` in `call/android/` and install over USB. More: [call/android/README.md](call/android/README.md).
 
 <br clear="left">
-
-## Alternatives
-
-Pieces of this exist elsewhere: each vendor's own remote control (Claude Code's Remote Control and Channels, Codex in the ChatGPT app, Cursor's iOS app) works with its own agent through its cloud; [Happy](https://github.com/slopus/happy) and Omnara are phone apps for Claude Code and Codex with cloud voice; [CallMe](https://github.com/ZeframLou/call-me) and [Better Call Claude](https://github.com/sns45/better-call-claude) let Claude Code phone you through Twilio; [TalkiTo](https://github.com/robdmac/talkito) gives Claude Code and Codex a voice and Slack/WhatsApp chat; [VoiceMode](https://github.com/mbailey/voicemode) gives one agent local two-way voice. As far as a search in November 2026 found, none puts several agents at once, hands-free conversation with spoken handoff, and your own calling, ringing and texting app together, locally. If you know one that does, please open an issue.
-
-It began as **copilot-ptt**, a push-to-talk key, which it still is: see [Push-to-talk](#push-to-talk). Linux on X11 today (KDE Plasma, or any X11 desktop); Wayland is welcome.
 
 ## License
 
