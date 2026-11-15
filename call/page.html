@@ -82,7 +82,13 @@ class Mic extends AudioWorkletProcessor {
 class Speaker extends AudioWorkletProcessor {
   constructor() {
     super(); this.step = 24000 / sampleRate; this.queue = []; this.cur = null; this.pos = 0;
-    this.port.onmessage = (e) => { this.queue.push(new Int16Array(e.data)); if (this.queue.length > 50) this.queue.splice(0, 25); };  // over 1 s behind: drop half a second
+    // How much arrived, how much was dropped, how much was actually played out loud: the laptop
+    // cannot hear the phone, so the page reports these (a clip that never reached the ear, 2026-11-15)
+    this.got = 0; this.dropped = 0; this.loud = 0; this.frames = 0;
+    this.port.onmessage = (e) => {
+      this.queue.push(new Int16Array(e.data)); this.got++;
+      if (this.queue.length > 50) { this.queue.splice(0, 25); this.dropped += 25; }  // over 1 s behind: drop half a second
+    };
   }
   process(_, [output]) {
     const out = output[0];
@@ -90,6 +96,12 @@ class Speaker extends AudioWorkletProcessor {
       if (!this.cur || this.pos >= this.cur.length) { this.cur = this.queue.shift(); this.pos = 0; }
       out[i] = this.cur ? this.cur[Math.floor(this.pos)] / 32768 : 0;
       if (this.cur) this.pos += this.step;
+      if (Math.abs(out[i]) > 0.01) this.loud++;
+    }
+    this.frames += out.length;
+    if (this.frames >= sampleRate * 2) {  // every 2 s
+      this.port.postMessage({got: this.got, dropped: this.dropped, loud_ms: Math.round(this.loud / sampleRate * 1000)});
+      this.got = this.dropped = this.loud = this.frames = 0;
     }
     return true;
   }
@@ -144,6 +156,9 @@ async function start() {
   const mic = new AudioWorkletNode(ctx, 'mic'), speaker = new AudioWorkletNode(ctx, 'speaker');
   ctx.createMediaStreamSource(stream).connect(mic);
   speaker.connect(ctx.destination);
+  // A context started after the mic prompt may begin suspended (no fresh tap): it would play nothing
+  await ctx.resume();
+  speaker.port.onmessage = (e) => send({stats: {...e.data, audio: ctx.state, hidden: document.hidden}});
   ws = new WebSocket(`${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/call`);
   ws.binaryType = 'arraybuffer';
   ws.onopen = () => {
@@ -180,6 +195,8 @@ function stop() {
   talk.disabled = text.disabled = agentMenu.disabled = true; talk.dataset.mode = 'waiting'; state.textContent = 'Not connected';
 }
 
+// Back from another app or a locked screen: the browser may have suspended the audio
+document.addEventListener('visibilitychange', () => { if (ctx && ctx.state !== 'running') ctx.resume(); });
 callButton.onclick = () => (ws ? stop() : start().catch((err) => { stop(); say('', err.message, 'note'); }));
 
 // One button. Hold it to talk: hands-free records while it is down and sends when it is let go.

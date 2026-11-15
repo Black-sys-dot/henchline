@@ -184,12 +184,14 @@ class Listener:
         db = level(frame)
         playing = PLAYING.exists()
         self.talkover.track_onset(self.playback.loudest())
-        if self.play_started and not playing:
+        # On a phone call the line is always open, as on any call: the phone's own echo cancelling keeps
+        # our voice out, and only "hey Claude" getting in made calls deaf between clips (2026-11-15).
+        # The laptop's canceller is not in that path, so the phone's mic says nothing about it: no echo
+        # watching (a loud street restarted it mid-call, 2026-11-15)
+        calling = in_call()
+        if self.play_started and not playing and not calling:
             self.restart_due |= self.echo_watch.clip_over()
         self.play_started = (self.play_started or time.monotonic()) if playing else 0.0
-        # On a phone call the line is always open, as on any call: the phone's own echo cancelling keeps
-        # our voice out, and only "hey Claude" getting in made calls deaf between clips (2026-11-15)
-        calling = in_call()
         button_only = calling and CALL_BUTTON_ONLY.exists()  # a noisy place: noise must not talk over us
         open_ = ((playing or calling or self.window.is_open()) and not button_only
                  and not ptt_busy() and not PAUSE.exists())
@@ -211,7 +213,7 @@ class Listener:
         turn_floor = max(floor, floor_of(self.room, floor))
         self.preroll.append(frame)
         self.gate.add(frame, db)
-        if playing and time.monotonic() - self.play_started > BARGE_GRACE:
+        if playing and not calling and time.monotonic() - self.play_started > BARGE_GRACE:
             self.echo_watch.add(max(self.gate.levels), self.playback.loudest())
         unknown = self.output.on_speakers() and self.playback.loudest() is None
         if playing and (self.talkover.notice_playing() or unknown):
@@ -257,7 +259,7 @@ class Listener:
         margin = self.gate.margin
         if not playing or margin is None or self.gate.checked:  # no check over a clip ran on this frame
             return speech
-        near_miss = not speech and self.echo_watch.near_miss(margin)
+        near_miss = not speech and not in_call() and self.echo_watch.near_miss(margin)
         self.restart_due |= near_miss
         # In numbers (never audio), so a talk-over, or a false one, can be explained
         self.last_check = (f"mic {margin + played:.0f} dB, playing {played:.0f} dB, floor {floor:.0f} dB, "

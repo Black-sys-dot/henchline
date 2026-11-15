@@ -117,6 +117,38 @@ class Devices:
                 pactl("unload-module", module)
 
 
+class Ear:
+    """What the phone says it played, every 2 s: the laptop cannot hear the phone, so a clip lost on the
+    way (suspended audio, dropped chunks, the page in the background) only shows up here."""
+
+    def __init__(self) -> None:
+        self.loud_ms = 0  # played out loud over the call
+        self.while_speaking = 0  # 2 s spans with a clip playing on the laptop
+        self.silent = 0  # … of which the phone played (almost) nothing
+
+    def report(self, stats: dict) -> None:
+        self.loud_ms += stats.get("loud_ms", 0)
+        if Playing.now() is None:
+            return
+        self.while_speaking += 1
+        trouble = []
+        if stats.get("audio") != "running":
+            trouble.append(f"the phone's audio is {stats.get('audio')}")
+        if stats.get("dropped"):
+            trouble.append(f"dropped {stats['dropped']} chunks (fell behind)")
+        if stats.get("hidden"):
+            trouble.append("the page is in the background")
+        if stats.get("loud_ms", 0) < 200:
+            self.silent += 1
+            trouble.append(f"played only {stats.get('loud_ms', 0)} ms of 2 s, got {stats.get('got', 0)} chunks")
+        if trouble:
+            log(HANDSFREE_LOG, "call: talkback playing, but " + "; ".join(trouble))
+
+    def summary(self) -> str:
+        return (f"the phone played {self.loud_ms / 1000:.0f} s out loud; silent in {self.silent} of "
+                f"{self.while_speaking} 2-s spans while talkback played")
+
+
 def flag(path: Path, on: bool) -> None:
     if on:
         path.touch()
@@ -124,9 +156,11 @@ def flag(path: Path, on: bool) -> None:
         path.unlink(missing_ok=True)
 
 
-async def from_page(message: dict) -> str:
+async def from_page(message: dict, ear: Ear) -> str:
     """The talk button held or let go, a switch, or a typed chat message; a note for the page, if any."""
-    if "push" in message:
+    if "stats" in message:
+        ear.report(message["stats"])
+    elif "push" in message:
         flag(CALL_PUSH, message["push"])
     elif "button_only" in message:
         flag(CALL_BUTTON_ONLY, message["button_only"])
@@ -225,13 +259,14 @@ async def call(request: web.Request) -> web.WebSocketResponse:
         sender = asyncio.create_task(to_phone())
         shower = asyncio.create_task(show_status())
         heard = 0  # bytes of the phone's mic, for the log
+        ear = Ear()
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.BINARY:
                     heard += len(msg.data)
                     mic.stdin.write(msg.data)
                     await mic.stdin.drain()
-                elif msg.type == WSMsgType.TEXT and (note := await from_page(msg.json())):
+                elif msg.type == WSMsgType.TEXT and (note := await from_page(msg.json(), ear)):
                     await ws.send_json({"note": note})
                 elif msg.type == WSMsgType.ERROR:
                     break
@@ -248,7 +283,8 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                     except ProcessLookupError:  # gone already: the service being stopped kills the whole group
                         pass
                 await proc.wait()
-            log(HANDSFREE_LOG, f"phone call ended ({heard / 2 / MIC_RATE:.0f} s of the phone's mic arrived)")
+            log(HANDSFREE_LOG, f"phone call ended ({heard / 2 / MIC_RATE:.0f} s of the phone's mic arrived; "
+                               f"{ear.summary()})")
     return ws
 
 
