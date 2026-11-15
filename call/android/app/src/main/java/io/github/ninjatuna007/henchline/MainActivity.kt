@@ -280,6 +280,7 @@ class MainActivity : Activity() {
             CallService.Bus.lastAgents?.let { fromServer(it) }
             CallService.Bus.lastMode?.let { fromServer(it) }
         }
+        if (chatScreen.visibility == View.VISIBLE) Messages.viewing = current
         showHistory()  // what came meanwhile (a call's lines, a text): from the kept chat, on a call or off it
         showServer()
         showRinging()
@@ -308,6 +309,7 @@ class MainActivity : Activity() {
     }
 
     override fun onPause() {
+        Messages.viewing = ""  // not on screen: texts get their banner again
         CallService.Bus.listener = null  // the call goes on; this screen just stops drawing it
         super.onPause()
     }
@@ -392,6 +394,12 @@ class MainActivity : Activity() {
                 val line = status.getJSONObject("chat")
                 val from = line.getString("from")
                 val file = line.optJSONObject("file")
+                if (from != "you" && line.optString("session") == current && file == null) {
+                    showHistory()  // drawn with the rest, so your earlier lines' ticks turn blue right away
+                    if (line.has("tid") && chatScreen.visibility == View.VISIBLE) Messages.seen(this, current)
+                    if (chatScreen.visibility == View.VISIBLE) markRead(current)
+                    return
+                }
                 // The call has kept it already (CallService): drawn here only
                 if (file == null || line.optString("text").isNotEmpty())
                     say(from, line.getString("text"), mine = from == "you", session = line.optString("session"), keep = false,
@@ -745,6 +753,7 @@ class MainActivity : Activity() {
         if (screen === listScreen) showCrew()
         // A chat opens at its newest message, as a messaging app's does (it opened at the oldest, 2026-11-16)
         if (screen === chatScreen) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+        Messages.viewing = if (screen === chatScreen) current else ""
     }
 
     /** Into an agent's chat from the list: on a call the laptop switches to it (and says so); off one, its chat

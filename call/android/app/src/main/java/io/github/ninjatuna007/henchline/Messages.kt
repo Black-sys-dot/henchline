@@ -23,6 +23,7 @@ import org.json.JSONObject
  */
 object Messages {
     const val CHANNEL = "texts"
+    @Volatile var viewing = ""  // the chat on screen right now (MainActivity), so it gets no banner
     const val REPLY = "io.github.ninjatuna007.henchline.REPLY_TEXT"
     private const val KEY = "reply"
 
@@ -38,8 +39,8 @@ object Messages {
         if (tid.isNotEmpty()) line.put("tid", tid)
         Chats.add(context, session, line)
         if (tid.isNotEmpty()) receipt(context, listOf(tid), "delivered")  // it reached the phone: one tick for the agent
-        Chats.readAll(context, session)
-        post(context, agent, session)
+        Chats.readAll(context, session)  // the agent answered: your earlier lines there are read
+        if (viewing != session) post(context, agent, session)  // no banner for the chat on screen (2026-11-16)
         // The app open on that chat shows it at once, as a line from a call would (2026-11-15: a text reached the
         // notification and the kept chat, but the open screen didn't redraw)
         CallService.Bus.listener?.invoke(JSONObject().put("chat", JSONObject().put("from", IncomingActivity.nameOf(agent))
