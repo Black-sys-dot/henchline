@@ -277,7 +277,8 @@ class Listener:
         if not self.wake.feed(samples):
             return False
         if not self.transcriber.run(self.wake.confirm):
-            log(HANDSFREE_LOG, f"wake candidate rejected ({self.wake.word})")
+            near = f", nearest {self.wake.near:.2f}" if self.wake.near is not None else ""
+            log(HANDSFREE_LOG, f"wake candidate rejected ({self.wake.word}{near})")
             return False
         log(HANDSFREE_LOG, f"woke ({self.wake.word})")
         self.turn([], Heard.WOKE, floor)

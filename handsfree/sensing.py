@@ -160,10 +160,18 @@ class Detector:
         return False
 
 
+CLOSE = 0.8  # similarity at which a spelling counts as the word: "Jervis" 0.83 yes, "Charvis" 0.77 no
+
+
+def closeness(word: str, text: str) -> float:
+    """How near the nearest word in the text comes to the word (1.0: the word itself)."""
+    return max((difflib.SequenceMatcher(None, word.lower(), heard).ratio()
+                for heard in re.findall(r"[a-z]+", text.lower())), default=0.0)
+
+
 def said(word: str, text: str) -> bool:
     """The word, or a close spelling of it ("Jervis", "Javis"): without a hint Whisper spells a name its way."""
-    return any(difflib.SequenceMatcher(None, word.lower(), heard).ratio() >= 0.8
-               for heard in re.findall(r"[a-z]+", text.lower()))
+    return closeness(word, text) >= CLOSE
 
 
 class Wake:
@@ -204,6 +212,7 @@ class Wake:
         self.nominated: set[str] = set()  # words whose detector fired since the last confirm
         self.due = 0  # 30 ms frames still to take in before the nominated words are checked
         self.word = ""  # the word Whisper confirmed last
+        self.near: float | None = None  # how near the nearest heard word came to an unhinted name
 
     @classmethod
     def available(cls) -> Wake | None:
@@ -244,6 +253,8 @@ class Wake:
         heard = next((word for word in words
                       if (said(word, text) if word in close else re.search(rf"\b{word}\b", text, re.I))), "")
         self.word = heard or self.word
+        # A number, never the words: how near a rejected unhinted name came, to tune CLOSE from the room
+        self.near = max((closeness(word, text) for word in words if word in close), default=None)
         return bool(heard)
 
 
