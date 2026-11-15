@@ -2,3 +2,5 @@
 build/
 .gradle/
 local.properties
+# Henchman phrases made from someone's own voice (henchify_takes.py): their phone only
+app/src/debug/
