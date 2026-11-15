@@ -14,7 +14,7 @@ import threading
 import time
 
 import numpy as np
-from faster_whisper.vad import VadOptions
+from faster_whisper.vad import VadOptions, get_speech_timestamps
 
 from voice.state import (EC_SOURCE, EC_UNIT, HANDSFREE_LOG, JARVIS_MODEL, JARVIS_PERSONAL, WAKE_MODEL, log,
                          speaker_monitor)
@@ -143,10 +143,11 @@ class Detector:
     scores in a row above its threshold, then not again until a score drops below REARM."""
 
     def __init__(self, word: str, threshold: float, score, run: int = 2, hint: bool = True,
-                 settle: float = 0.0) -> None:
+                 settle: float = 0.0, trusted: bool = False) -> None:
         self.word, self.threshold, self.score, self.need = word, threshold, score, run
         self.hint = hint  # whether Whisper is told to expect the word when confirming it
         self.settle = settle  # seconds of audio after it fires before Whisper checks: the rest of the word
+        self.trusted = trusted  # its word needs no Whisper: a voice in the audio is enough
         self.rearm = min(0.3, threshold / 2)  # a score below this lets it fire again
         self.run, self.armed = 0, True
 
@@ -201,8 +202,11 @@ class Wake:
         # noise; without, 0 of 20, and every synthetic "hey Jarvis" still came out right (2026-11-15)
         if JARVIS_PERSONAL.exists():  # the user's own, trained like "hey Claude": it fires at the word's end
             personal = pickle.loads(JARVIS_PERSONAL.read_bytes())
+            # Trusted: from the hall Whisper made out "Jarvis" in 4 of 6 without a hint, and with one it said
+            # "Jarvis" for 30 of 64 windows that weren't; the detector itself nominated 0 times in 5.5 min of
+            # held-out room speech. So a voice in the audio (Silero) confirms it (2026-11-15)
             self.detectors.append(Detector("Jarvis", 0.9, lambda f: personal.predict_proba(f.reshape(1, -1))[0, 1],
-                                           hint=False))
+                                           hint=False, trusted=True))
         elif JARVIS_MODEL.exists():
             import onnxruntime
 
@@ -254,6 +258,11 @@ class Wake:
         self.word = "/".join(words)
         hints = " ".join(d.word for d in self.detectors if d.hint and d.word in words) or None
         audio = np.concatenate(self.ring).astype(np.float32) / 32768
+        self.near = None
+        trusted = [d.word for d in self.detectors if d.trusted and d.word in words]
+        if trusted and get_speech_timestamps(audio, SPEECH):  # a voice, not a bang: the detector's word stands
+            self.word = trusted[0]
+            return True
         segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=False, hotwords=hints)
         text = " ".join(seg.text for seg in segments)
         close = {d.word for d in self.detectors if not d.hint}  # unhinted names are spelled freely; "Claude" exact
