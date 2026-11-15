@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Bundle
 import android.widget.EditText
 import android.widget.LinearLayout
-import org.json.JSONObject
 
 /**
  * Henchline in the phone's Share menu: any file (pictures, videos, audio, zips, documents…) or text from any
@@ -47,15 +46,11 @@ class ShareActivity : Activity() {
             .show()
     }
 
-    /** On a call, the agent whose chat is showing; otherwise the laptop picks whoever you talked to last. */
+    /** The agent whose chat Henchline shows (kept across restarts): a share goes to that one, never elsewhere. */
     private fun current(): Pair<String, String> {
-        val agents = CallService.Bus.lastAgents?.let { JSONObject(it) } ?: return "" to "your crew"
-        val session = agents.optString("current")
-        val list = agents.optJSONArray("agents") ?: return "" to "your crew"
-        for (i in 0 until list.length()) {
-            val one = list.getJSONObject(i)
-            if (one.optString("session") == session) return session to one.optString("name").substringBefore(",")
-        }
-        return "" to "your crew"
+        val prefs = getSharedPreferences("call", MODE_PRIVATE)
+        val session = prefs.getString("current", "") ?: ""
+        val name = prefs.getString("current_name", "")?.substringBefore(",")?.ifEmpty { null } ?: "your agent"
+        return session to name
     }
 }

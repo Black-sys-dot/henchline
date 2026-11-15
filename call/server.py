@@ -389,6 +389,8 @@ async def share_tell(request: web.Request) -> web.Response:
         return web.json_response({"note": "Nothing to share."}, status=400)
     words = files.message(paths, text, note)
     session = str(shared.get("session", ""))
+    if not session and not in_call():  # off a call a share is a text: for one agent, named
+        return web.json_response({"note": "Pick an agent's chat in Henchline first, then share again."}, status=400)
     got, why = await asyncio.get_running_loop().run_in_executor(  # off a call it is a text: to that agent only
         None, to_agent, words, session, Heard.SHARED, in_call())
     return web.json_response({"to": got} if got else {"note": why})
@@ -403,7 +405,8 @@ async def texted(request: web.Request) -> web.Response:
         words, session = str(message.get("text", "")).strip(), str(message.get("session", ""))
     except (ValueError, AttributeError):
         raise web.HTTPBadRequest(text="expected JSON")
-    if not words or not session:  # a text is for one agent, named: never whoever spoke last
+    # A text always names its agent, never whoever spoke last; only a call's own chat may go to the last speaker
+    if not words or not session:
         return web.json_response({"note": "Nothing to send, or no agent named."}, status=400)
     got, why = await asyncio.get_running_loop().run_in_executor(
         None, to_agent, " ".join(words.split()), session, Heard.TEXTED, False)
