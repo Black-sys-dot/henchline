@@ -13,6 +13,7 @@ On some laptops the Copilot key sends the chord down and up immediately, so it c
 | `ptt/` | **Push-to-talk:** hold a key, speak, the words are typed into the focused window (`keys.py` the hotkey, `paste.py` the window, `tray.py` the icon, `ptt.py` records in between). Works on its own. | the rest of this page |
 | `talkback/` | **Talkback:** AI agents (Claude Code, Cursor) speak their replies through a local voice, one at a time. | `ptt/` only if you want it to go quiet while you talk |
 | `handsfree/` | **Hands-free:** talk with those agents without touching a key: a reply window after they speak, talking over them, and a personal wake word. | `ptt/` and `talkback/` |
+| `call/` | **Phone call:** the same conversation from your phone, over Tailscale: a web page streams your mic in and the agents' voices out, with a hold-to-talk button and a chat. | `handsfree/`, Tailscale on the laptop and the phone |
 | `agents/` | What the agents need to be told: one snippet for Claude Code, Cursor, Codex and anything reading `AGENTS.md`. | `talkback/` |
 | `voice/` | What the three share: the state files in `~/.local/state/ptt/` and their names (`state.py`), the settings, Whisper and the chime (`whisper.py`), tone marks (`tone.py`), talkback's queue of clips (`spool.py`), which agent and terminal tab a process belongs to (`agents.py`), windows, keys and the clipboard on X11 (`x11.py`). | nothing |
 
@@ -92,6 +93,18 @@ A leading "okay", "no" or "actually" is fine. Anything negated ("don't switch me
 The wake word is a personal detector: `handsfree/wakeword_collect.py` records you at a few spots around the house, `handsfree/wakeword_train.py` fits it on openWakeWord embeddings (`pip install --user --no-deps openwakeword`; its TFLite dependency has no Python 3.12 build), and Whisper confirms each candidate on just those two seconds.
 
 Log: `~/.local/state/ptt/handsfree.log` (events, no words)
+
+## Phone call
+
+`./install.sh call` runs a small web server (`call/server.py`, user unit `call.service`) on the laptop's Tailscale address, so only your own devices reach it, with a certificate of its own (the phone accepts it once). Open `https://<laptop's Tailscale IP>:8790` on the phone and tap **Call**: your mic goes into a virtual sink that hands-free listens to instead of the laptop mic, and talkback plays into another one that is streamed to the phone, so the laptop stays quiet. The phone's browser cancels its own echo.
+
+- On a call the line is open: just talk, no wake word needed; talking over the agent and switching agents work as at home.
+- The round button shows hands-free's state in the tray's colours (green listening, red recording, yellow transcribing, grey only the button gets in). **Hold** it to talk; **tap** it to turn the open line off in a noisy place, so noise cannot cut the agent off, and on again.
+- The chat shows what the agents say and when a spoken message went out; typed messages go to the agent that spoke last, and typed switch commands switch.
+- Nothing is typed while the laptop's screen is locked: agents in a terminal tab still get your words (over Konsole's D-Bus, no keys), the Cursor editor does not. Cursor's command-line agent in a terminal tab works.
+- Keep the page in front: phone browsers may stop the microphone in the background.
+
+With `sudo tailscale set --operator=$USER` done once, `call/server.py --host 127.0.0.1` behind `tailscale serve --bg 8790` gives a proper certificate instead.
 
 ## License
 
