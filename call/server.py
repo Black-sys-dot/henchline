@@ -40,7 +40,7 @@ from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
-                         TEXTS, VOICE_NOTES,
+                         TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
                          CALL_PORT, CALL_PUSH,
                          CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
                          PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SENT, SPEAKERS,
@@ -461,9 +461,12 @@ async def voice_note(request: web.Request) -> web.Response:
     hands-free to transcribe and type to that agent. Its id, to ask after it."""
     trusted(request)
     session = request.query.get("session", "")
-    if not session:
-        return web.json_response({"note": "No agent named."}, status=400)
+    # Only an agent hands-free knows (as /text): the session is never made into a path
+    if not any(s.session == session for s in recent_speakers()):
+        return web.json_response({"note": "That agent isn't known to the laptop."}, status=400)
     VOICE_NOTES.mkdir(parents=True, exist_ok=True)
+    if sum(1 for m in VOICE_NOTES.glob("*.json") if read_json(m).get("status") == "waiting") >= 5:
+        return web.json_response({"note": "Too many voice messages waiting."}, status=429)
     nid = secrets.token_hex(8)
     wav = VOICE_NOTES / f"{nid}.wav"
     size = 0
@@ -490,6 +493,11 @@ async def voice_note_status(request: web.Request) -> web.Response:
     meta = read_json(VOICE_NOTES / f"{nid}.json")
     if not meta:
         raise web.HTTPNotFound()
+    if meta.get("status") == "waiting" and time.time() - meta.get("at", 0) > VOICE_NOTE_STALE:
+        # Hands-free never got to it (off, or down): dropped now, so it is never typed after the phone gave up
+        meta.update(status="failed", note="Not sent: the laptop didn't transcribe it in time.")
+        write_json(VOICE_NOTES / f"{nid}.json", meta, private=True)
+        (VOICE_NOTES / f"{nid}.wav").unlink(missing_ok=True)
     return web.json_response({k: meta.get(k, "") for k in ("status", "text", "note")})
 
 

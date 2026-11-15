@@ -57,7 +57,8 @@ from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import files  # noqa: E402
 from voice.speech import whisper  # noqa: E402
 from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN, CALL_RING, CALL_RINGER,  # noqa: E402
-                         CLOSE, HANDSFREE_LOG, HANDSFREE_ON, TEXTS, VOICE_NOTES, read_json,
+                         CLOSE, HANDSFREE_LOG, HANDSFREE_ON, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES, read_json,
+                         recent_speakers,
                          LISTEN, SPEAKERS, Speaker, in_call, log,
                          release_phase, turn_on_handsfree, write_json)
 from voice.agents import identity  # noqa: E402
@@ -326,29 +327,46 @@ def voice_notes(transcriber: whisper.Transcriber, stop: threading.Event) -> None
     [hands-free · voice message from the phone]; what was heard, or why not, goes back for the phone to show."""
     while not stop.wait(1.0):
         for meta_path in sorted(VOICE_NOTES.glob("*.json")):
-            meta = read_json(meta_path)
-            if meta.get("status") != "waiting":
-                if time.time() - meta.get("at", 0) > 86400:  # the phone has long since asked: gone after a day
-                    meta_path.unlink(missing_ok=True)
-                continue
-            wav = meta_path.with_suffix(".wav")
-            try:
-                plain, rich = transcriber.file(wav)
-            except Exception as exc:  # a bad file, or Whisper failing: said, not left waiting
-                plain, rich = "", ""
-                log(HANDSFREE_LOG, f"voice message not transcribed: {exc}")
-            target = Speaker.load(SPEAKERS / f"{meta.get('session', '')}.json")
-            if not plain.strip():
-                result = {"status": "failed", "note": "Nothing heard in it."}
-            elif not target or not routing.reachable(target):
-                result = {"status": "failed", "text": plain, "note": "That agent isn't reachable."}
-            elif routing.deliver(rich or plain, routing.Heard.VOICE_NOTE, to=target):
-                result = {"status": "done", "text": plain}
-            else:
-                result = {"status": "failed", "text": plain, "note": "It couldn't be typed to the agent."}
-            write_json(meta_path, {**meta, **result}, private=True)
-            wav.unlink(missing_ok=True)
-            log(HANDSFREE_LOG, f"voice message: {result['status']}")
+            try:  # one bad note never stops the rest
+                voice_note(transcriber, meta_path)
+            except Exception as exc:
+                log(HANDSFREE_LOG, f"voice message {meta_path.stem} failed: {exc!r}")
+                write_json(meta_path, {**read_json(meta_path), "status": "failed", "note": "The laptop failed on it."},
+                           private=True)
+                meta_path.with_suffix(".wav").unlink(missing_ok=True)
+
+
+def voice_note(transcriber: whisper.Transcriber, meta_path: Path) -> None:
+    meta = read_json(meta_path)
+    age = time.time() - meta.get("at", 0)
+    wav = meta_path.with_suffix(".wav")
+    if meta.get("status") != "waiting":
+        if age > 86400:  # the phone has long since asked: gone after a day
+            meta_path.unlink(missing_ok=True)
+        return
+    if age > VOICE_NOTE_STALE:  # the phone has given up on it: never typed late
+        write_json(meta_path, {**meta, "status": "failed", "note": "Not sent: the laptop didn't transcribe it in time."},
+                   private=True)
+        wav.unlink(missing_ok=True)
+        return
+    try:
+        plain, rich = transcriber.file(wav)
+    except Exception as exc:  # a bad file, or Whisper failing: said, not left waiting
+        plain, rich = "", ""
+        log(HANDSFREE_LOG, f"voice message not transcribed: {exc}")
+    # By equality with an agent hands-free knows, as the call server checks: the session never becomes a path
+    target = next((s for s in recent_speakers() if s.session == meta.get("session")), None)
+    if not plain.strip():
+        result = {"status": "failed", "note": "Nothing heard in it."}
+    elif not target or not routing.reachable(target):
+        result = {"status": "failed", "text": plain, "note": "That agent isn't reachable."}
+    elif routing.deliver(rich or plain, routing.Heard.VOICE_NOTE, to=target):
+        result = {"status": "done", "text": plain}
+    else:
+        result = {"status": "failed", "text": plain, "note": "It couldn't be typed to the agent."}
+    write_json(meta_path, {**meta, **result}, private=True)
+    wav.unlink(missing_ok=True)
+    log(HANDSFREE_LOG, f"voice message: {result['status']}")
 
 
 def switch(words: list[str]) -> int:
