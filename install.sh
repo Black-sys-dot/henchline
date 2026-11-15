@@ -149,7 +149,7 @@ install_handsfree() {  # the call needs it too: once is enough
 install_call() {
   install_handsfree  # a call is hands-free with the phone as mic and speaker
   if command -v claude >/dev/null; then  # the terminal side of a Claude Code conversation, in the call's chat
-    "$root/call/claude_hooks.py" add && say "Claude Code: hooks show your terminal prompts and its replies in a call's chat"
+    "$root/call/hooks/claude_hooks.py" add && say "Claude Code: hooks show your terminal prompts and its replies in a call's chat"
   fi
   pip_install call
   for tool in tailscale openssl; do
@@ -166,7 +166,7 @@ install_call() {
   fi
   mkdir -p "$bin" "$units"
   ln -sfn "$root/call/server.py" "$bin/voice-call"
-  install -m 644 "$root/call/call.service" "$units/call.service"
+  install -m 644 "$root/call/system/call.service" "$units/call.service"
   systemctl --user daemon-reload
   systemctl --user enable call.service
   systemctl --user restart call.service
@@ -254,7 +254,7 @@ remove_handsfree() {
 
 remove_call() {
   remove_unit call.service
-  if [ -f "$HOME/.claude/settings.json" ]; then "$root/call/claude_hooks.py" remove; fi
+  if [ -f "$HOME/.claude/settings.json" ]; then "$root/call/hooks/claude_hooks.py" remove; fi
   remove_link "$bin/voice-call"
   systemctl --user daemon-reload
   say "Call page removed (its certificate kept in $share/copilot-ptt/call)"

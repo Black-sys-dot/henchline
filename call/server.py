@@ -92,7 +92,7 @@ class Status:
             self.clip = playing.clip
             lines.append({"chat": {"from": playing.agent.capitalize(), "text": playing.text,
                                    "session": playing.session}})
-        for line in sorted(CALL_MIRROR.glob("*.json")):  # typed in the terminal, or written there (call/mirror.py)
+        for line in sorted(CALL_MIRROR.glob("*.json")):  # typed in the terminal, or written there (call/hooks/mirror.py)
             mirrored = read_json(line)
             line.unlink(missing_ok=True)
             if mirrored.get("text"):

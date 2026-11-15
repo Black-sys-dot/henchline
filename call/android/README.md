@@ -38,7 +38,7 @@ On a call, the earbuds' button (play/pause) is push-to-talk: a tap starts talkin
 
 ## Terminal mirror
 
-On a call, a Claude Code hook (`call/mirror.sh`, added to `~/.claude/settings.json` by `./install.sh call`; off a call it only tests a file) also puts what you type in the terminal and Claude's written replies (not its tool calls) into that agent's chat. The phone keeps them with the rest of the chat (90 days, app-private, not backed up); key blocks, tokens and passwords in common shapes are replaced by [hidden] first, but not everything secret has a recognisable shape. `call/claude_hooks.py remove` takes the hook out.
+On a call, a Claude Code hook (`call/hooks/mirror.sh`, added to `~/.claude/settings.json` by `./install.sh call`; off a call it only tests a file) also puts what you type in the terminal and Claude's written replies (not its tool calls) into that agent's chat. The phone keeps them with the rest of the chat (90 days, app-private, not backed up); key blocks, tokens and passwords in common shapes are replaced by [hidden] first, but not everything secret has a recognisable shape. `call/hooks/claude_hooks.py remove` takes the hook out.
 
 ## Certificates
 

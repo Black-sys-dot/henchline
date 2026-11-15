@@ -1,7 +1,7 @@
 #!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
 """While a phone call is up, the terminal side of a Claude Code conversation in the phone's chat too.
 
-    a Claude Code hook (UserPromptSubmit and Stop) runs call/mirror.sh, which runs this only during a call
+    a Claude Code hook (UserPromptSubmit and Stop) runs call/hooks/mirror.sh, which runs this only during a call
 
 Key blocks, tokens and other secret-looking values are replaced by [hidden] first: the phone keeps its
 chats (90 days), and a pasted secret has no business there.
@@ -19,7 +19,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+sys.path.insert(0, str(Path(__file__).resolve().parents[2]))  # the repository, for voice/
 from voice.agents import identity  # noqa: E402
 from voice.state import CALL_MIRROR, in_call, write_json  # noqa: E402
 
