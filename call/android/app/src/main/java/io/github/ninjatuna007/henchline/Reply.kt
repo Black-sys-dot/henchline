@@ -17,7 +17,9 @@ object Reply {
 
     /** Only an https address on the distributor's server: the ring's own, not anyone's URL. */
     fun valid(url: String?): String? = url?.takeIf {
-        Uri.parse(it).let { u -> u.scheme == "https" && u.host == "ntfy.sh" && (u.path?.length ?: 0) > 10 }
+        Uri.parse(it).let { u ->
+            u.scheme == "https" && u.host == "ntfy.sh" && u.path?.startsWith("/henchline-") == true  // laptop-made
+        }
     }
 
     fun send(url: String?, what: String) {

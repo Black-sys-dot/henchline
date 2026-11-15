@@ -51,6 +51,7 @@ class MainActivity : Activity() {
     private var names = mapOf<String, String>()  // session: the name the server gives it
     private var typed = 0  // ids for typed lines, so a "not sent" note strikes the right one
     private var talking = false
+    private var pendingReply: String? = null  // an answered ring's report-back address, kept across set-up steps
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -82,6 +83,14 @@ class MainActivity : Activity() {
         RingService.register(this)  // so agents can ring this phone
         askFullScreen()
         answer(intent)
+    }
+
+    override fun onRequestPermissionsResult(code: Int, permissions: Array<out String>, results: IntArray) {
+        super.onRequestPermissionsResult(code, permissions, results)
+        if (code != MIC_FOR_CALL) return
+        val reply = pendingReply.also { pendingReply = null }
+        if (results.firstOrNull() == PackageManager.PERMISSION_GRANTED) call(reply)
+        else say("", "The call needs the microphone: allow it, then call again.", note = true)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -134,13 +143,13 @@ class MainActivity : Activity() {
             return
         }
         if (checkSelfPermission(Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            say("", "The call needs the microphone: allow it, then call again.", note = true)
-            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), 1)
+            pendingReply = reply ?: pendingReply  // the call is made when the microphone is allowed
+            requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO), MIC_FOR_CALL)
             return
         }
         val server = prefs().getString("server", "") ?: ""
         if (server.isEmpty()) {
-            askServer { call() }
+            askServer { call(reply) }
             return
         }
         state.text = "Connecting…"
@@ -401,6 +410,7 @@ class MainActivity : Activity() {
     companion object {
         const val HOLD_MS = 300L  // longer than this is a hold; shorter is a tap
         const val ANSWER = "io.github.ninjatuna007.henchline.ANSWER"  // from IncomingActivity's Answer
+        const val MIC_FOR_CALL = 2  // the permission request a call waits on
 
         /** Each agent's henchman, by its session (claude-…, cursor-…, codex-…) or its name. */
         fun avatarOf(sessionOrName: String): Int = when {

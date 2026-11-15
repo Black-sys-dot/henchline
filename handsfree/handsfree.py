@@ -79,13 +79,13 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
     speaker = last_speaker()
     who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
     reply = f"henchline-{secrets.token_urlsafe(16)}"  # this ring's own, used once
+    since = int(time.time()) - 1  # before the push: the phone may say "rang" before the push call returns
     pushed = ring_henchline(speaker.agent if speaker else "handsfree", why, f"{RING_SERVER}/{reply}")
     if not (pushed or topic and ntfy(topic, f"{who} is calling", why or "Tap Answer to talk.",
                                      {"Priority": "high", "Tags": "telephone", "Click": "henchline://call",
                                       "Actions": "view, Answer, henchline://call, clear=true"})):
         print("couldn't ring" + ("" if topic else f": no Henchline push address, and no ntfy topic in {RING_TOPIC}"))
         return 1
-    since = int(time.time()) - 1
     RANG.parent.mkdir(parents=True, exist_ok=True)
     RANG.touch()
     log(HANDSFREE_LOG, f"rang the user ({who})")
