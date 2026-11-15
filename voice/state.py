@@ -133,7 +133,7 @@ def speaker_monitor() -> str:
 
 # Data, not state: models, settings and recordings
 SHARE = Path.home() / ".local/share"
-VENV = SHARE / "copilot-ptt/venv"  # the private Python every tool runs on (its path is also in each shebang)
+VENV = SHARE / "henchline/venv"  # the private Python every tool runs on (its path is also in each shebang)
 KOKORO_MODELS = SHARE / "talkback"  # kokoro-v1.0.onnx and voices-v1.0.bin
 HANDSFREE_DATA = SHARE / "handsfree"
 WAKE_MODEL = HANDSFREE_DATA / "hey_claude_personal.pkl"  # the user's own "hey Claude"
@@ -146,7 +146,7 @@ EC_UNIT = "talkback-echo-cancel.service"
 EC_CONF = Path.home() / ".config/pipewire/talkback-echo-cancel.conf"
 OUTBOX = HANDSFREE_DATA / "outbox"  # files agents sent the phone (`handsfree send`): a folder each, named by its secret
 INBOX = Path.home() / "Downloads/Henchline"  # files the user shared from the phone, a folder per day
-CALL_TLS = SHARE / "copilot-ptt/call"  # cert.pem and key.pem: the call page's own certificate (install.sh call)
+CALL_TLS = SHARE / "henchline/call"  # cert.pem and key.pem: the call page's own certificate (install.sh call)
 
 # Who wrote the phase, and the agent name hands-free's own notices speak as
 BY_PTT = "ptt"

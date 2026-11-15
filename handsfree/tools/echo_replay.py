@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/henchline/venv/bin/python3" -E -s "$0" "$@"'
 """Replay an echo_collect.py session through the live talk-over code, offline.
 
     echo_replay.py SESSION [SUSTAIN] [GAP]

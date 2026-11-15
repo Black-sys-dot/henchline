@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/henchline/venv/bin/python3" -E -s "$0" "$@"'
 """Guided recordings of talking over talkback, to build a better talk-over detector offline.
 
     echo_collect.py [POSITION ...]

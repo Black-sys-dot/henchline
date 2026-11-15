@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/henchline/venv/bin/python3" -E -s "$0" "$@"'
 """A phone call with the agents: a web page that streams the phone's mic in and talkback out.
 
     call/server.py [--port 8790] [--host serve|tailscale|ADDRESS] [--cert PEM --key PEM]

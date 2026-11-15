@@ -1,6 +1,6 @@
 # Tests
 
-    ~/.local/share/copilot-ptt/venv/bin/python3 -m unittest discover -s tests -t .
+    ~/.local/share/henchline/venv/bin/python3 -m unittest discover -s tests -t .
 
 Unit tests per piece, run with the private venv's Python (they need numpy and aiohttp from it). Each starts from
 `tests/sandbox.py`, which swaps HOME for a throwaway folder first, so nothing touches your real

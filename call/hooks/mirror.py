@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/henchline/venv/bin/python3" -E -s "$0" "$@"'
 """While a phone call is up, the terminal side of a Claude Code conversation in the phone's chat too.
 
     a Claude Code hook (UserPromptSubmit and Stop) runs call/hooks/mirror.sh, which runs this only during a call

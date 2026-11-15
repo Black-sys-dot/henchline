@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/henchline/venv/bin/python3" -E -s "$0" "$@"'
 """Take one real hands-free turn offline: a recording of the user's voice as the mic, delivery stubbed.
 
     tests/handsfree/turn_offline.py [WAV]   (default: the "talk normally" wake-word sample)

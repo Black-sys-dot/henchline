@@ -10,7 +10,7 @@ try:
     from aiohttp import web
     from aiohttp.test_utils import AioHTTPTestCase
 except ImportError:  # the call's own packages are in the project's venv: run the suite with its python
-    raise unittest.SkipTest("aiohttp missing: run with ~/.local/share/copilot-ptt/venv/bin/python3")
+    raise unittest.SkipTest("aiohttp missing: run with ~/.local/share/henchline/venv/bin/python3")
 
 spec = importlib.util.spec_from_file_location("call_server", sandbox.REPO / "call/server.py")
 server = importlib.util.module_from_spec(spec)

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/henchline/venv/bin/python3" -E -s "$0" "$@"'
 """Train a personal "hey Claude" (or "hey Jarvis") detector from wakeword_collect.py recordings.
 
     wakeword_train.py [--word jarvis] [--finder large-v3-turbo]

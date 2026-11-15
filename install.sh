@@ -2,13 +2,13 @@
 # Install or remove the pieces, each on its own:
 #   ./install.sh ptt|talkback|handsfree|call|agents|all ...
 #   ./install.sh remove ptt|talkback|handsfree|call|agents|all ...
-# Python packages go into one private venv (~/.local/share/copilot-ptt/venv);
+# Python packages go into one private venv (~/.local/share/henchline/venv);
 # nothing is installed into the system or the user's own Python. Removing a
 # piece leaves the venv, voice models and wake-word recordings in place.
 set -eu
 root=$(CDPATH= cd -- "$(dirname "$0")" && pwd)
 share="$HOME/.local/share"
-venv="$share/copilot-ptt/venv"
+venv="$share/henchline/venv"
 bin="$HOME/.local/bin"
 units="$HOME/.config/systemd/user"
 kokoro="$share/talkback"  # Kokoro model files (the worker reads them here)
@@ -155,7 +155,7 @@ install_call() {
   for tool in tailscale openssl; do
     command -v "$tool" >/dev/null || { say "The call page needs $tool"; exit 1; }
   done
-  tls="$share/copilot-ptt/call"
+  tls="$share/henchline/call"
   if [ ! -s "$tls/cert.pem" ]; then  # its own certificate; the phone accepts it once
     mkdir -p "$tls"
     ip=$(tailscale ip -4 | head -n 1)
@@ -193,7 +193,7 @@ install_agents() {
   if [ -d "$HOME/.cursor" ]; then
     mkdir -p "$HOME/.cursor/rules" "$HOME/.cursor/skills"
     # The Cursor rule is the same snippet under Cursor's header, made here so there is one copy of the text
-    { printf -- '---\ndescription: Talkback, tone marks, hands-free messages, calling the user and files (from copilot-ptt/agents/AGENTS-snippet.md)\nalwaysApply: true\n---\n\n'
+    { printf -- '---\ndescription: Talkback, tone marks, hands-free messages, calling the user and files (from henchline/agents/AGENTS-snippet.md)\nalwaysApply: true\n---\n\n'
       cat "$snippet"; } > "$HOME/.cursor/rules/voice.mdc"
     ln -sfn "$root/talkback" "$HOME/.cursor/skills/talkback"
     keys="$HOME/.config/Cursor/User/keybindings.json"
@@ -257,7 +257,7 @@ remove_call() {
   if [ -f "$HOME/.claude/settings.json" ]; then "$root/call/hooks/claude_hooks.py" remove; fi
   remove_link "$bin/voice-call"
   systemctl --user daemon-reload
-  say "Call page removed (its certificate kept in $share/copilot-ptt/call)"
+  say "Call page removed (its certificate kept in $share/henchline/call)"
 }
 
 remove_agents() {

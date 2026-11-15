@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/henchline/venv/bin/python3" -E -s "$0" "$@"'
 """Record someone performing the ring phrases, for the henchman voices.
 
     call/android/record_phrases.py [--device SOURCE] [AGENT ...]   (default: the default mic, every agent)

@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/henchline/venv/bin/python3" -E -s "$0" "$@"'
 """Score Whisper models on the user's own voice (asr_collect.py's test set).
 
     asr_bench.py [--strict] [--names] [MODEL ...]      (default: small medium distil-large-v3 large-v3-turbo)

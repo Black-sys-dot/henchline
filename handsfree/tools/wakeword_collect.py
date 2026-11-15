@@ -1,4 +1,4 @@
-#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
+#!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/henchline/venv/bin/python3" -E -s "$0" "$@"'
 """Guided "hey Claude" (or "hey Jarvis") recordings around the house, scored as they come in.
 
     wakeword_collect.py [--word jarvis] [POSITION ...]
