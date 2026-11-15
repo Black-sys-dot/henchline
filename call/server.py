@@ -22,6 +22,7 @@ import asyncio
 import json
 import os
 import re
+import shutil
 import ssl
 import subprocess
 import sys
@@ -35,8 +36,9 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
+from voice import files  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
-from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_PORT, CALL_PUSH,  # noqa: E402
+from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_ORIGIN, CALL_PORT, CALL_PUSH,  # noqa: E402
                          CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
                          PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SPEAKERS,
                          SPOOL, Sent, Speaker, in_call, last_speaker, log, phase_now, read_json,
@@ -51,6 +53,7 @@ STATUS_EVERY = 0.2  # seconds between looks at what hands-free and talkback are 
 AGENTS_EVERY = 3.0  # seconds between looks at which agents can be switched to
 RING_HOSTS = ("ntfy.sh",)  # where Henchline's UnifiedPush addresses may live: the ntfy app's server
 RINGER_FRESH = 180  # seconds a ring stays the one a call answers (it rings 30; Answer may wait for an unlock)
+KEEP_FREE = 2 * 1024 ** 3  # bytes an upload leaves free on the laptop's disk: past that it is refused
 HANGUP_SAY, HANGUP_MAX = 0.5, 10.0  # a hang-up waits for talkback to finish (its queue empty, nothing playing),
 # at least this long for the goodbye to be queued, and at most this: past it the call ends even mid-sentence
 
@@ -67,6 +70,7 @@ class Status:
         self.since = time.time()
         self.waiting_for = ""  # the agent a message went to, until it starts speaking
         self.clip = ""  # the clip last put in the chat
+        self.files_since = time.time()  # files agents send from now on are shown
 
     def events(self) -> list[dict]:
         """New chat lines: what an agent started saying, and that a spoken message went out."""
@@ -76,13 +80,19 @@ class Status:
             self.since = sent.at
             self.waiting_for = sent.agent.capitalize()
             if sent.heard != Heard.TYPED.value:  # a typed one is in the chat already, as the page sent it
-                lines.append({"chat": {"from": "you", "text": f"(spoken, sent to {self.waiting_for})",
+                how = "shared from your phone" if sent.heard == Heard.SHARED.value else "spoken"
+                lines.append({"chat": {"from": "you", "text": f"({how}, sent to {self.waiting_for})",
                                        "session": sent.session}})
         playing = Playing.now()
         if playing and playing.clip != self.clip:
             self.clip = playing.clip
             lines.append({"chat": {"from": playing.agent.capitalize(), "text": playing.text,
                                    "session": playing.session}})
+        for meta in files.sent_since(self.files_since):  # `handsfree send`: a file in the chat
+            self.files_since = meta["at"]
+            lines.append({"chat": {"from": meta["agent"].capitalize(), "text": meta["text"], "session": meta["session"],
+                                   "file": {"url": files.link(meta), "name": meta["name"], "type": meta["type"],
+                                            "size": meta["size"]}}})
         return lines
 
     def now(self) -> dict:
@@ -263,31 +273,105 @@ def switch(session: str) -> None:
 
 
 def typed(words: str, session: str) -> str:
-    """A typed line, to the agent whose chat it was typed in; a switch ("switch me to Cursor") works as spoken.
-
-    Another agent may have spoken since the page last heard who is current: the chat shown wins, so the words
-    go where the page put them, or nowhere (and a note says so). No session: no agent yet, to the last one.
-    """
+    """A typed line, to the agent whose chat it was typed in; a switch ("switch me to Cursor") works as spoken."""
     if routing.meaning(words) is routing.Meaning.ROUTING:
         routing.route(words, None)
         return ""
+    return to_agent(words, session, Heard.TYPED)[1]
+
+
+def to_agent(words: str, session: str, heard: Heard) -> tuple[str, str]:
+    """Words for the agent whose chat the phone shows: (who got them, "") or ("", a note why nobody did).
+
+    Another agent may have spoken since the phone last heard who is current: the chat shown wins, so the words
+    go where the phone put them, or nowhere (and a note says so). No session: no agent yet, to the last one.
+    """
     if session:
         target = next((s for s in recent_speakers() if s.session == session), None)
         if not target or not routing.reachable(target):
-            return "That agent isn't reachable, so I didn't send that. Pick another and send again."
+            return "", "That agent isn't reachable, so I didn't send that. Pick another and send again."
         current = last_speaker()
         if not current or current.session != session:
             routing.switch_to(target)
-    routing.deliver(words, Heard.TYPED)
-    return ""
+    if not routing.deliver(words, heard):  # it says why out loud on the laptop
+        return "", "No agent could take that just now (the laptop says why)."
+    got = last_speaker()
+    return (got.spoken() if got else "your agent"), ""
+
+
+def trusted(request: web.Request) -> None:
+    """Only the call page, or Henchline, which sends the page's own Origin. Browsers let any web page open a
+    WebSocket or post a form to any address: without this, a page on some other site, open on the phone, could
+    type into the agents' terminals. Not a password: a program on the tailnet can send any Origin. Only your
+    own devices reaching the Tailscale address is the real boundary."""
+    origin = f"https://{request.host}"
+    if request.headers.get("Origin") != origin:
+        raise web.HTTPForbidden(text="only the call page may connect")
+    if CALL_ORIGIN.exists() and CALL_ORIGIN.read_text() == origin:
+        return
+    CALL_ORIGIN.write_text(origin)  # where `handsfree send` points a notification's link
+
+
+async def share_file(request: web.Request) -> web.Response:
+    """One file shared from the phone, streamed to INBOX/<today>/: the name it was saved under, for share_tell.
+    Nothing is overwritten, and an upload that would leave under KEEP_FREE on the disk is refused."""
+    trusted(request)
+    folder = files.inbox_today()
+    path = files.unused(folder, files.safe_name(request.query.get("name", "file")))
+    part = path.with_name(f".{path.name}.part")
+    size = 0
+    try:
+        with part.open("wb") as out:
+            while chunk := await request.content.read(1 << 20):
+                size += len(chunk)
+                if size % (64 << 20) < len(chunk) and shutil.disk_usage(folder).free < KEEP_FREE:
+                    raise OSError("the laptop's disk is nearly full")
+                out.write(chunk)
+        if shutil.disk_usage(folder).free < KEEP_FREE:
+            raise OSError("the laptop's disk is nearly full")
+        path = files.unused(folder, path.name)  # another upload of the same name may have finished meanwhile
+        part.rename(path)
+    except (OSError, ConnectionError) as exc:
+        part.unlink(missing_ok=True)
+        log(HANDSFREE_LOG, f"call: a shared file didn't arrive whole ({exc})")
+        return web.json_response({"note": f"Not saved: {exc}"}, status=507 if "disk" in str(exc) else 400)
+    log(HANDSFREE_LOG, f"call: the phone shared a file ({files.size_text(size)})")
+    return web.json_response({"saved": path.name})
+
+
+async def share_tell(request: web.Request) -> web.Response:
+    """After the uploads: the agent the user is talking to is told where the files are, with any words shared.
+    {"files": [saved names], "text": shared text, "note": what the user added, "session": the chat shown}"""
+    trusted(request)
+    try:
+        shared = await request.json()
+        names = [str(n) for n in shared.get("files", [])]
+    except (ValueError, AttributeError, TypeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    paths = [files.received(n) for n in names]
+    if None in paths:
+        return web.json_response({"note": "Some of those files never arrived on the laptop."}, status=400)
+    text, note = str(shared.get("text", "")), str(shared.get("note", ""))
+    if not paths and not (text + note).strip():
+        return web.json_response({"note": "Nothing to share."}, status=400)
+    words = files.message(paths, text, note)
+    got, why = await asyncio.get_running_loop().run_in_executor(
+        None, to_agent, words, str(shared.get("session", "")), Heard.SHARED)
+    return web.json_response({"to": got} if got else {"note": why})
+
+
+async def sent_file(request: web.Request) -> web.StreamResponse:
+    """A file an agent sent (`handsfree send`): only its secret folder name finds it."""
+    path = files.find(request.match_info["secret"], request.match_info["name"])
+    if not path:
+        raise web.HTTPNotFound()
+    quoted = urllib.parse.quote(path.name)
+    return web.FileResponse(path, headers={"Content-Type": files.kind(path),
+                                           "Content-Disposition": f"inline; filename*=UTF-8''{quoted}"})
 
 
 async def call(request: web.Request) -> web.WebSocketResponse:
-    # Browsers let any web page open a WebSocket to any address: without this, a page on some other site,
-    # open on the phone, could type into the agents' terminals. Not a password: a program on the tailnet
-    # can send any Origin. Only your own devices reaching the Tailscale address is the real boundary
-    if request.headers.get("Origin") != f"https://{request.host}":
-        raise web.HTTPForbidden(text="only the call page may connect")
+    trusted(request)
     ws = web.WebSocketResponse(heartbeat=15)
     await ws.prepare(request)
     if in_call():
@@ -421,6 +505,9 @@ def main() -> int:
     app = web.Application()
     app.router.add_get("/", lambda _: web.FileResponse(HERE / "page.html"))
     app.router.add_get("/call", call)
+    app.router.add_post("/share/file", share_file)
+    app.router.add_post("/share/tell", share_tell)
+    app.router.add_get("/files/{secret}/{name}", sent_file)
     proxied = False
     if args.host in ("serve", "tailscale"):
         try:

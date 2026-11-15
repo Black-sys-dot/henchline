@@ -105,8 +105,13 @@ class MainActivity : Activity() {
     /** Opened from henchline://call (an agent rang): ask, as a phone does. Any app or web page can open the
      *  link, so it never turns the mic on by itself: only Answer connects. */
     private fun answer(intent: Intent?) {
-        if (intent?.action == ANSWER) {  // Answer on IncomingActivity: the user's own tap, so connect
+        if (intent?.action == OPEN_FILE) {
+            openFromNotification(intent)
+            return
+        }
+        if (intent?.action == ANSWER) {  // Answer on IncomingActivity or the ring's banner: the user's own tap
             intent.action = null
+            getSystemService(android.app.NotificationManager::class.java).cancel(RingService.NOTIFICATION)  // stop ringing
             call(intent.getStringExtra(IncomingActivity.REPLY))
             return
         }
@@ -220,7 +225,10 @@ class MainActivity : Activity() {
             status.has("chat") -> {
                 val line = status.getJSONObject("chat")
                 val from = line.getString("from")
-                say(from, line.getString("text"), mine = from == "you", session = line.optString("session"))
+                val file = line.optJSONObject("file")
+                if (file == null || line.optString("text").isNotEmpty())
+                    say(from, line.getString("text"), mine = from == "you", session = line.optString("session"))
+                if (file != null) fileCard(from, file, line.optString("session"))
             }
             status.has("agents") -> showAgents(status)
             status.has("note") -> {
@@ -414,10 +422,177 @@ class MainActivity : Activity() {
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
 
+    /** A file an agent sent: a picture shown small (tap for it whole), audio with its own play button, anything
+     *  else as a card that saves and opens it. Long-press any of them to save it and open it in another app. */
+    private fun fileCard(from: String, file: JSONObject, session: String) {
+        val url = file.getString("url")
+        val name = file.optString("name", "file")
+        val type = file.optString("type", "application/octet-stream")
+        val size = file.optLong("size")
+        val card = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(R.drawable.bubble_agent)
+            setPadding(dp(10), dp(10), dp(10), dp(10))
+            setOnLongClickListener { Files.open(this@MainActivity, url, name, type) { say("", it, note = true) }; true }
+        }
+        val label = TextView(this).apply {
+            text = "$name · ${Files.sizeText(size)}"
+            setTextColor(getColor(R.color.muted))
+            textSize = 13f
+        }
+        when {
+            type.startsWith("image/") -> {
+                val picture = ImageView(this).apply {
+                    adjustViewBounds = true
+                    maxHeight = dp(280)
+                    scaleType = ImageView.ScaleType.FIT_START
+                    setOnClickListener { showPicture(url, name, type) }
+                }
+                card.addView(picture, LinearLayout.LayoutParams(dp(240), LinearLayout.LayoutParams.WRAP_CONTENT))
+                Thread {
+                    val bitmap = Files.preview(this, url, dp(240))
+                    main.post { if (bitmap != null) picture.setImageBitmap(bitmap) else label.text = "$name (couldn't load the preview: tap and hold to download)" }
+                }.start()
+                card.addView(label)
+            }
+            type.startsWith("audio/") -> card.addView(audioRow(url, name, size))
+            else -> {
+                label.text = "📎 $name · ${Files.sizeText(size)}\nTap to open"
+                label.setTextColor(getColor(R.color.text))
+                label.textSize = 15f
+                card.setOnClickListener { Files.open(this, url, name, type) { say("", it, note = true) } }
+                card.addView(label)
+            }
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.START or Gravity.BOTTOM
+            setPadding(0, dp(4), 0, dp(4))
+            setTag(R.id.chat, session)
+            visibility = if (session.isEmpty() || current.isEmpty() || session == current) View.VISIBLE else View.GONE
+        }
+        row.addView(ImageView(this).apply { setImageResource(avatarOf(session.ifEmpty { from })) },
+            LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) })
+        row.addView(card)
+        chat.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT))
+        chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    /** Play and pause, streamed from the laptop: one sound at a time, and not over the call's own voices'
+     *  loudness (the call ducks it as it would music). */
+    private fun audioRow(url: String, name: String, size: Long): View {
+        val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
+        val button = ImageButton(this).apply {
+            setImageResource(android.R.drawable.ic_media_play)
+            setBackgroundResource(R.drawable.round_call)
+            backgroundTintList = android.content.res.ColorStateList.valueOf(getColor(R.color.cyan))
+            contentDescription = "Play $name"
+        }
+        val label = TextView(this).apply {
+            text = "$name\n${Files.sizeText(size)}"
+            setTextColor(getColor(R.color.text))
+            textSize = 14f
+            setPadding(dp(12), 0, 0, 0)
+        }
+        row.addView(button, LinearLayout.LayoutParams(dp(44), dp(44)))
+        row.addView(label, LinearLayout.LayoutParams(dp(190), LinearLayout.LayoutParams.WRAP_CONTENT))
+        button.setOnClickListener { playOrPause(url, button, label, name) }
+        return row
+    }
+
+    private var sound: android.media.MediaPlayer? = null
+    private var soundUrl = ""
+    private var soundButton: ImageButton? = null
+
+    private fun playOrPause(url: String, button: ImageButton, label: TextView, name: String) {
+        val playing = sound
+        if (playing != null && soundUrl == url) {
+            if (playing.isPlaying) { playing.pause(); button.setImageResource(android.R.drawable.ic_media_play) }
+            else { playing.start(); button.setImageResource(android.R.drawable.ic_media_pause) }
+            return
+        }
+        stopSound()
+        val address = Files.resolve(this, url) ?: return
+        soundUrl = url
+        soundButton = button
+        label.text = "$name\nLoading…"
+        sound = android.media.MediaPlayer().apply {
+            setAudioAttributes(android.media.AudioAttributes.Builder().setUsage(android.media.AudioAttributes.USAGE_MEDIA)
+                .setContentType(android.media.AudioAttributes.CONTENT_TYPE_MUSIC).build())
+            setOnPreparedListener {
+                label.text = "$name\n${it.duration / 60000}:${"%02d".format(it.duration / 1000 % 60)}"
+                it.start()
+                button.setImageResource(android.R.drawable.ic_media_pause)
+            }
+            setOnCompletionListener { button.setImageResource(android.R.drawable.ic_media_play) }
+            setOnErrorListener { _, _, _ ->
+                label.text = "$name\nCouldn't play it here: tap and hold to download"
+                stopSound()
+                true
+            }
+            try {
+                setDataSource(address)
+                prepareAsync()
+            } catch (e: Exception) {
+                label.text = "$name\nCouldn't play it: ${e.message}"
+            }
+        }
+    }
+
+    private fun stopSound() {
+        sound?.release()
+        sound = null
+        soundUrl = ""
+        soundButton?.setImageResource(android.R.drawable.ic_media_play)
+        soundButton = null
+    }
+
+    /** A picture whole, over the call screen; the button saves it and opens it in another app. */
+    private fun showPicture(url: String, name: String, type: String) {
+        val picture = ImageView(this).apply { adjustViewBounds = true; setBackgroundColor(0xFF000000.toInt()) }
+        val dialog = AlertDialog.Builder(this)
+            .setTitle(name)
+            .setView(picture)
+            .setPositiveButton("Save and open") { _, _ -> Files.open(this, url, name, type) { say("", it, note = true) } }
+            .setNegativeButton("Close", null)
+            .show()
+        Thread {
+            val bitmap = Files.preview(this, url, resources.displayMetrics.widthPixels)
+            main.post { if (dialog.isShowing && bitmap != null) picture.setImageBitmap(bitmap) }
+        }.start()
+    }
+
+    /** A file from a notification (no call up, or the call screen wasn't showing): pictures and audio here,
+     *  anything else saved and opened. */
+    private fun openFromNotification(intent: Intent) {
+        val url = intent.getStringExtra(Files.URL) ?: return
+        val name = intent.getStringExtra(Files.NAME) ?: "file"
+        val type = intent.getStringExtra(Files.TYPE) ?: "application/octet-stream"
+        intent.action = null
+        val note: (String) -> Unit = { android.widget.Toast.makeText(this, it, android.widget.Toast.LENGTH_SHORT).show() }
+        when {
+            type.startsWith("image/") -> showPicture(url, name, type)
+            type.startsWith("audio/") -> {
+                val holder = LinearLayout(this).apply { setPadding(dp(24), dp(16), dp(24), 0) }
+                val row = audioRow(url, name, intent.getLongExtra(Files.SIZE, 0)) as LinearLayout
+                holder.addView(row)
+                AlertDialog.Builder(this).setTitle(name).setView(holder)
+                    .setPositiveButton("Save and open") { _, _ -> Files.open(this, url, name, type, note) }
+                    .setNegativeButton("Close", null)
+                    .setOnDismissListener { stopSound() }
+                    .show()
+                row.getChildAt(0).performClick()  // it starts playing
+            }
+            else -> Files.open(this, url, name, type, note)
+        }
+    }
+
     companion object {
         const val HOLD_MS = 300L  // longer than this is a hold; shorter is a tap
         const val ANSWER = "io.github.ninjatuna007.henchline.ANSWER"  // from IncomingActivity's Answer
         const val MIC_FOR_CALL = 2  // the permission request a call waits on
+        const val OPEN_FILE = "io.github.ninjatuna007.henchline.OPEN_FILE"  // a file's notification, tapped
 
         /** Each agent's henchman, by its session (claude-…, cursor-…, codex-…) or its name. */
         fun avatarOf(sessionOrName: String): Int = when {

@@ -175,7 +175,18 @@ async function start() {
     const status = JSON.parse(e.data);
     if (status.chat) {
       const c = status.chat;
-      say(c.from, c.text, c.from === 'you' ? 'you' : '', c.session || '');
+      const div = say(c.from, c.text || '', c.from === 'you' ? 'you' : '', c.session || '');
+      if (c.file) {  // an agent sent a file (`handsfree send`): a picture shown, audio playable, anything else a link
+        const kind = (c.file.type || '').split('/')[0];
+        const el = kind === 'image' ? Object.assign(document.createElement('img'), {style: 'max-width:100%;display:block'})
+          : kind === 'audio' ? Object.assign(document.createElement('audio'), {controls: true})
+          : kind === 'video' ? Object.assign(document.createElement('video'), {controls: true, style: 'max-width:100%'})
+          : Object.assign(document.createElement('a'), {textContent: `📎 ${c.file.name}`, target: '_blank'});
+        if (el.tagName === 'A') el.href = c.file.url; else el.src = c.file.url;
+        const link = Object.assign(document.createElement('a'), {href: c.file.url, download: c.file.name,
+                                                                  textContent: c.file.name, style: 'display:block'});
+        div.append(el, ...(el.tagName === 'A' ? [] : [link]));
+      }
       return;
     }
     if (status.agents) { showAgents(status.agents, status.current); return; }

@@ -32,6 +32,8 @@ class IncomingActivity : Activity() {
         super.onCreate(savedInstanceState)
         setShowWhenLocked(true)
         setTurnScreenOn(true)
+        // Opened from a ringing banner (the phone was in use): this screen rings now, so the banner's tone stops
+        getSystemService(NotificationManager::class.java).cancel(RingService.NOTIFICATION)
         val agent = (intent.getStringExtra(AGENT) ?: "").takeIf { it in FLAVOURS } ?: "handsfree"
         val why = intent.getStringExtra(WHY) ?: ""
         reply = intent.getStringExtra(REPLY)

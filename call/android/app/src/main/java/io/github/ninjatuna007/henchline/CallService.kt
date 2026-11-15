@@ -187,6 +187,13 @@ class CallService : Service() {
                 val message = try { org.json.JSONObject(text) } catch (_: Exception) { null }
                 if (message?.has("agents") == true) Bus.lastAgents = text
                 else if (message?.has("mode") == true) Bus.lastMode = text
+                val file = message?.optJSONObject("chat")?.optJSONObject("file")
+                if (file != null && Bus.listener == null) {  // the call screen isn't showing: don't let it pass unseen
+                    val line = message.getJSONObject("chat")
+                    Files.notify(this@CallService, line.optString("from").lowercase(), line.optString("text"),
+                        file.optString("url"), file.optString("name", "file"),
+                        file.optString("type", "application/octet-stream"), file.optLong("size"))
+                }
                 Bus.listener?.invoke(text)
             }
 

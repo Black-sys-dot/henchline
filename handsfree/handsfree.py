@@ -14,6 +14,11 @@
                                        Unless answered, a missed call with WHY is left in ntfy (the topic is
                                        read from ~/.config/ptt/ntfy-topic). --now: past the 2-minute limit,
                                        for a ring the user asked for. --no-wait: ring and return
+    handsfree send FILE [FILE ...] [WORDS]
+                                       show the user files on their phone: in the call's chat while a call
+                                       is up, else a Henchline notification (an ntfy one if Henchline can't
+                                       be pushed) that saves and opens it. Any type; kept 7 days. Exit 0 sent,
+                                       1 not
 
 The built-in mic runs through the echo canceller (sensing.py). The listener
 (listener.py) records a turn when the user talks after a clip, over a clip,
@@ -40,8 +45,8 @@ import routing  # noqa: E402
 import tray  # noqa: E402
 from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
-from voice import whisper  # noqa: E402
-from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_RING, CALL_RINGER, CLOSE,  # noqa: E402
+from voice import files, whisper  # noqa: E402
+from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_ORIGIN, CALL_RING, CALL_RINGER, CLOSE,  # noqa: E402
                          HANDSFREE_LOG, HANDSFREE_ON, LISTEN, SPEAKERS, Speaker, in_call, log,
                          release_phase, turn_on_handsfree, write_json)
 from voice.agents import identity  # noqa: E402
@@ -133,6 +138,57 @@ def ring_ended(who: str, what: str, code: int, topic: str = "", why: str = "") -
     return code
 
 
+def send(args: list[str]) -> int:
+    """Files for the user's phone, from the agent running this: `handsfree send FILE … [WORDS]` (the leading
+    arguments that are files are the files; the rest are the words that come with them)."""
+    paths = []
+    while args and Path(args[0]).expanduser().is_file():
+        paths.append(Path(args.pop(0)).expanduser())
+    if not paths:
+        print("usage: handsfree send FILE [FILE ...] [WORDS]  (no such file: " + (args[0] if args else "none given") + ")")
+        return 1
+    words = " ".join(args)
+    speaker = caller()
+    agent, session = (speaker.agent, speaker.session) if speaker else identity()
+    metas = [files.post(p, words if i == len(paths) - 1 else "", agent, session) for i, p in enumerate(paths)]
+    if in_call():  # the call server shows them in the chat within a moment
+        print(f"sent to the call's chat: {', '.join(m['name'] for m in metas)}")
+        log(HANDSFREE_LOG, f"{agent} sent {len(metas)} file(s) to the call's chat")
+        return 0
+    origin = CALL_ORIGIN.read_text().strip() if CALL_ORIGIN.exists() else ""
+    if not origin:
+        print("no call has connected yet, so the phone's address for files isn't known: call once, then send")
+        return 1
+    pushed = 0
+    for meta in metas:
+        url = origin + files.link(meta)
+        body = {"agent": agent, "why": meta["text"], "file": {"url": url, "name": meta["name"],
+                                                             "type": meta["type"], "size": meta["size"]}}
+        if CALL_RING.exists() and push(json.dumps(body).encode()):
+            pushed += 1
+            continue
+        topic = RING_TOPIC.read_text().strip() if RING_TOPIC.exists() else ""
+        if topic and ntfy(topic, f"{agent.capitalize()} sent you {meta['name']}",
+                          meta["text"] or f"{files.size_text(meta['size'])}: tap to open (needs Tailscale on)",
+                          {"Click": url, "Tags": "paperclip"}):
+            pushed += 1
+    log(HANDSFREE_LOG, f"{agent} sent {pushed} of {len(metas)} file(s) to the phone")
+    print(f"sent {pushed} of {len(metas)} to the phone as notifications" if pushed else "couldn't reach the phone")
+    return 0 if pushed == len(metas) else 1
+
+
+def push(body: bytes) -> bool:
+    """Henchline's own push address (the ntfy app wakes it): never printed."""
+    try:
+        urllib.request.urlopen(urllib.request.Request(CALL_RING.read_text().strip(), data=body,
+                                                      headers={"Content-Type": "application/json"}),
+                               timeout=10).close()
+        return True
+    except (OSError, ValueError) as exc:
+        print(f"Henchline's push address failed ({exc.__class__.__name__})")
+        return False
+
+
 def replies(reply: str, since: int) -> set[str]:
     """What Henchline has posted to this ring's reply address so far: rang, declined, missed, unreachable."""
     try:
@@ -148,15 +204,10 @@ def ring_henchline(agent: str, why: str, reply: str) -> bool:
     which posts what happens to it (rang, declined, missed, unreachable) to `reply`."""
     if not CALL_RING.exists():
         return False
-    body = json.dumps({"agent": agent, "why": why, "reply": reply}).encode()
-    try:
-        urllib.request.urlopen(urllib.request.Request(CALL_RING.read_text().strip(), data=body,
-                                                      headers={"Content-Type": "application/json"}),
-                               timeout=10).close()
+    if push(json.dumps({"agent": agent, "why": why, "reply": reply}).encode()):
         return True
-    except (OSError, ValueError) as exc:
-        print(f"Henchline's push address failed ({exc.__class__.__name__}): an ntfy notification instead")
-        return False
+    print("an ntfy notification instead")
+    return False
 
 
 def ntfy(topic: str, title: str, message: str, headers: dict[str, str]) -> bool:
@@ -225,6 +276,8 @@ def main() -> int:
         now = "--now" in args  # the user asked for this ring: past the limit meant for agents
         wait = "--no-wait" not in args
         return ring(" ".join(a for a in args if a not in ("--now", "--no-wait")), now, wait)
+    if command == "send":
+        return send(args)
     if command == "hangup":
         if not in_call():
             print("no phone call is up")

@@ -35,6 +35,7 @@ class Heard(str, Enum):
     CALL = "call"  # on a phone call, where the user talks whenever they like
     PUSHED = "call, held the talk button"  # on a phone call, while holding the page's talk button
     TYPED = "call, typed"  # typed into the call page's chat, not spoken
+    SHARED = "shared from the phone"  # files or text shared to Henchline from another app
 
 
 NAMES = "|".join(SPOKEN_TO)

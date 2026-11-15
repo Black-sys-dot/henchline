@@ -55,6 +55,7 @@ CALL_BUTTON_ONLY = STATE / "call.button-only"  # in a noisy place: only the talk
 CALL_RING = STATE / "call.ring-endpoint"  # where Henchline can be rung (its UnifiedPush address): private, never logged
 CALL_RINGER = STATE / "call.ringer"  # who rang the user last (session, when): the call server routes the answer there
 CALL_HANGUP = STATE / "call.hangup"  # end the phone call once talkback is done: the user said so, or an agent
+CALL_ORIGIN = STATE / "call.origin"  # the call page's https address, as the phone reached it: links to files
 CALL_PORT = 8790
 HANDSFREE_MODE = STATE / "handsfree.mode"  # waiting / listening / recording / transcribing: the tray's colours
 PHONE_MIC = "phone_mic"  # a virtual sink the call page writes the phone's mic into; listened to as its monitor
@@ -136,6 +137,8 @@ ECHO_SET = HANDSFREE_DATA / "echo-set"  # talk-over recordings, one folder per s
 EC_SOURCE = "talkback_ec_source"  # the echo-cancelled mic hands-free listens to
 EC_UNIT = "talkback-echo-cancel.service"
 EC_CONF = Path.home() / ".config/pipewire/talkback-echo-cancel.conf"
+OUTBOX = HANDSFREE_DATA / "outbox"  # files agents sent the phone (`handsfree send`): a folder each, named by its secret
+INBOX = Path.home() / "Downloads/Henchline"  # files the user shared from the phone, a folder per day
 CALL_TLS = SHARE / "copilot-ptt/call"  # cert.pem and key.pem: the call page's own certificate (install.sh call)
 
 # Who wrote the phase, and the agent name hands-free's own notices speak as

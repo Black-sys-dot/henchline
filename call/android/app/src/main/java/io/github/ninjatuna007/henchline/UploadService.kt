@@ -1,0 +1,131 @@
+package io.github.ninjatuna007.henchline
+
+import android.app.Notification
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.Service
+import android.content.Intent
+import android.content.pm.ServiceInfo
+import android.net.Uri
+import android.os.IBinder
+import android.provider.OpenableColumns
+import okhttp3.MediaType.Companion.toMediaTypeOrNull
+import okhttp3.OkHttpClient
+import okhttp3.Request
+import okhttp3.RequestBody
+import okhttp3.RequestBody.Companion.toRequestBody
+import okio.BufferedSink
+import org.json.JSONArray
+import org.json.JSONObject
+import java.net.URLEncoder
+import java.util.concurrent.TimeUnit
+
+/**
+ * What was shared to Henchline, taken to the laptop's call server (any size: a long video takes a while, with
+ * its progress in a notification), and then the agent told where it is. Over Tailscale, as the calls are.
+ */
+class UploadService : Service() {
+
+    private val client = OkHttpClient.Builder().readTimeout(120, TimeUnit.SECONDS).writeTimeout(120, TimeUnit.SECONDS).build()
+    private val manager by lazy { getSystemService(NotificationManager::class.java) }
+    private var busy = 0  // shares being sent: the service ends when none are
+
+    override fun onBind(intent: Intent?): IBinder? = null
+
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        manager.createNotificationChannel(NotificationChannel(CHANNEL, "Sharing with your crew", NotificationManager.IMPORTANCE_LOW))
+        startForeground(PROGRESS, progress("Sharing with your crew…", 0, 0), ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        if (intent == null) {
+            if (busy == 0) stopSelf()
+            return START_NOT_STICKY
+        }
+        busy++
+        val uris = intent.clipData?.let { clip -> (0 until clip.itemCount).map { clip.getItemAt(it).uri } } ?: emptyList()
+        val names = intent.getStringArrayListExtra(NAMES) ?: arrayListOf()
+        Thread {
+            val result = try {
+                share(uris, names, intent.getStringExtra(TEXT) ?: "", intent.getStringExtra(NOTE) ?: "",
+                    intent.getStringExtra(SESSION) ?: "")
+            } catch (e: Exception) {
+                "Not shared: ${e.message ?: "the laptop couldn't be reached"} (is Tailscale on?)"
+            }
+            manager.notify(DONE + startId, Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_notify)
+                .setContentTitle("Henchline").setContentText(result)
+                .setStyle(Notification.BigTextStyle().bigText(result)).setAutoCancel(true).build())
+            android.os.Handler(mainLooper).post { if (--busy == 0) stopSelf() }
+        }.start()
+        return START_NOT_STICKY
+    }
+
+    /** Each file up, then the agent told; what to say about it. */
+    private fun share(uris: List<Uri>, names: List<String>, text: String, note: String, session: String): String {
+        val origin = Files.origin(this) ?: return "Set the laptop's address in Henchline first."
+        val saved = JSONArray()
+        uris.forEachIndexed { i, uri ->
+            val name = names.getOrNull(i) ?: "file"
+            val answer = post("$origin/share/file?name=${URLEncoder.encode(name, "UTF-8")}", origin,
+                Streamed(uri, name, i + 1, uris.size))
+            saved.put(answer.optString("saved").ifEmpty { return answer.optString("note", "The laptop didn't keep $name.") })
+        }
+        manager.notify(PROGRESS, progress("Telling your crew…", 0, 0))
+        val told = post("$origin/share/tell", origin, JSONObject().put("files", saved).put("text", text).put("note", note)
+            .put("session", session).toString().toRequestBody("application/json".toMediaTypeOrNull()))
+        val what = if (uris.isEmpty()) "that" else if (uris.size == 1) names.firstOrNull() ?: "the file" else "${uris.size} files"
+        return if (told.has("to")) "Shared $what with ${told.getString("to").substringBefore(",")}."
+        else "Saved $what on the laptop (Downloads/Henchline), but: ${told.optString("note")}"
+    }
+
+    private fun post(url: String, origin: String, body: RequestBody): JSONObject =
+        client.newCall(Request.Builder().url(url).header("Origin", origin).post(body).build()).execute().use { answer ->
+            val text = answer.body?.string() ?: ""
+            try { JSONObject(text) } catch (_: Exception) { JSONObject().put("note", "the laptop said ${answer.code}") }
+        }
+
+    /** A shared file read straight from the app that shared it, never copied on the phone first. */
+    private inner class Streamed(val uri: Uri, val name: String, val n: Int, val of: Int) : RequestBody() {
+        private val size = try {
+            contentResolver.query(uri, arrayOf(OpenableColumns.SIZE), null, null, null)?.use {
+                if (it.moveToFirst() && !it.isNull(0)) it.getLong(0) else -1L
+            } ?: -1L
+        } catch (_: Exception) { -1L }
+
+        override fun contentType() = (contentResolver.getType(uri) ?: "application/octet-stream").toMediaTypeOrNull()
+        override fun contentLength() = size
+
+        override fun writeTo(sink: BufferedSink) {
+            val input = contentResolver.openInputStream(uri) ?: throw IllegalStateException("can't read $name")
+            input.use {
+                val buffer = ByteArray(1 shl 16)
+                var sent = 0L
+                var shown = 0L
+                while (true) {
+                    val got = it.read(buffer)
+                    if (got < 0) break
+                    sink.write(buffer, 0, got)
+                    sent += got
+                    if (sent - shown > 1 shl 20) {  // a megabyte at a time is enough for the bar
+                        shown = sent
+                        val title = if (of > 1) "Sharing $name ($n of $of)" else "Sharing $name"
+                        manager.notify(PROGRESS, progress(title, sent, size))
+                    }
+                }
+            }
+        }
+    }
+
+    private fun progress(title: String, sent: Long, size: Long): Notification =
+        Notification.Builder(this, CHANNEL).setSmallIcon(R.drawable.ic_notify).setContentTitle(title)
+            .setContentText(if (size > 0) "${Files.sizeText(sent)} of ${Files.sizeText(size)}" else Files.sizeText(sent))
+            .setProgress(if (size > 0) 1000 else 0, if (size > 0) (sent * 1000 / size).toInt() else 0, size <= 0)
+            .setOngoing(true).build()
+
+    companion object {
+        const val NAMES = "names"
+        const val TEXT = "text"
+        const val NOTE = "note"
+        const val SESSION = "session"
+        const val CHANNEL = "share"
+        const val PROGRESS = 10
+        const val DONE = 100
+    }
+}

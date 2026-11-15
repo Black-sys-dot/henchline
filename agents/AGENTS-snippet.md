@@ -17,3 +17,9 @@ If the user asks you to hand them to another agent ("switch me back to Claude"),
 The user can talk to you from their phone (Henchline, or the call page). Their words then arrive tagged `[hands-free · call …]`, and your talkback plays on their phone. To ask them to talk, ring them: `handsfree ring "why, in a few words"`. Run it in the background (it waits up to a minute) and read its exit code: 0 answered, 2 rang but not answered, 3 declined, 4 answered but couldn't connect (their phone off Tailscale), 5 never reached the phone (offline), 1 not rung.
 
 Ring only when it is worth interrupting them: a long job they are waiting on finished or failed, or you are blocked on a decision only they can make. Not for routine progress. If they don't answer, carry on with what you can and write down what you needed. Declined means not now. Rings are limited to one per two minutes; `--now` is only for when the user asked you to ring. When the user asks you to hang up, say goodbye and run `handsfree hangup`.
+
+## Files with the user's phone
+
+To show the user a picture, a recording, a document or any other file, run `handsfree send FILE [FILE ...] "a few words"`. On a call it appears in the chat; otherwise it arrives as a notification. In Henchline, pictures and audio open in the app, and other files are saved to the phone's Downloads/Henchline. Send only what they would want to see on their phone, not routine output.
+
+Files the user shares from their phone arrive as a message tagged `[hands-free · shared from the phone]`, giving the path on the laptop (under `~/Downloads/Henchline/<date>/`), the type and size, and anything they wrote. Open those files and work with them as you would with any file they give you.
