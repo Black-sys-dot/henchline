@@ -28,6 +28,7 @@ class IncomingActivity : Activity() {
     private var told = false  // the laptop was told how it ended: answered, declined or missed
     private var agent = "handsfree"
     private var why = ""
+    private var phrase = 0  // which of the henchman's lines: "I need you" or "done" (RingService.phraseFor)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -37,8 +38,9 @@ class IncomingActivity : Activity() {
         agent = (intent.getStringExtra(AGENT) ?: "").takeIf { it in FLAVOURS } ?: "handsfree"
         why = intent.getStringExtra(WHY) ?: ""
         reply = intent.getStringExtra(REPLY)
+        phrase = intent.getIntExtra(PHRASE, 0)
         // This screen rings now: the notification stays, silent, for Answer and Decline and to come back to
-        RingService.ringNow(this, agent, why, reply, quiet = true, seconds = maxOf(1, Ringing.secondsLeft(this)))
+        RingService.ringNow(this, agent, why, reply, quiet = true, seconds = maxOf(1, Ringing.secondsLeft(this)), phrase = phrase)
         val lines = phrasesOf(agent)
 
         val dp = resources.displayMetrics.density
@@ -57,7 +59,7 @@ class IncomingActivity : Activity() {
         screen.addView(ImageView(this).apply { setImageResource(MainActivity.avatarOf(agent)) },
             LinearLayout.LayoutParams((220 * dp).toInt(), (220 * dp).toInt()).apply { topMargin = (32 * dp).toInt() })
         screen.addView(TextView(this).apply {  // the banner: what it is saying
-            text = lines.joinToString("\n") { "“$it”" }  // both, as the ring says them in turn
+            text = "“${lines.getOrElse(phrase) { lines[0] }}”"  // the line this ring says
             setTextColor(getColor(R.color.cyan))
             textSize = 20f
             gravity = Gravity.CENTER
@@ -92,7 +94,7 @@ class IncomingActivity : Activity() {
 
         // The very sound the banner rings with (banner_mix.py: the tone, the phrases on its beat), so the two
         // never differ (2026-11-15: they said different phrases)
-        ring = player(resourceId("banner_$agent").takeIf { it != 0 } ?: resourceId("ring_$agent"), loop = true,
+        ring = player(listOf("banner_${agent}_$phrase", "banner_$agent", "ring_$agent").map { resourceId(it) }.firstOrNull { it != 0 } ?: 0, loop = true,
             volume = loudness())
         main.postDelayed({ tell("missed"); Ringing.end(this); stop() }, maxOf(1, Ringing.secondsLeft(this)) * 1000)
     }
@@ -147,7 +149,7 @@ class IncomingActivity : Activity() {
         if (told || ended || Ringing.now(this) == null) return
         ended = true
         stop()
-        RingService.ringNow(this, agent, why, reply, banner = true, seconds = maxOf(1, Ringing.secondsLeft(this)))
+        RingService.ringNow(this, agent, why, reply, banner = true, seconds = maxOf(1, Ringing.secondsLeft(this)), phrase = phrase)
     }
 
     override fun onDestroy() {
@@ -189,6 +191,7 @@ class IncomingActivity : Activity() {
         const val AGENT = "agent"
         const val WHY = "why"
         const val REPLY = "reply"
+        const val PHRASE = "phrase"
         const val SAY_GAP = 700L  // ms between the phrase ending and starting again
         val FLAVOURS = setOf("claude", "cursor", "codex", "handsfree")  // henchmen, tones and phrases there are
 

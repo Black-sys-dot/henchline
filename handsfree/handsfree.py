@@ -6,14 +6,16 @@
     handsfree listen [SECONDS]         keep listening that long (default 180)
     handsfree close                    stop listening until the wake word
     handsfree hangup                   end the phone call (call/), once talkback has finished speaking
-    handsfree ring [--now] [--no-wait] [WHY]
+    handsfree ring [--done] [--now] [--no-wait] [WHY]
                                        ring the user's phone (Henchline full-screen, else an ntfy notification
                                        whose Answer opens Henchline) and wait up to a minute for what happened:
                                        exit 0 answered, 2 rang but not answered, 3 declined, 4 answered but the
                                        call couldn't reach the laptop, 5 never reached the phone, 1 not rung.
                                        Unless answered, a missed call with WHY is left in ntfy (the topic is
                                        read from ~/.config/ptt/ntfy-topic). --now: past the 2-minute limit,
-                                       for a ring the user asked for. --no-wait: ring and return
+                                       for a ring the user asked for. --no-wait: ring and return. --done: the
+                                       ring reports finished work (the henchman's "done" line), rather than
+                                       asking for a decision (its "I need you" line)
     handsfree text WORDS                a message to the user's phone, not a call: a notification they can
                                        reply to from the notification itself (the reply comes back tagged
                                        [hands-free · texted from the phone]); on a call it goes to the chat.
@@ -66,7 +68,7 @@ RING_WAIT = 60  # seconds a ring waits for the answer: it rings for 30, and on a
 RANG = Path.home() / ".local/state/ptt/call.rang"  # when the user was last rung
 
 
-def ring(why: str, now: bool = False, wait: bool = True) -> int:
+def ring(why: str, now: bool = False, wait: bool = True, done: bool = False) -> int:
     """An agent wants to talk: the phone rings (Henchline full-screen, or an ntfy notification whose Answer
     opens Henchline's call), then this waits for what happened. Henchline reports back on a one-time ntfy
     address carried in the ring (it works off Tailscale too):
@@ -91,7 +93,7 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
     who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
     reply = f"henchline-{secrets.token_urlsafe(16)}"  # this ring's own, used once
     since = int(time.time()) - 1  # before the push: the phone may say "rang" before the push call returns
-    pushed = ring_henchline(speaker.agent if speaker else "handsfree", why, f"{RING_SERVER}/{reply}")
+    pushed = ring_henchline(speaker.agent if speaker else "handsfree", why, f"{RING_SERVER}/{reply}", done)
     if not (pushed or topic and ntfy(topic, f"{who} is calling", why or "Tap Answer to talk.",
                                      {"Priority": "high", "Tags": "telephone", "Click": "henchline://call",
                                       "Actions": "view, Answer, henchline://call, clear=true"})):
@@ -233,12 +235,12 @@ def replies(reply: str, since: int) -> set[str]:
     return {e.get("message", "").strip() for e in events if e.get("event") == "message"}
 
 
-def ring_henchline(agent: str, why: str, reply: str) -> bool:
+def ring_henchline(agent: str, why: str, reply: str, done: bool = False) -> bool:
     """Henchline's own push address, if it gave one: a full-screen call with the agent's henchman and tone,
     which posts what happens to it (rang, declined, missed, unreachable) to `reply`."""
     if not CALL_RING.exists():
         return False
-    if push(json.dumps({"agent": agent, "why": why, "reply": reply}).encode()):
+    if push(json.dumps({"agent": agent, "why": why, "reply": reply, "kind": "done" if done else "need"}).encode()):
         return True
     print("an ntfy notification instead")
     return False
@@ -309,7 +311,8 @@ def main() -> int:
     if command == "ring":
         now = "--now" in args  # the user asked for this ring: past the limit meant for agents
         wait = "--no-wait" not in args
-        return ring(" ".join(a for a in args if a not in ("--now", "--no-wait")), now, wait)
+        done = "--done" in args
+        return ring(" ".join(a for a in args if a not in ("--now", "--no-wait", "--done")), now, wait, done)
     if command == "send":
         return send(args)
     if command == "text":

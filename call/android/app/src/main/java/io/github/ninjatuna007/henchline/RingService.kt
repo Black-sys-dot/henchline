@@ -48,7 +48,8 @@ class RingService : PushService() {
         if (CallService.Bus.service != null) return  // on a call already: the agent is heard there
         val reply = Reply.valid(ring.optString("reply"))
         Reply.send(reply, "rang")  // it reached the phone
-        ringNow(this, ring.optString("agent", "handsfree"), ring.optString("why"), reply)
+        val agent = ring.optString("agent", "handsfree")
+        ringNow(this, agent, ring.optString("why"), reply, phrase = phraseFor(agent, ring.optString("kind")))
     }
 
     override fun onRegistrationFailed(reason: FailedReason, instance: String) {
@@ -77,8 +78,15 @@ class RingService : PushService() {
          *  (IncomingActivity, which plays the agent's tone and phrase). While the phone is in use it only
          *  shows a banner, which rang silently (2026-11-15): then the banner itself rings, with the agent's
          *  tone over and over, and has Answer and Decline, as a phone app's call does. */
+        /** Which of the henchman's two lines a ring says: one that means "I need you", one that means "done"
+         *  (the user's idea, 2026-11-15: Claude's "mucho importanto" and "tasko finito"). (need, done) each. */
+        private val KINDS = mapOf("claude" to (0 to 1), "cursor" to (0 to 1), "codex" to (1 to 0), "handsfree" to (0 to 1))
+
+        fun phraseFor(agent: String, kind: String): Int =
+            KINDS[agent.takeIf { it in IncomingActivity.FLAVOURS } ?: "handsfree"]!!.let { if (kind == "done") it.second else it.first }
+
         fun ringNow(context: Context, agent: String, why: String, reply: String? = null, banner: Boolean = false,
-                    seconds: Long = RING_SECONDS, quiet: Boolean = false) {
+                    seconds: Long = RING_SECONDS, quiet: Boolean = false, phrase: Int = 0) {
             val manager = context.getSystemService(NotificationManager::class.java)
             val flavour = agent.takeIf { it in IncomingActivity.FLAVOURS } ?: "handsfree"
             val inUse = banner || (context.getSystemService(android.os.PowerManager::class.java).isInteractive &&
@@ -86,13 +94,13 @@ class RingService : PushService() {
             if (seconds == RING_SECONDS) Ringing.started(context, agent, why, reply)
             retire(manager)
             // quiet: the ring screen is up and rings itself; the notification stays for its buttons, silent
-            val channel = if (inUse && !quiet) bannerChannel(context, manager, flavour) else CHANNEL.also {
+            val channel = if (inUse && !quiet) bannerChannel(context, manager, flavour, phrase) else CHANNEL.also {
                 manager.createNotificationChannel(NotificationChannel(CHANNEL, "Incoming calls", NotificationManager.IMPORTANCE_HIGH)
                     .apply { setSound(null, null); setBypassDnd(true) })  // IncomingActivity rings, with the agent's own tone
             }
             val screen = Intent(context, IncomingActivity::class.java)
                 .putExtra(IncomingActivity.AGENT, agent).putExtra(IncomingActivity.WHY, why)
-                .putExtra(IncomingActivity.REPLY, reply)
+                .putExtra(IncomingActivity.REPLY, reply).putExtra(IncomingActivity.PHRASE, phrase)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
             val open = PendingIntent.getActivity(context, 3, screen, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val answer = PendingIntent.getActivity(context, 4, Intent(context, MainActivity::class.java)
@@ -151,11 +159,12 @@ class RingService : PushService() {
         /** A channel per agent whose sound is its ringtone: a banner's sound is its channel's. In Do Not
          *  Disturb the tone plays as an alarm (a ringtone is silenced there), from a channel of its own: a
          *  channel's sound can't change once made. */
-        private fun bannerChannel(context: Context, manager: NotificationManager, flavour: String): String {
+        private fun bannerChannel(context: Context, manager: NotificationManager, flavour: String, phrase: Int): String {
             val quiet = DoNotDisturb.on(context)
             // "_v2": the tone with its phrases (banner_mix.py) since 2026-11-15; a channel's sound is fixed when made
-            val id = if (quiet) "calls_banner_dnd_v2_$flavour" else "calls_banner_v2_$flavour"
-            val tone = android.net.Uri.parse("android.resource://${context.packageName}/raw/banner_$flavour")
+            // "_v3": one line each since 2026-11-15 (a channel's sound is fixed when made)
+            val id = if (quiet) "calls_banner_dnd_v3_${flavour}_$phrase" else "calls_banner_v3_${flavour}_$phrase"
+            val tone = android.net.Uri.parse("android.resource://${context.packageName}/raw/banner_${flavour}_$phrase")
             val name = "${IncomingActivity.nameOf(flavour)} calling while you use the phone" + if (quiet) " (Do Not Disturb)" else ""
             manager.createNotificationChannel(NotificationChannel(id, name, NotificationManager.IMPORTANCE_HIGH).apply {
                 setSound(tone, android.media.AudioAttributes.Builder()
@@ -170,7 +179,9 @@ class RingService : PushService() {
 
         /** The channels from before rings could get through Do Not Disturb. */
         private fun retire(manager: NotificationManager) {
-            val old = IncomingActivity.FLAVOURS.flatMap { listOf("ring_banner_$it", "calls_banner_$it", "calls_banner_dnd_$it") }
+            val old = IncomingActivity.FLAVOURS.flatMap {
+                listOf("ring_banner_$it", "calls_banner_$it", "calls_banner_dnd_$it", "calls_banner_v2_$it", "calls_banner_dnd_v2_$it")
+            }
             for (id in listOf("ring", "calls") + old) manager.deleteNotificationChannel(id)
         }
     }

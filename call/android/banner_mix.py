@@ -59,7 +59,9 @@ def main() -> int:
         for agent in AGENTS:
             phrases = sorted(folder.glob(f"phrase_{agent}_*.wav"))
             if phrases and (MAIN / f"ring_{agent}.wav").exists():
-                mix(MAIN / f"ring_{agent}.wav", phrases, folder / f"banner_{agent}.wav")
+                mix(MAIN / f"ring_{agent}.wav", phrases, folder / f"banner_{agent}.wav")  # both: for listening to
+                for n, phrase in enumerate(phrases):  # one each: a ring says the one its kind calls for
+                    mix(MAIN / f"ring_{agent}.wav", [phrase], folder / f"banner_{agent}_{n}.wav")
                 print(folder.parent.parent.name, agent, "ok")
     return 0
 
