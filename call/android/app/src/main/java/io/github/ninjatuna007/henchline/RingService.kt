@@ -124,8 +124,23 @@ class RingService : PushService() {
             if (inUse && !quiet) ring.flags = ring.flags or Notification.FLAG_INSISTENT  // the tone repeats until answered
             try {
                 manager.notify(NOTIFICATION, ring)
-            } catch (e: IllegalArgumentException) {  // a notification Android refuses must not take the ring screen down
-                android.util.Log.w("Henchline", "ring notification refused: ${e.message}")
+            } catch (e: IllegalArgumentException) {  // refused (its style?): a plain one instead, never no ring at all
+                android.util.Log.w("Henchline", "ring notification refused, posting a plain one: ${e.message}")
+                try {
+                    manager.notify(NOTIFICATION, Notification.Builder(context, channel)
+                        .setSmallIcon(R.drawable.ic_notify)
+                        .setContentTitle("$name is calling")
+                        .setContentText(why.ifEmpty { "Your crew wants to talk." })
+                        .setCategory(Notification.CATEGORY_CALL)
+                        .setContentIntent(open)
+                        .setOngoing(true)
+                        .setTimeoutAfter(seconds * 1000)
+                        .addAction(Notification.Action.Builder(null, "Decline", decline).build())
+                        .addAction(Notification.Action.Builder(null, "Answer", answer).build())
+                        .build())
+                } catch (again: IllegalArgumentException) {
+                    android.util.Log.w("Henchline", "plain ring notification refused too: ${again.message}")
+                }
             }
         }
 
@@ -140,6 +155,8 @@ class RingService : PushService() {
             val name = "${IncomingActivity.nameOf(flavour)} calling while you use the phone" + if (quiet) " (Do Not Disturb)" else ""
             manager.createNotificationChannel(NotificationChannel(id, name, NotificationManager.IMPORTANCE_HIGH).apply {
                 setSound(tone, android.media.AudioAttributes.Builder()
+                    // In Do Not Disturb at the alarm volume, unscaled (a channel can't scale its sound): the user
+                    // found the banner the gentler of the two there (2026-11-15); the ring screen is scaled to match
                     .setUsage(if (quiet) android.media.AudioAttributes.USAGE_ALARM else android.media.AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
                     .setContentType(android.media.AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
                 setBypassDnd(true)  // kept only when the app has Do Not Disturb access (DoNotDisturb.ask)

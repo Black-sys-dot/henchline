@@ -99,6 +99,7 @@ class IncomingActivity : Activity() {
 
     /** In Do Not Disturb the ring plays as an alarm, and the alarm volume is usually far above the ringer's (15 of 15
      *  against 6 of 15 on the user's phone: the full screen blared, 2026-11-15): scaled down to the ringer's level. */
+    // Set once, when the ring screen opens: Do Not Disturb or the ringer changed mid-ring (30 s) doesn't rescale it
     private fun loudness(): Float {
         if (!DoNotDisturb.on(this)) return 1f
         val audio = getSystemService(android.media.AudioManager::class.java)
