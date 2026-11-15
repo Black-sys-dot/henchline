@@ -92,8 +92,19 @@ class IncomingActivity : Activity() {
 
         // The very sound the banner rings with (banner_mix.py: the tone, the phrases on its beat), so the two
         // never differ (2026-11-15: they said different phrases)
-        ring = player(resourceId("banner_$agent").takeIf { it != 0 } ?: resourceId("ring_$agent"), loop = true, volume = 1f)
+        ring = player(resourceId("banner_$agent").takeIf { it != 0 } ?: resourceId("ring_$agent"), loop = true,
+            volume = loudness())
         main.postDelayed({ tell("missed"); Ringing.end(this); stop() }, maxOf(1, Ringing.secondsLeft(this)) * 1000)
+    }
+
+    /** In Do Not Disturb the ring plays as an alarm, and the alarm volume is usually far above the ringer's (15 of 15
+     *  against 6 of 15 on the user's phone: the full screen blared, 2026-11-15): scaled down to the ringer's level. */
+    private fun loudness(): Float {
+        if (!DoNotDisturb.on(this)) return 1f
+        val audio = getSystemService(android.media.AudioManager::class.java)
+        fun level(stream: Int) = audio.getStreamVolume(stream).toFloat() / audio.getStreamMaxVolume(stream).coerceAtLeast(1)
+        val alarm = level(android.media.AudioManager.STREAM_ALARM)
+        return if (alarm <= 0f) 1f else (level(android.media.AudioManager.STREAM_RING) / alarm).coerceIn(0.15f, 1f)
     }
 
     /** A sound that won't load just isn't played: the screen, its buttons and the time-out go on. */
