@@ -90,7 +90,8 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
     RANG.parent.mkdir(parents=True, exist_ok=True)
     RANG.touch()
     if speaker:  # whenever the user answers, even after this stops waiting: the call server routes it there
-        write_json(CALL_RINGER, {"session": speaker.session, "at": time.time()})
+        write_json(CALL_RINGER, {"session": speaker.session, "agent": speaker.agent, "reply": reply,
+                                 "at": time.time()})
     log(HANDSFREE_LOG, f"rang the user ({who})")
     print("rang", flush=True)
     if not wait:

@@ -189,17 +189,23 @@ async def keep_unmuted() -> None:
             await watch.wait()
 
 
-def route_to_ringer() -> None:
-    """A call answering an agent's ring goes to that agent (`handsfree ring` left its session), not to
-    whoever spoke last: before the call's first words are routed. A ring older than RINGER_FRESH is old news."""
+def route_to_ringer(reply: str) -> None:
+    """The phone answered a ring (it says which, by the ring's reply name, as the call opens): the call goes
+    to the agent that rang, not to whoever spoke last. A Call the user starts themselves names no ring and
+    goes where they were. A ringer hands-free can't type to yet is said out loud, never routed around."""
     ringer = read_json(CALL_RINGER)
-    CALL_RINGER.unlink(missing_ok=True)
-    if not ringer or time.time() - ringer.get("at", 0) > RINGER_FRESH:
+    if not ringer or ringer.get("reply") != reply or time.time() - ringer.get("at", 0) > RINGER_FRESH:
         return
+    CALL_RINGER.unlink(missing_ok=True)
     speaker = Speaker.load(SPEAKERS / f"{ringer.get('session', '')}.json")
     if speaker and routing.reachable(speaker):
         routing.switch_to(speaker)
         log(HANDSFREE_LOG, f"call: answering {speaker.agent}'s ring, so to {speaker.agent}")
+        return
+    name, now = str(ringer.get("agent", "the agent")).capitalize(), last_speaker()
+    where = f"so your words go to {now.spoken()}. Say switch me to, to change" if now else "so pick someone: say switch me to"
+    routing.say(f"{name} rang, but I can't type to it yet, {where}.")
+    log(HANDSFREE_LOG, f"call: answering {name}'s ring, but it can't be reached yet")
 
 
 def flag(path: Path, on: bool) -> None:
@@ -211,7 +217,9 @@ def flag(path: Path, on: bool) -> None:
 
 async def from_page(message: dict, ear: Ear) -> str:
     """The talk button held or let go, a switch, or a typed chat message; a note for the page, if any."""
-    if "ring_endpoint" in message:  # where `handsfree ring` reaches the app: kept private, never logged
+    if "answering" in message:  # this call answers a ring: to the agent that rang
+        await asyncio.get_running_loop().run_in_executor(None, route_to_ringer, str(message["answering"]))
+    elif "ring_endpoint" in message:  # where `handsfree ring` reaches the app: kept private, never logged
         url = urllib.parse.urlsplit(str(message["ring_endpoint"]))
         if url.scheme != "https" or url.hostname not in RING_HOSTS:  # only the phone's distributor, nobody's URL
             log(HANDSFREE_LOG, f"call: refused a ring address on {url.hostname or 'no host'} "
@@ -293,7 +301,6 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             "parec", "--raw", f"--device={PHONE_SPEAKER_MONITOR}", "--format=s16le", f"--rate={SPEAKER_RATE}",
             "--channels=1", "--latency-msec=40", "--client-name=phone-call", stdout=asyncio.subprocess.PIPE)
         CALL_HANGUP.unlink(missing_ok=True)  # a hang-up asked for when no call was up is not for this one
-        route_to_ringer()
         write_json(CALL, {"from": request.remote or "", "pid": os.getpid(),
                           "cmdline": Path("/proc/self/cmdline").read_text()})
         await asyncio.get_running_loop().run_in_executor(None, turn_on_handsfree, False)  # with talkback
