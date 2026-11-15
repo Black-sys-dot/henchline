@@ -1,10 +1,23 @@
-# copilot-ptt
+# Henchline
 
-On Linux the Copilot key is a chord, Left Meta + Left Shift + F23. The desktop does not bind it to anything. Hold that key, or another key you choose. The microphone opens only while the key is down. Whisper runs on this machine, the text is pasted into the focused window, and Enter is pressed.
+<p align="center"><img src="docs/crew.svg" width="100%" alt="The crew: four henchmen peeking at you"></p>
 
-People already remap that chord with [keyd](https://github.com/rvaiya/keyd) and with [remap-copilot](https://github.com/m-bartlett/remap-copilot). A few tools open a launcher from F23. Hold-to-talk with Whisper already exists as well. This program is those two ideas together.
+**Talk to all your AI henchmen: by voice, by phone, by text.**
 
-On some laptops the Copilot key sends the chord down and up immediately, so it cannot be held. This program needs a key that stays down while you speak. If yours does not, push-to-talk on that key will not work. Set another hotkey from the status icon.
+You're the boss. Claude Code, Cursor and Codex are your crew, each busy in its own terminal or window. Henchline is the line to all of them, at your desk or from anywhere:
+
+- **At your desk:** hold a key and speak, or just say "hey Claude". They answer out loud, each in its own voice, one at a time. Talk over them to cut in; say "switch me to Cursor" to hand the conversation over.
+- **Away from it:** call your crew from your phone with the Henchline app, as you would a person. Each henchman has its own chat; your words show as they were heard.
+- **When they need you:** an agent rings your phone, full screen, with its own ringtone and a line of henchman-speak. Not urgent? It texts you instead, and you reply from the notification; the reply is typed into that agent's terminal, and only that one's.
+- **Files both ways:** share a photo, a recording, a zip from any app on your phone (or tap the paperclip in a chat) and the agent is told where it landed; an agent sends you a picture or a document and it shows in its chat.
+
+It works with any agent that runs in a terminal or in Cursor: Henchline types into their own tabs and windows, so there is nothing to install inside them, and it was never built for one vendor. Everything runs on your own machine: Whisper hears you and Kokoro speaks, locally; your phone reaches the laptop over your own Tailscale network. No cloud speech, no relay, no account.
+
+### How it compares
+
+Pieces of this exist elsewhere: each vendor's own remote control (Claude Code's Remote Control and Channels, Codex in the ChatGPT app, Cursor's iOS app) works with its own agent through its cloud; [Happy](https://github.com/slopus/happy) and Omnara are phone apps for Claude Code and Codex with cloud voice; [CallMe](https://github.com/ZeframLou/call-me) and [Better Call Claude](https://github.com/sns45/better-call-claude) let Claude Code phone you through Twilio; [TalkiTo](https://github.com/robdmac/talkito) gives Claude Code and Codex a voice and Slack/WhatsApp chat; [VoiceMode](https://github.com/mbailey/voicemode) gives one agent local two-way voice. As far as a search in November 2026 found, none puts several agents, hands-free conversation with spoken handoff, and your own calling, ringing and texting app together, locally. If you know one that does, please open an issue.
+
+It began as **copilot-ptt**, a push-to-talk key, which it still is: see [Push-to-talk](#push-to-talk).
 
 ## What is in here
 
@@ -41,13 +54,21 @@ While the laptop is plugged in, Whisper small stays on the GPU. On battery it ru
 ## Install
 
 ```bash
-git clone https://github.com/NinjaTuna007/copilot-ptt
-cd copilot-ptt
+git clone https://github.com/NinjaTuna007/henchline
+cd henchline
 sudo apt install python3-venv python3-pyqt5 python3-evdev curl
 ./install.sh ptt          # or: talkback, handsfree, agents, all
 ```
 
 Each piece installs on its own and only what it needs. Python packages go into one private venv, `~/.local/share/copilot-ptt/venv` (its path is written in each script's first line, since a shebang cannot read a setting, and in `voice/state.py`), so nothing in the system or your own Python changes, and nothing there can break these tools; `requirements/` lists them per piece (the CUDA libraries only when `nvidia-smi` exists). `./doctor.py [piece]` checks each piece and prints the command that fixes whatever is missing (it runs on the system Python, so it works when the venv is the problem). `./install.sh remove <piece>` takes a piece out again and leaves settings, voice models and wake-word recordings in place. The first start downloads the Whisper small weights. The user service starts again at graphical login.
+
+## Push-to-talk
+
+On Linux the Copilot key is a chord, Left Meta + Left Shift + F23. The desktop does not bind it to anything. Hold that key, or another key you choose. The microphone opens only while the key is down. Whisper runs on this machine, the text is pasted into the focused window, and Enter is pressed.
+
+People already remap that chord with [keyd](https://github.com/rvaiya/keyd) and with [remap-copilot](https://github.com/m-bartlett/remap-copilot). A few tools open a launcher from F23. Hold-to-talk with Whisper already exists as well. This program is those two ideas together.
+
+On some laptops the Copilot key sends the chord down and up immediately, so it cannot be held. This program needs a key that stays down while you speak. If yours does not, push-to-talk on that key will not work. Set another hotkey from the status icon.
 
 Hold the Copilot key, speak, release. A two-key hold stays one recording until both keys are up. The words are typed into the focused window. Okular and a Thunderbird mail window are left alone; a Thunderbird compose window still receives the paste and Enter. Holding the key also stops desktop speech from speech-dispatcher, if that is playing. Right-click the speech bubble for language, power, another hotkey, or to turn the chime off. The chime is the freedesktop sound `complete.oga` if that file is installed. A missing sound is skipped. `"chime_sound"` in the config can point at another file. The Copilot key stays on when another hotkey is set.
 

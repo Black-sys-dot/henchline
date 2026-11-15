@@ -187,6 +187,7 @@ class MainActivity : Activity() {
         if (CallService.Bus.connected) {  // what was said while this screen wasn't looking
             CallService.Bus.lastAgents?.let { fromServer(it) }
             CallService.Bus.lastMode?.let { fromServer(it) }
+            showHistory()  // the lines that came meanwhile, from the call's kept chat
         }
         showServer()
         showRinging()
@@ -299,9 +300,10 @@ class MainActivity : Activity() {
                 val line = status.getJSONObject("chat")
                 val from = line.getString("from")
                 val file = line.optJSONObject("file")
+                // The call has kept it already (CallService): drawn here only
                 if (file == null || line.optString("text").isNotEmpty())
-                    say(from, line.getString("text"), mine = from == "you", session = line.optString("session"))
-                if (file != null) fileCard(from, file, line.optString("session"))
+                    say(from, line.getString("text"), mine = from == "you", session = line.optString("session"), keep = false)
+                if (file != null) fileCard(from, file, line.optString("session"), keep = false)
             }
             status.has("agents") -> showAgents(status)
             status.has("talking") ->  // the earbuds or the notification started or ended a turn

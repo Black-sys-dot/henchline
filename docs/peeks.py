@@ -112,9 +112,28 @@ def handsfree(body, light, glow, eyes):
                 + giggle("boss-a!", 82, 30, light, 2.6, "0.05;0.1;0.4;0.45"))
 
 
+def crew(drawings: dict) -> str:
+    """All four in one picture, for the top of the README: one image scales to any width, where four side by
+    side wrapped into a square on a phone (2026-11-15)."""
+    panels, x = [], 0
+    for name in ("cursor", "handsfree", "codex", "claude"):
+        inner = drawings[name]
+        view = inner.split('viewBox="')[1].split('"')[0]
+        w, h = (float(v) for v in view.split()[2:])
+        scale = 100 / h  # every panel 100 high
+        panels.append(f'<svg x="{x}" y="0" width="{w * scale}" height="100" viewBox="{view}">'
+                      + inner.split(">", 1)[1].rsplit("</svg>", 1)[0] + "</svg>")
+        x += w * scale + 6
+    return (f'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {x - 6} 100" width="{2 * (x - 6)}" height="200">'
+            + "".join(panels) + "</svg>")
+
+
 def main() -> None:
+    drawings = {}
     for name, (body, light, glow, eyes) in FLAVOURS.items():
-        (HERE / f"peek_{name}.svg").write_text(globals()[name](body, light, glow, eyes))
+        drawings[name] = globals()[name](body, light, glow, eyes)
+        (HERE / f"peek_{name}.svg").write_text(drawings[name])
+    (HERE / "crew.svg").write_text(crew(drawings))
 
 
 if __name__ == "__main__":

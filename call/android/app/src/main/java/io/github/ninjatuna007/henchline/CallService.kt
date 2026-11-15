@@ -244,6 +244,14 @@ class CallService : Service() {
                 val message = try { org.json.JSONObject(text) } catch (_: Exception) { null }
                 if (message?.has("agents") == true) Bus.lastAgents = text
                 else if (message?.has("mode") == true) Bus.lastMode = text
+                // Kept here, by the call, whether or not the screen is showing: lines that came while another app
+                // was in front were lost (2026-11-15); the screen draws them from the kept chat when it comes back
+                message?.optJSONObject("chat")?.let { line ->
+                    val keep = org.json.JSONObject().put("from", line.optString("from")).put("text", line.optString("text"))
+                        .put("mine", line.optString("from") == "you")
+                    line.optJSONObject("file")?.let { keep.put("file", it) }
+                    Chats.add(this@CallService, line.optString("session"), keep)
+                }
                 val file = message?.optJSONObject("chat")?.optJSONObject("file")
                 if (file != null && Bus.listener == null) {  // the call screen isn't showing: don't let it pass unseen
                     val line = message.getJSONObject("chat")
