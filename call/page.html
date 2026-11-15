@@ -205,7 +205,7 @@ $('send').onsubmit = (e) => {
   e.preventDefault();
   const words = text.value.trim();
   if (!words) return;
-  send({chat: words});
+  send({chat: words, session: current});
   say('you', words, 'you', current);
   text.value = '';
 };

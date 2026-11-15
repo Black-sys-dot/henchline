@@ -133,7 +133,7 @@ async def from_page(message: dict) -> None:
     elif "switch" in message:
         await asyncio.get_running_loop().run_in_executor(None, switch, message["switch"])
     elif words := message.get("chat", "").strip():
-        await asyncio.get_running_loop().run_in_executor(None, typed, words)
+        await asyncio.get_running_loop().run_in_executor(None, typed, words, message.get("session", ""))
 
 
 def agents() -> dict:
@@ -153,12 +153,20 @@ def switch(session: str) -> None:
         routing.say(f"Now talking to {target.spoken()}.")
 
 
-def typed(words: str) -> None:
-    """A typed line: a switch ("switch me to Cursor", "who am I talking to") works as when spoken."""
+def typed(words: str, session: str) -> None:
+    """A typed line, to the agent whose chat it was typed in; a switch ("switch me to Cursor") works as spoken.
+
+    Another agent may have spoken since the page last heard who is current: the chat shown wins, so the words
+    go where the page put them.
+    """
     if routing.meaning(words) is routing.Meaning.ROUTING:
         routing.route(words, None)
-    else:
-        routing.deliver(words, Heard.TYPED)
+        return
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    current = last_speaker()
+    if target and routing.reachable(target) and (not current or current.session != session):
+        routing.switch_to(target)
+    routing.deliver(words, Heard.TYPED)
 
 
 async def call(request: web.Request) -> web.WebSocketResponse:
