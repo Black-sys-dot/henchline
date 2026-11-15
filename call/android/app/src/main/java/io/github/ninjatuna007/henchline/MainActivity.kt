@@ -413,7 +413,11 @@ class MainActivity : Activity() {
         }
         row.addView(bubble, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT).apply { if (!note) width = LinearLayout.LayoutParams.WRAP_CONTENT })
-        bubble.maxWidth = (resources.displayMetrics.widthPixels * 0.75).toInt()
+        if (mine && !note) {  // you: the boss the crew works for
+            row.addView(ImageView(this).apply { setImageResource(R.drawable.avatar_you) },
+                LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(8) })
+        }
+        bubble.maxWidth = (resources.displayMetrics.widthPixels * 0.7).toInt()
         chat.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT))
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
