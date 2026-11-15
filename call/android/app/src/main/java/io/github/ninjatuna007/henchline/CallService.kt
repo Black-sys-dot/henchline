@@ -250,8 +250,14 @@ class CallService : Service() {
                 // Kept here, by the call, whether or not the screen is showing: lines that came while another app
                 // was in front were lost (2026-11-15); the screen draws them from the kept chat when it comes back
                 message?.optJSONObject("chat")?.let { line ->
+                    val mine = line.optString("from") == "you"
                     val keep = org.json.JSONObject().put("from", line.optString("from")).put("text", line.optString("text"))
-                        .put("mine", line.optString("from") == "you")
+                        .put("mine", mine)
+                    if (mine) keep.put("status", "delivered")  // the laptop says so once it has typed your words in
+                    line.optString("tid").takeIf { it.isNotEmpty() }?.let {  // an agent's text: on the phone now
+                        keep.put("tid", it)
+                        Messages.receipt(this@CallService, listOf(it), "delivered")
+                    }
                     line.optJSONObject("file")?.let { keep.put("file", it) }
                     Chats.add(this@CallService, line.optString("session"), keep)
                     if (line.optString("from") != "you") Chats.readAll(this@CallService, line.optString("session"))

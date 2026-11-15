@@ -16,10 +16,13 @@
                                        for a ring the user asked for. --no-wait: ring and return. --done: the
                                        ring reports finished work (the henchman's "done" line), rather than
                                        asking for a decision (its "I need you" line)
-    handsfree text WORDS                a message to the user's phone, not a call: a notification they can
+    handsfree text [--until-read MIN] WORDS
+                                       a message to the user's phone, not a call: a notification they can
                                        reply to from the notification itself (the reply comes back tagged
                                        [hands-free · texted from the phone]); on a call it goes to the chat.
-                                       Exit 0 sent, 1 not
+                                       Prints its id. --until-read MIN: wait that long for the user to read
+                                       it, then ring if they haven't. Exit 0 sent (or read), 1 not
+    handsfree text-status ID            sent, delivered (on the phone) or read (opened, or replied to)
     handsfree send FILE [FILE ...] [WORDS]
                                        show the user files on their phone: in the call's chat while a call
                                        is up, else a Henchline notification (an ntfy one if Henchline can't
@@ -54,7 +57,7 @@ from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import files  # noqa: E402
 from voice.speech import whisper  # noqa: E402
 from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN, CALL_RING, CALL_RINGER,  # noqa: E402
-                         CLOSE, HANDSFREE_LOG, HANDSFREE_ON, LISTEN, SPEAKERS, Speaker, in_call, log,
+                         CLOSE, HANDSFREE_LOG, HANDSFREE_ON, TEXTS, read_json, LISTEN, SPEAKERS, Speaker, in_call, log,
                          release_phase, turn_on_handsfree, write_json)
 from voice.agents import identity  # noqa: E402
 from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
@@ -143,7 +146,8 @@ def caller(register: bool = False) -> Speaker | None:
     from voice.agents import agent_folder
     from voice.desktop import current as desktop
     folder = agent_folder()
-    speaker = Speaker(session, agent, "home" if folder == Path.home() else folder.name, desktop().terminals.tab_of_caller())
+    where = "home" if folder == Path.home() else folder.name
+    speaker = Speaker(session, agent, where, desktop().terminals.tab_of_caller())
     speaker.save(SPEAKERS / f"{session}.json")
     return speaker
 
@@ -200,29 +204,52 @@ def send(args: list[str]) -> int:
     return 0 if pushed == len(metas) else 2
 
 
-def text(words: str) -> int:
+def text(words: str, until_read: float = 0) -> int:
     """A message for the user's phone from the agent running this: a notification with a reply box, or a line
-    in the call's chat when a call is up."""
+    in the call's chat when a call is up. Its id is printed: `handsfree text-status ID` says how far it got,
+    WhatsApp's way (sent, delivered: on the phone, read: the user opened that chat or replied). until_read:
+    minutes to wait for it to be read, and then ring if it wasn't (the user's idea, 2026-11-16)."""
     if not words.strip():
-        print("usage: handsfree text WORDS")
+        print("usage: handsfree text [--until-read MINUTES] WORDS")
         return 1
     speaker = caller()
     agent, session = (speaker.agent, speaker.session) if speaker else identity()
+    tid = secrets.token_hex(8)
+    write_json(TEXTS / f"{tid}.json", {"id": tid, "agent": agent, "session": session, "status": "sent",
+                                       "at": time.time()}, private=True)
+    sent = False
     if in_call():  # the chat shows it within a moment
         write_json(CALL_MIRROR / f"{time.time_ns()}.json", {"session": session, "from": agent.capitalize(),
-                                                            "text": words}, private=True)
-        print("sent to the call's chat")
-        return 0
-    if CALL_RING.exists() and push(json.dumps({"agent": agent, "session": session, "text": words}).encode()):
+                                                            "text": words, "tid": tid}, private=True)
+        print(f"sent to the call's chat (id {tid})")
+        sent = True
+    elif CALL_RING.exists() and push(json.dumps({"agent": agent, "session": session, "text": words,
+                                                  "id": tid}).encode()):
         log(HANDSFREE_LOG, f"{agent} texted the phone")
-        print("sent to the phone")
-        return 0
+        print(f"sent to the phone (id {tid})")
+        sent = True
+    if sent:
+        if until_read <= 0:
+            return 0
+        deadline = time.time() + until_read * 60
+        while time.time() < deadline:
+            if text_status(tid) == "read":
+                print("read")
+                return 0
+            time.sleep(5)
+        print(f"not read in {until_read:g} min: ringing")
+        return ring(words, now=False, wait=True)
     topic = RING_TOPIC.read_text().strip() if RING_TOPIC.exists() else ""
     if topic and ntfy(topic, f"{agent.capitalize()}", words, {"Tags": "speech_balloon"}):
         print("sent as an ntfy notification (no reply box: Henchline couldn't be pushed)")
         return 0
     print("couldn't reach the phone")
     return 1
+
+
+def text_status(tid: str) -> str:
+    """sent, delivered (it reached the phone) or read (the user opened that chat, or replied); "" if unknown."""
+    return str(read_json(TEXTS / f"{tid}.json").get("status", "")) if tid else ""
 
 
 def push(body: bytes) -> bool:
@@ -328,7 +355,20 @@ def main() -> int:
     if command == "send":
         return send(args)
     if command == "text":
-        return text(" ".join(args))
+        minutes = 0.0
+        if "--until-read" in args:
+            at = args.index("--until-read")
+            try:
+                minutes = float(args[at + 1])
+            except (IndexError, ValueError):
+                print("--until-read needs minutes")
+                return 1
+            args = args[:at] + args[at + 2:]
+        return text(" ".join(args), minutes)
+    if command == "text-status":
+        status = text_status(args[0] if args else "")
+        print(status or "unknown id")
+        return 0 if status else 1
     if command == "hangup":
         if not in_call():
             print("no phone call is up")

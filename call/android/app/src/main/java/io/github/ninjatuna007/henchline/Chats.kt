@@ -76,6 +76,19 @@ object Chats {
         }
     }
 
+    /** Agents' texts in that chat you hadn't seen: now seen. Their ids, for the read receipt. */
+    @Synchronized
+    fun markSeen(context: Context, session: String): List<String> {
+        val chat = file(context, session)
+        if (session.isEmpty() || !chat.exists() || !chat.readText().contains("\"tid\"")) return emptyList()
+        val ids = mutableListOf<String>()
+        rewrite(context, session) { line ->
+            val tid = line.optString("tid")
+            if (tid.isNotEmpty() && !line.optBoolean("seen")) { ids.add(tid); line.put("seen", true) } else line
+        }
+        return ids
+    }
+
     private fun rank(status: String) = listOf("", "sent", "delivered", "read").indexOf(status)
 
     private fun rewrite(context: Context, session: String, change: (JSONObject) -> JSONObject) {

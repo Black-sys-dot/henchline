@@ -33,8 +33,11 @@ object Messages {
         .setIcon(Icon.createWithResource(context, MainActivity.avatarOf(agent))).setImportant(true).build()
 
     /** An agent's message: shown with the last few of the conversation, and a reply box. */
-    fun show(context: Context, agent: String, session: String, text: String) {
-        Chats.add(context, session, JSONObject().put("from", IncomingActivity.nameOf(agent)).put("text", text).put("mine", false))
+    fun show(context: Context, agent: String, session: String, text: String, tid: String = "") {
+        val line = JSONObject().put("from", IncomingActivity.nameOf(agent)).put("text", text).put("mine", false)
+        if (tid.isNotEmpty()) line.put("tid", tid)
+        Chats.add(context, session, line)
+        if (tid.isNotEmpty()) receipt(context, listOf(tid), "delivered")  // it reached the phone: one tick for the agent
         Chats.readAll(context, session)
         post(context, agent, session)
         // The app open on that chat shows it at once, as a line from a call would (2026-11-15: a text reached the
@@ -88,6 +91,27 @@ object Messages {
 
     private val QUICK = okhttp3.OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
 
+    /** How far an agent's texts got, told to the laptop (`handsfree text-status`): "delivered" when on the phone,
+     *  "read" when you opened that chat or replied. Best effort: off Tailscale it is just not told. */
+    fun receipt(context: Context, ids: List<String>, status: String) {
+        if (ids.isEmpty()) return
+        Thread {
+            try {
+                val origin = Files.origin(context) ?: return@Thread
+                QUICK.newCall(Request.Builder().url("$origin/text-status").header("Origin", origin)
+                    .post(JSONObject().put("ids", org.json.JSONArray(ids)).put("status", status).toString()
+                        .toRequestBody("application/json".toMediaType())).build()).execute().close()
+            } catch (_: Exception) {
+            }
+        }.start()
+    }
+
+    /** You've seen that chat: its agents' texts not yet marked read are, and the laptop is told. */
+    fun seen(context: Context, session: String) {
+        val ids = Chats.markSeen(context, session)
+        receipt(context, ids, "read")
+    }
+
     /** A reply typed into the notification: to the laptop, then into the chat and the notification. */
     class ReplyReceiver : BroadcastReceiver() {
         override fun onReceive(context: Context, intent: Intent) {
@@ -106,9 +130,10 @@ object Messages {
 
         /** Within the receiver's ten seconds: an unreachable laptop is "not sent", not a hang. */
         private fun send(context: Context, agent: String, session: String, words: String) {
+            seen(context, session)  // replying means reading
             val note = text(context, session, words)
             Chats.add(context, session, JSONObject().put("from", "you").put("mine", true)
-                .put("text", if (note.isEmpty()) words else "$words  ($note)"))
+                .put("text", if (note.isEmpty()) words else "$words  ($note)").put("status", if (note.isEmpty()) "delivered" else "sent"))
             post(context, agent, session, sending = true)
         }
     }

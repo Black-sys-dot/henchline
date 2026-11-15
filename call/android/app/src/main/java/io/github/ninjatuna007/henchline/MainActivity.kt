@@ -396,6 +396,9 @@ class MainActivity : Activity() {
                 if (file == null || line.optString("text").isNotEmpty())
                     say(from, line.getString("text"), mine = from == "you", session = line.optString("session"), keep = false)
                 if (file != null) fileCard(from, file, line.optString("session"), keep = false)
+                // An agent's text arriving in the chat you're looking at: read at once
+                if (line.has("tid") && line.optString("session") == current && chatScreen.visibility == View.VISIBLE)
+                    Messages.seen(this, current)
             }
             status.has("agents") -> showAgents(status)
             status.has("reload") || status.has("delivered") -> showHistory()  // a share was put in the kept chat (UploadService)
@@ -731,6 +734,7 @@ class MainActivity : Activity() {
         }
         showCrew()
         show(chatScreen)
+        if (current.isNotEmpty()) Messages.seen(this, current)  // opened: its agents' texts are read
     }
 
     /** Pull down on the list: the laptop looks for every agent running (as "switch me to" does) and lists them. */
@@ -807,6 +811,7 @@ class MainActivity : Activity() {
     /** The current agent's kept chat, from the start: on opening the app, and on switching agents. */
     private fun showHistory() {
         chat.removeAllViews()
+        if (current.isNotEmpty() && chatScreen.visibility == View.VISIBLE) Messages.seen(this, current)  // you're looking
         for (line in Chats.load(this, current)) {
             val file = line.optJSONObject("file")
             if (file != null) fileCard(line.optString("from"), file, current, keep = false)

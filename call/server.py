@@ -40,6 +40,7 @@ from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
+                         TEXTS,
                          CALL_PORT, CALL_PUSH,
                          CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
                          PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SENT, SPEAKERS,
@@ -98,7 +99,8 @@ class Status:
             line.unlink(missing_ok=True)
             if mirrored.get("text"):
                 lines.append({"chat": {"from": mirrored.get("from", "Claude"), "session": mirrored.get("session", ""),
-                                       "text": ("⌨ " if mirrored.get("from") == "you" else "") + mirrored["text"]}})
+                                       "text": ("⌨ " if mirrored.get("from") == "you" else "") + mirrored["text"],
+                                       **({"tid": mirrored["tid"]} if mirrored.get("tid") else {})}})
         for meta in files.undelivered():  # `handsfree send`: a file in the chat, or one that never reached the phone
             files.delivered(meta)
             lines.append({"chat": {"from": meta["agent"].capitalize(), "text": meta["text"], "session": meta["session"],
@@ -430,6 +432,27 @@ async def crew(request: web.Request) -> web.Response:
     return web.json_response(await loop.run_in_executor(None, agents))
 
 
+async def text_status(request: web.Request) -> web.Response:
+    """The phone saying how far agents' texts got: {"ids": [...], "status": "delivered" | "read"}. Only ever
+    forward (a read text isn't made delivered again), only texts this laptop sent."""
+    trusted(request)
+    try:
+        body = await request.json()
+        ids, status = [str(i) for i in body.get("ids", [])], str(body.get("status", ""))
+    except (ValueError, AttributeError, TypeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    if status not in ("delivered", "read"):
+        raise web.HTTPBadRequest(text="status: delivered or read")
+    order = ["sent", "delivered", "read"]
+    for tid in ids:
+        if not re.fullmatch(r"[0-9a-f]{16}", tid):
+            continue
+        record = read_json(TEXTS / f"{tid}.json")
+        if record and order.index(status) > order.index(record.get("status", "sent")):
+            write_json(TEXTS / f"{tid}.json", {**record, "status": status, f"{status}_at": time.time()}, private=True)
+    return web.json_response({"ok": True})
+
+
 async def sent_file(request: web.Request) -> web.StreamResponse:
     """A file an agent sent (`handsfree send`): only its secret folder name finds it."""
     path = files.find(request.match_info["secret"], request.match_info["name"])
@@ -580,6 +603,7 @@ def main() -> int:
     app.router.add_post("/share/file", share_file)
     app.router.add_post("/share/tell", share_tell)
     app.router.add_post("/text", texted)
+    app.router.add_post("/text-status", text_status)
     app.router.add_post("/crew", crew)  # it registers what it finds: a POST
     app.router.add_get("/files/{secret}/{name}", sent_file)
     proxied = False
