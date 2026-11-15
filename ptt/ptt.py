@@ -8,7 +8,6 @@ Default mic route only: pw-record with no --target.
 keys.py notices the hotkey, paste.py types the words, tray.py is the icon;
 this file records and transcribes in between.
 """
-import gc
 import queue
 import shutil
 import signal
@@ -27,7 +26,7 @@ from voice import state as shared  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
 from voice.state import BY_PTT, PTT_LOG, PTT_WAV, Phase  # noqa: E402
 from voice.state import ptt_log as log  # noqa: E402
-from voice.whisper import Config, load_model, transcribe  # noqa: E402
+from voice.whisper import Config, Transcriber  # noqa: E402
 
 SHORTEST = 0.35  # seconds: a shorter press is a slip, not speech
 SMALLEST = 1000  # bytes: a recording this small has no audio in it
@@ -65,7 +64,7 @@ class PushToTalk:
         self.capture = HotkeyCapture()
         self.phases: queue.Queue[Phase] = queue.Queue()  # for the tray icon
         self.texts: queue.Queue[tuple[str, str]] = queue.Queue()  # (plain, with tone marks), pasted by the tray
-        self.model = None
+        self.transcriber: Transcriber | None = None  # loaded when the key listener starts
 
     def set_phase(self, phase: Phase) -> None:
         """For the tray icon, and for talkback, which goes quiet while we record."""
@@ -74,8 +73,7 @@ class PushToTalk:
 
     def run(self) -> None:
         keyboards = Keyboards(self.cfg, self.capture)
-        cuda = self.cfg.want_cuda()
-        self.model = load_model(self.cfg, cuda, PTT_LOG)
+        self.transcriber = Transcriber(self.cfg, PTT_LOG)
         log("ready")
         while not self.stop.is_set():
             ready = keyboards.wait()
@@ -83,11 +81,7 @@ class PushToTalk:
                 keyboards.read(dev, self.hold)
             if ready:
                 continue
-            if self.cfg.want_cuda() != cuda:  # plugged in or unplugged
-                log("power source changed; reloading model")
-                cuda, self.model = not cuda, None
-                gc.collect()
-                self.model = load_model(self.cfg, cuda, PTT_LOG)
+            self.transcriber.settle()  # mains or battery; back to the GPU once a training run lets go
             keyboards.rescan()
 
     def hold(self, dev, event, hold: Hold) -> None:
@@ -108,7 +102,7 @@ class PushToTalk:
     def transcribe(self, path: Path) -> None:
         self.set_phase(Phase.TRANSCRIBING)
         try:
-            text, rich = transcribe(self.model, path, self.cfg, PTT_LOG)
+            text, rich = self.transcriber.file(path)  # out of GPU memory: on the CPU, words kept
         except Exception as exc:
             log(f"transcribe failed: {exc}")
             return

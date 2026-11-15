@@ -64,10 +64,10 @@ def floor_of(history: collections.deque, fallback: float) -> float:
 
 
 class Listener:
-    def __init__(self, cfg: whisper.Config, model, stop, canceller_since: float) -> None:
+    def __init__(self, cfg: whisper.Config, transcriber: whisper.Transcriber, stop, canceller_since: float) -> None:
         self.cfg, self.stop = cfg, stop
         self.canceller_since = canceller_since
-        self.transcriber = whisper.Transcriber(cfg, model, HANDSFREE_LOG)
+        self.transcriber = transcriber
         self.stream, self.opened, self.frames_read = None, 0.0, 0
         self.talkover = TalkOver(self.transcriber.quick_text)
         self.turns = Turn(cfg, self.transcriber, self.talkover, self.read, self.show, self.echo_slipped, stop)
@@ -119,6 +119,8 @@ class Listener:
                     was_busy = talkback_busy()
                 elif self.restart_due and not busy and not ptt_busy():  # between clips; a reply window may be open
                     self.restart_canceller()
+                elif not busy and not self.window.is_open():
+                    self.transcriber.settle()  # back to the GPU once a training run lets go
         finally:
             self.stream.terminate()
 

@@ -76,7 +76,7 @@ def main() -> int:
     sustain = float(sys.argv[2]) if len(sys.argv) > 2 else SUSTAIN
     gap = float(sys.argv[3]) if len(sys.argv) > 3 else GAP
     cfg = whisper.Config.load(NO_LOG)
-    transcriber = whisper.Transcriber(cfg, whisper.load_model(cfg, cfg.want_cuda(), NO_LOG), NO_LOG)
+    transcriber = whisper.Transcriber(cfg, NO_LOG)
     false = miss = caught = 0
     lags = []
     for take in json.loads((folder / "trials.json").read_text()):

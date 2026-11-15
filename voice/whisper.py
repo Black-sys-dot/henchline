@@ -3,9 +3,11 @@ from ~/.config/ptt/config.json."""
 
 from __future__ import annotations
 
+import gc
 import json
 import os
 import subprocess
+import time
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 
@@ -56,6 +58,12 @@ class Config:
             return True
 
 
+# On the CPU an 8 s turn took 1.8 s with 4 threads, 1.4 s with 16, against 0.2 s on the GPU (2026-11-15)
+CPU_THREADS = max(4, (os.cpu_count() or 8) // 2)
+GPU_NEEDS_MB = 1500  # free GPU memory before Whisper moves back to it (the small model takes ~900 MB)
+RETRY_GPU = 60.0  # seconds between looks at whether the GPU has room again
+
+
 def load_model(cfg: Config, cuda: bool, log_to: Path):
     from faster_whisper import WhisperModel
 
@@ -66,9 +74,19 @@ def load_model(cfg: Config, cuda: bool, log_to: Path):
             return model
         except Exception as exc:
             log(log_to, f"cuda model failed ({exc}); using cpu")
-    model = WhisperModel(cfg.model, device="cpu", compute_type="int8")
-    log(log_to, f"model {cfg.model} on cpu")
+    model = WhisperModel(cfg.model, device="cpu", compute_type="int8", cpu_threads=CPU_THREADS)
+    log(log_to, f"model {cfg.model} on cpu ({CPU_THREADS} threads)")
     return model
+
+
+def gpu_free_mb() -> int | None:
+    """Free memory on the first NVIDIA GPU, or None if it cannot be asked."""
+    try:
+        out = subprocess.run(["nvidia-smi", "--query-gpu=memory.free", "--format=csv,noheader,nounits"],
+                             capture_output=True, text=True, timeout=5).stdout.split()
+        return int(out[0]) if out else None
+    except (OSError, ValueError, subprocess.SubprocessError):
+        return None
 
 
 def transcribe(model, path: Path, cfg: Config, log_to: Path) -> tuple[str, str]:
@@ -98,11 +116,37 @@ def ding(cfg: Config) -> None:
 
 
 class Transcriber:
-    """A loaded Whisper model that moves itself to the CPU when the GPU runs out of memory."""
+    """Whisper on the GPU when it can be, the CPU when it must.
 
-    def __init__(self, cfg: Config, model, log_to: Path) -> None:
-        self.cfg, self.model, self.log_to = cfg, model, log_to
-        self.on_cpu = False
+    Out of GPU memory (a training run), it moves to the CPU and carries on;
+    settle(), called when idle, moves it back once the GPU has room again, and
+    follows the power source (GPU on mains, CPU on battery). Before, one
+    out-of-memory left hands-free on the CPU until it was restarted, and
+    push-to-talk lost the words.
+    """
+
+    def __init__(self, cfg: Config, log_to: Path) -> None:
+        self.cfg, self.log_to = cfg, log_to
+        self.on_cpu = not cfg.want_cuda()
+        self.model = load_model(cfg, not self.on_cpu, log_to)
+        self.on_cpu = self.model.model.device == "cpu"
+        self.looked = 0.0  # when settle() last looked at the GPU
+
+    def settle(self) -> None:
+        """Between uses: back to the GPU if wanted and it has room; to the CPU on battery."""
+        if time.monotonic() - self.looked < RETRY_GPU:
+            return
+        self.looked = time.monotonic()
+        wanted = self.cfg.want_cuda()
+        if wanted == (not self.on_cpu):
+            return
+        if wanted and (gpu_free_mb() or 0) < GPU_NEEDS_MB:
+            return  # still full: stay on the CPU
+        log(self.log_to, "moving Whisper " + ("back to the GPU" if wanted else "to the CPU (battery)"))
+        self.model = None
+        gc.collect()
+        self.model = load_model(self.cfg, wanted, self.log_to)
+        self.on_cpu = self.model.model.device == "cpu"
 
     def run(self, use):
         """use(model); if the GPU is full, move Whisper to the CPU and try again."""
@@ -113,6 +157,7 @@ class Transcriber:
                 raise
             log(self.log_to, "GPU out of memory: Whisper moves to the CPU")
             self.model, self.on_cpu = load_model(self.cfg, False, self.log_to), True
+            self.looked = time.monotonic()  # give the GPU a while before trying it again
             return use(self.model)
 
     def quick_text(self, audio) -> str:

@@ -49,8 +49,7 @@ class FakeStream:
 sent = []
 routing.deliver = lambda text, heard: sent.append((text, heard)) or True
 cfg = whisper.Config.load(NO_LOG)
-model = whisper.load_model(cfg, cfg.want_cuda(), NO_LOG)
-listener_ = listener.Listener(cfg, model, threading.Event(), canceller_since=0.0)
+listener_ = listener.Listener(cfg, whisper.Transcriber(cfg, NO_LOG), threading.Event(), canceller_since=0.0)
 listener_.stream = FakeStream(audio + silence)
 listener_.turn([], Heard.REPLY, -80.0)
 print("delivered:", sent)

@@ -38,10 +38,10 @@ UNIT = "handsfree.service"
 def run() -> int:
     cfg = whisper.Config.load(HANDSFREE_LOG)
     canceller_since = start_canceller()
-    model = whisper.load_model(cfg, cfg.want_cuda(), HANDSFREE_LOG)
+    transcriber = whisper.Transcriber(cfg, HANDSFREE_LOG)
     stop = threading.Event()
     signal.signal(signal.SIGTERM, lambda *_: stop.set())
-    listener = Listener(cfg, model, stop, canceller_since)
+    listener = Listener(cfg, transcriber, stop, canceller_since)
     threading.Thread(target=listener.run, daemon=True).start()
     log(HANDSFREE_LOG, "on")
     if ANNOUNCE.exists():  # only when the user turned it on, not on every restart
