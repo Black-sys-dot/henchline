@@ -34,6 +34,7 @@ class Sheet(
     private var picked: String,
     private val over: Boolean = false,  // over the app's own screen (the paperclip), not a share screen of its own
     private val note0: String = "",  // words already typed in the chat's box
+    private val onSent: (String) -> Unit = {},  // the agent it went to
 ) {
     private val dp = activity.resources.displayMetrics.density
     private fun px(v: Int) = (v * dp).toInt()
@@ -119,6 +120,7 @@ class Sheet(
         send.setOnClickListener {
             activity.startForegroundService(UploadService.intent(activity, uris, names, text, note.text.toString(), picked)
                 .putExtra(UploadService.INTO_CHAT, true))
+            onSent(picked)
             // In that agent's chat too, as the paperclip's are (2026-11-15: a share reached the agent but never
             // showed in the app's chat)
             close()
@@ -140,7 +142,9 @@ class Sheet(
 
     private var root: View? = null
 
-    private fun close() {
+    val isOpen get() = root?.parent != null
+
+    fun close() {
         val done: () -> Unit = { if (over) { (root?.parent as? ViewGroup)?.removeView(root) } else activity.finish() }
         val s = sheet ?: return done()
         s.animate().translationY(s.height.toFloat()).setDuration(200).withEndAction { done() }.start()

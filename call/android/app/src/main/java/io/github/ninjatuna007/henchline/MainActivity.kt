@@ -124,7 +124,15 @@ class MainActivity : Activity() {
         val words = text.text.toString().trim()
         text.setText("")
         val crew = names.toList().ifEmpty { listOf(current to (prefs().getString("current_name", "") ?: "")) }
-        Sheet(this, uris, uris.map { Files.nameOf(this, it) }, "", crew, current, over = true, note0 = words).show()
+        sheet?.close()  // one at a time
+        sheet = Sheet(this, uris, uris.map { Files.nameOf(this, it) }, "", crew, current, over = true, note0 = words,
+            onSent = { to ->  // off a call, the chat follows where it went (on one, the laptop says who's current)
+                if (!CallService.Bus.connected && to != current) {
+                    current = to
+                    prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
+                    showHistory(); showCrew()
+                }
+            }).also { it.show() }
     }
 
     /** What you attached, on your side of the chat: a picture small, anything else its name. */
@@ -160,9 +168,11 @@ class MainActivity : Activity() {
         }
     }
 
-    private val decoder = java.util.concurrent.Executors.newFixedThreadPool(2)
-    private val pictures = object : android.util.LruCache<String, android.graphics.Bitmap>(16 * 1024 * 1024) {  // 16 MB
-        override fun sizeOf(key: String, value: android.graphics.Bitmap) = value.byteCount
+    private var sheet: Sheet? = null  // the paperclip's share sheet, while it is up
+
+    @Deprecated("the platform Activity's back handling, kept for Android 10-12")
+    override fun onBackPressed() {
+        if (sheet?.isOpen == true) sheet?.close() else super.onBackPressed()  // back closes the sheet, not the app
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -744,6 +754,11 @@ class MainActivity : Activity() {
         const val ANSWER = "io.github.ninjatuna007.henchline.ANSWER"  // from IncomingActivity's Answer
         const val MIC_FOR_CALL = 2  // the permission request a call waits on
         const val PICK_FILES = 3  // the paperclip's picker
+        // Pictures in the chat: decoded two at a time and kept a while, for the app's whole life (not per screen)
+        private val decoder = java.util.concurrent.Executors.newFixedThreadPool(2)
+        private val pictures = object : android.util.LruCache<String, android.graphics.Bitmap>(16 * 1024 * 1024) {  // 16 MB
+            override fun sizeOf(key: String, value: android.graphics.Bitmap) = value.byteCount
+        }
         const val CALL_NOW = "io.github.ninjatuna007.henchline.CALL_NOW"  // the Quick Settings tile
         const val CALL_KEY = "call_key"
 
