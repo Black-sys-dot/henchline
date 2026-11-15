@@ -24,8 +24,8 @@ from turn import Mode, Turn
 from voicegate import VoiceGate
 from voice import whisper
 from voice.spool import queued
-from voice.state import (BY_HANDSFREE, CLOSE, HANDSFREE_LOG, LISTEN, PAUSE, PLAYING, WORKER_PID, log, mic_source,
-                         ptt_busy, release_phase)
+from voice.state import (BY_HANDSFREE, CLOSE, HANDSFREE_LOG, LISTEN, PAUSE, PLAYING, WORKER_PID, in_call, log,
+                         mic_source, ptt_busy, release_phase)
 
 WINDOW = 8.0  # seconds to answer after a clip
 FOLLOW = 6.0  # seconds to carry on after their own message (once, never chained)
@@ -183,7 +183,10 @@ class Listener:
         if self.play_started and not playing:
             self.restart_due |= self.echo_watch.clip_over()
         self.play_started = (self.play_started or time.monotonic()) if playing else 0.0
-        open_ = (playing or self.window.is_open()) and not ptt_busy() and not PAUSE.exists()
+        # On a phone call the line is always open, as on any call: the phone's own echo cancelling keeps
+        # our voice out, and only "hey Claude" getting in made calls deaf between clips (2026-11-15)
+        calling = in_call()
+        open_ = (playing or calling or self.window.is_open()) and not ptt_busy() and not PAUSE.exists()
         self.mode = Mode.LISTENING if open_ else Mode.WAITING
         if not open_:
             self.gate.clear()
@@ -208,7 +211,8 @@ class Listener:
         if not speech:
             history.append(db)
             return False
-        self.turn(list(self.preroll), self.window.kind, turn_floor)
+        self.turn(list(self.preroll), self.window.kind if self.window.is_open() or not calling else Heard.CALL,
+                  turn_floor)
         return True
 
     def wary(self) -> bool:
