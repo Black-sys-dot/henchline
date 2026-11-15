@@ -128,12 +128,49 @@ def crew(drawings: dict) -> str:
             + "".join(panels) + "</svg>")
 
 
+def hero() -> str:
+    """The README's banner: a navy card with the name and the line, the crew hiding round it. Cursor sneaks round
+    the left side, Claude leans round the right, hands-free pops up over the top, Codex hangs from the bottom."""
+    def me(name):
+        body, light, glow, eyes = FLAVOURS[name]
+        return henchman("hero-" + name, body, light, glow, eyes, {"cursor": 1.6, "codex": 2.2}.get(name, 4))
+    card = '<rect x="140" y="70" width="520" height="190" rx="30" fill="#0A1430"/>'
+    words = ('<text x="400" y="160" text-anchor="middle" font-family="Trebuchet MS, Segoe UI, Helvetica, sans-serif" '
+             'font-size="62" font-weight="bold" fill="#FFFFFF" letter-spacing="1">Henchline</text>'
+             '<text x="400" y="205" text-anchor="middle" font-family="Trebuchet MS, Segoe UI, Helvetica, sans-serif" '
+             'font-size="21" fill="#00E5FF">Talk to all your AI henchmen.</text>'
+             '<text x="400" y="234" text-anchor="middle" font-family="Trebuchet MS, Segoe UI, Helvetica, sans-serif" '
+             'font-size="17" fill="#9FB3D9">By voice, by phone, by text.</text>')
+    behind = (
+        # Cursor: round the left side, ducking in and out
+        '<g>' + anim("translate", "40 0;0 0;0 0;40 0;40 0", 8, 0.6, "0;0.08;0.62;0.7;1")
+        + '<g transform="translate(118 112) scale(1.5) rotate(-10 54 55) translate(-54 -40)">' + me("cursor") + '</g></g>'
+        # Claude: leans out round the right side, then hides behind the card again, twice in quick looks
+        + '<g>' + anim("translate", "-60 0;0 0;0 0;-60 0;-60 0;0 0;0 0;-60 0;-60 0", 9, 1.4,
+                       "0;0.06;0.3;0.36;0.5;0.56;0.7;0.76;1")
+        + '<g transform="translate(682 112) scale(1.5) rotate(10 0 30) translate(-54 -40)">' + me("claude") + '</g></g>'
+        # hands-free: over the top edge, hopping
+        + '<g>' + anim("translate", "0 60;0 -4;0 0", 0.8, 0.2, "0;0.7;1", True)
+        + '<g>' + anim("translate", "0 0;0 -10;0 0;0 -6;0 0;0 0", 2.6, 1, "0;0.12;0.24;0.34;0.44;1")
+        + '<g transform="translate(250 14) scale(1.3) translate(-54 -17)">' + me("handsfree") + '</g></g></g>')
+    hanging = ('<g>' + anim("translate", "0 -90;0 4;0 0", 1.1, 0.9, "0;0.75;1", True)
+               + '<g>' + anim("rotate", "-9 560 258;9 560 258;-9 560 258", 3.2)
+               + '<g transform="translate(560 258) scale(1.2) rotate(180) translate(-54 -86)">' + me("codex") + '</g>'
+               + '</g></g>'
+               + ''.join(f'<ellipse cx="{x}" cy="259" rx="4.5" ry="3" fill="{FLAVOURS["codex"][0]}"/>' for x in (550, 570)))
+    hands = (f'<ellipse cx="140" cy="150" rx="3.2" ry="5" fill="{FLAVOURS["cursor"][0]}"/>'
+             f'<ellipse cx="660" cy="150" rx="3.2" ry="5" fill="{FLAVOURS["claude"][0]}"/>'
+             + ''.join(f'<ellipse cx="{x}" cy="70" rx="5" ry="3.2" fill="{FLAVOURS["handsfree"][0]}"/>' for x in (237, 263)))
+    return page("0 0 800 360", (800, 360), behind + card + words + hanging + hands)
+
+
 def main() -> None:
     drawings = {}
     for name, (body, light, glow, eyes) in FLAVOURS.items():
         drawings[name] = globals()[name](body, light, glow, eyes)
         (HERE / f"peek_{name}.svg").write_text(drawings[name])
     (HERE / "crew.svg").write_text(crew(drawings))
+    (HERE / "hero.svg").write_text(hero())
 
 
 if __name__ == "__main__":

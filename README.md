@@ -1,23 +1,51 @@
-# Henchline
+<h1 align="center"><img src="docs/hero.svg" width="800" alt="Henchline: talk to all your AI henchmen. By voice, by phone, by text."></h1>
 
-<p align="center"><img src="docs/crew.svg" width="100%" alt="The crew: four henchmen peeking at you"></p>
+You're the boss. Claude Code, Cursor and Codex are your crew, each busy in its own terminal or window. **Henchline is the line to all of them**: talk to them at your desk without touching the keyboard, call them from your phone when you're out, and let them ring or text you when they need a decision. Every henchman has its own voice, its own ringtone, its own chat. And it all runs on your own machine.
 
-**Talk to all your AI henchmen: by voice, by phone, by text.**
+## Meet the crew
 
-You're the boss. Claude Code, Cursor and Codex are your crew, each busy in its own terminal or window. Henchline is the line to all of them, at your desk or from anywhere:
+| | | |
+|---|---|---|
+| <img src="docs/screens/call.png" width="260" alt="A call with Claude: the chat, the talk button"> | <img src="docs/screens/ring.png" width="260" alt="Claude is calling: full-screen ring"> | <img src="docs/screens/text.png" width="260" alt="A text from Claude, answered from the notification"> |
+| **Call your crew** from anywhere. Talk, or hold the button, or type. | **They ring you** when they need a decision: full screen, their own ringtone, a line of henchman-speak. | **They text you** when it can wait. Reply right from the notification. |
+| <img src="docs/screens/files.png" width="260" alt="A picture sent by Claude in the chat"> | <img src="docs/screens/crew.png" width="260" alt="The crew drawer: every agent with its henchman"> | <img src="docs/screens/share.png" width="260" alt="Sharing a photo to Henchline"> |
+| **Files both ways.** Pictures and audio play right in the chat. | **A chat per henchman**, kept on your phone, readable any time. | **Share anything** from any app, to the agent whose chat is open. |
 
-- **At your desk:** hold a key and speak, or just say "hey Claude". They answer out loud, each in its own voice, one at a time. Talk over them to cut in; say "switch me to Cursor" to hand the conversation over.
-- **Away from it:** call your crew from your phone with the Henchline app, as you would a person. Each henchman has its own chat; your words show as they were heard.
-- **When they need you:** an agent rings your phone, full screen, with its own ringtone and a line of henchman-speak. Not urgent? It texts you instead, and you reply from the notification; the reply is typed into that agent's terminal, and only that one's.
-- **Files both ways:** share a photo, a recording, a zip from any app on your phone (or tap the paperclip in a chat) and the agent is told where it landed; an agent sends you a picture or a document and it shows in its chat.
+## What it does
 
-It works with any agent that runs in a terminal or in Cursor: Henchline types into their own tabs and windows, so there is nothing to install inside them, and it was never built for one vendor. Everything runs on your own machine: Whisper hears you and Kokoro speaks, locally; your phone reaches the laptop over your own Tailscale network. No cloud speech, no relay, no account.
+**At your desk**
 
-### How it compares
+- 🎙 **Push-to-talk.** Hold the Copilot key (or any key), speak, let go: Whisper writes it down on your machine and it is typed into the agent you're looking at. A word you stress arrives as `*word*`; a tone that stands out arrives as `[tone: loud, fast]`, so the agent knows how you said it.
+- 🔊 **They talk back.** Each agent speaks its replies aloud in its own voice (Claude, Cursor and Codex sound different), one at a time, never over each other, and goes quiet the moment you start talking.
+- 🙌 **Hands-free.** Say *"hey Claude"* (your own trained wake word) or tap your earbuds. Answer right after they speak, no wake word needed. Talk over a reply to cut it off. *"Over"* sends at once, *"give me a minute"* keeps listening.
+- 🔀 **Switch by voice.** *"Switch me to Cursor"*, *"hand it back to Claude"*, *"send that to Codex"*: fixed phrases, announced out loud, so a mishearing is undone with *"back to …"*.
 
-Pieces of this exist elsewhere: each vendor's own remote control (Claude Code's Remote Control and Channels, Codex in the ChatGPT app, Cursor's iOS app) works with its own agent through its cloud; [Happy](https://github.com/slopus/happy) and Omnara are phone apps for Claude Code and Codex with cloud voice; [CallMe](https://github.com/ZeframLou/call-me) and [Better Call Claude](https://github.com/sns45/better-call-claude) let Claude Code phone you through Twilio; [TalkiTo](https://github.com/robdmac/talkito) gives Claude Code and Codex a voice and Slack/WhatsApp chat; [VoiceMode](https://github.com/mbailey/voicemode) gives one agent local two-way voice. As far as a search in November 2026 found, none puts several agents, hands-free conversation with spoken handoff, and your own calling, ringing and texting app together, locally. If you know one that does, please open an issue.
+**Away from it: the Henchline app**
 
-It began as **copilot-ptt**, a push-to-talk key, which it still is: see [Push-to-talk](#push-to-talk).
+- 📞 **Call your crew** over your own Tailscale network. The laptop stays quiet; your phone is its mic and speaker. Open line, hold-to-talk, or typed; your words show in the chat exactly as they were heard.
+- 🔔 **They ring you.** `handsfree ring "the build finished, want me to deploy?"` rings your phone: full screen when it's locked, a ringing banner while you use it, with the henchman's own tone and phrase (**[hear Claude](call/android/app/src/main/res/raw/banner_claude.wav)**, [Cursor](call/android/app/src/main/res/raw/banner_cursor.wav), [Codex](call/android/app/src/main/res/raw/banner_codex.wav)). Answer, and you're talking to the one who rang. The agent learns whether you answered, declined, missed it, or were out of reach. Your own agents get through Do Not Disturb; nobody else does.
+- 💬 **They text you.** `handsfree text "tests are green"`: a message with a reply box. Your reply is typed into that agent's terminal, and only that one's. Start a text from any agent's chat in the app, too.
+- 📎 **Files both ways.** Share a photo, a voice memo, a zip, a video from any app, or tap the paperclip: it lands on the laptop and the agent is told where. An agent runs `handsfree send report.pdf "here you go"` and it shows in its chat.
+- 🗂 **A chat per henchman**, kept on the phone, your terminal conversation mirrored into it during a call.
+- 🎧 **Earbuds as push-to-talk**: tap to talk, tap to send, the phone stays in your pocket. Talk/Send and Hang up on the lock screen, and a Quick Settings tile if you want one.
+
+**For your agents**
+
+One snippet (`agents/AGENTS-snippet.md`) teaches every agent (Claude Code, Cursor, Codex) how to speak, how your voice messages are tagged, and when to ring, text or send you something. Nothing to install inside the agents: Henchline types into their own terminal tabs and windows.
+
+## Yours, and only yours
+
+- **Local.** Whisper hears you and Kokoro speaks, on your machine. No cloud speech, no relay, no account.
+- **Your network.** The phone reaches the laptop over your own Tailscale; only your devices can.
+- **Any agent.** Not tied to one vendor: if it runs in a terminal or in Cursor, it's on the crew.
+- **Your voice stays yours.** Record the henchman phrases in your own voice; they stay on your phone, never in the repository.
+- **Careful by default.** Rings and replies use one-time secret addresses; secrets in what you type are masked before they reach the phone; a text goes to exactly the agent you texted.
+
+## How it compares
+
+Pieces of this exist elsewhere: each vendor's own remote control (Claude Code's Remote Control and Channels, Codex in the ChatGPT app, Cursor's iOS app) works with its own agent through its cloud; [Happy](https://github.com/slopus/happy) and Omnara are phone apps for Claude Code and Codex with cloud voice; [CallMe](https://github.com/ZeframLou/call-me) and [Better Call Claude](https://github.com/sns45/better-call-claude) let Claude Code phone you through Twilio; [TalkiTo](https://github.com/robdmac/talkito) gives Claude Code and Codex a voice and Slack/WhatsApp chat; [VoiceMode](https://github.com/mbailey/voicemode) gives one agent local two-way voice. As far as a search in November 2026 found, none puts several agents at once, hands-free conversation with spoken handoff, and your own calling, ringing and texting app together, locally. If you know one that does, please open an issue.
+
+It began as **copilot-ptt**, a push-to-talk key, which it still is: see [Push-to-talk](#push-to-talk). Linux on X11 today (KDE Plasma, or any X11 desktop); Wayland is welcome.
 
 ## What is in here
 
