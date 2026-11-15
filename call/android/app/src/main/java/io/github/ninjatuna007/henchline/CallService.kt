@@ -130,11 +130,17 @@ class CallService : Service() {
         }
     }
 
-    /** Start talking (a rising beep), or send what was said (a falling one): as holding the talk button. */
+    /** A rising beep as talking starts, a falling one as it is sent: the earbuds, the notification, the screen's
+     *  talk button alike. */
+    fun beep(starting: Boolean) {
+        beeper?.startTone(if (starting) android.media.ToneGenerator.TONE_PROP_ACK else android.media.ToneGenerator.TONE_PROP_PROMPT, 150)
+    }
+
+    /** Start talking, or send what was said: as holding the talk button. */
     fun toggleTalk() {
         talking = !talking
         socket?.send(org.json.JSONObject().put("push", talking).toString())
-        beeper?.startTone(if (talking) android.media.ToneGenerator.TONE_PROP_ACK else android.media.ToneGenerator.TONE_PROP_PROMPT, 150)
+        beep(talking)
         Bus.listener?.invoke(org.json.JSONObject().put("talking", talking).toString())
         goForeground()  // the notification's button says Send while talking
     }

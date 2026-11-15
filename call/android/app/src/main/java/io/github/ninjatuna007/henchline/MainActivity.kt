@@ -372,6 +372,7 @@ class MainActivity : Activity() {
         val hold = Runnable {
             talking = true
             CallService.Bus.service?.send("""{"push": true}""")
+            CallService.Bus.service?.beep(true)
         }
         talk.setOnTouchListener { view, event ->
             when (event.actionMasked) {
@@ -381,6 +382,7 @@ class MainActivity : Activity() {
                     if (talking) {
                         talking = false
                         CallService.Bus.service?.send("""{"push": false}""")
+                        CallService.Bus.service?.beep(false)
                     } else if (event.actionMasked == MotionEvent.ACTION_UP) {
                         buttonOnly = !buttonOnly
                         CallService.Bus.service?.send(JSONObject().put("button_only", buttonOnly).toString())
