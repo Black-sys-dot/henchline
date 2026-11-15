@@ -194,6 +194,10 @@ def route(text: str, last_message: tuple[str, Heard] | None) -> bool:
             say(f"I see {len(running)} of {agent.capitalize()}{' in ' + where if where else ''}, so I won't guess. "
                 "Say the folder, or talk to the one you want from its tab once.")
             return False
+        if running and forward and not where:
+            # Found by itself, no folder named: say which first, before your words go there
+            say(f"I found {running[0].spoken()}. Say send that to {running[0].agent} in {running[0].where} to send it.")
+            return False
         if running:
             target = running[0]
             target.save(SPEAKERS / f"{target.session}.json")

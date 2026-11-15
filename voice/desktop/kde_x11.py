@@ -17,6 +17,14 @@ KLIPPER = ("org.kde.klipper", "/klipper")
 TYPE_PAUSE = 0.15  # seconds between the text and its Enter, so Konsole takes them in order
 
 
+def qdbus_ok(*args: str) -> bool:
+    """A D-Bus call that must happen (typing, the clipboard): False when it failed, or the bus didn't answer."""
+    try:
+        return subprocess.run(["qdbus", *args], capture_output=True, timeout=5).returncode == 0
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+
+
 def qdbus(*args: str) -> str:
     """A D-Bus call, or "" when it can't be made: no qdbus, or the bus wedged (KWin's D-Bus wedge on this kind of
     machine): never hangs the turn that asked."""
@@ -70,8 +78,7 @@ class Konsole(AnyTerminal):
 
     def type_line(self, tab: Tab, text: str) -> bool:
         for chunk in (text, "\r"):
-            if subprocess.run(["qdbus", tab.owner, tab.address, "sendText", chunk],
-                              capture_output=True).returncode != 0:
+            if not qdbus_ok(tab.owner, tab.address, "sendText", chunk):
                 return False
             time.sleep(TYPE_PAUSE)
         return True
@@ -100,6 +107,6 @@ class KdeX11(GenericX11):
     def set_clipboard(self, text: str) -> bool:
         """Through Klipper, KDE's clipboard, and checked."""
         os.environ.setdefault("DBUS_SESSION_BUS_ADDRESS", f"unix:path=/run/user/{os.getuid()}/bus")
-        if subprocess.run(["qdbus", *KLIPPER, "setClipboardContents", text], capture_output=True).returncode != 0:
+        if not qdbus_ok(*KLIPPER, "setClipboardContents", text):
             return False
         return qdbus(*KLIPPER, "getClipboardContents") == text.strip()
