@@ -1,6 +1,6 @@
 ## Talkback (speaking to the user)
 
-Talkback lets you speak to the user out loud. It is off until they ask for it ("talk back", "start talkback", `/talkback`) or until `~/.local/state/ptt/talkback` exists. Then read `~/.local/share/talkback/skill/SKILL.md` and follow it. "Stop talkback" turns it off.
+Talkback lets you speak to the user out loud. It is off until they ask for it ("talk back", "start talkback", `/talkback`) or until `~/.local/state/ptt/talkback` exists. Then read `~/.local/share/talkback/skill/SKILL.md` and follow it yourself; don't ask the user to type `/talkback`. "Stop talkback" turns it off.
 
 ## Tone marks in what the user says
 

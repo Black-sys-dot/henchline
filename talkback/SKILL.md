@@ -4,7 +4,6 @@ description: >-
   Speak conversational updates on the laptop, during or after a turn. Use when the
   user says /talkback, talk back, start talkback, or stop talkback, or
   when ~/.local/state/ptt/talkback exists.
-disable-model-invocation: true
 ---
 
 # Talkback

@@ -8,7 +8,7 @@ The snippet points at `~/.local/share/talkback/skill/SKILL.md`, a link to this r
 |---|---|---|
 | Claude Code | `~/.claude/CLAUDE.md` | add the line `@~/copilot-ptt/agents/AGENTS-snippet.md` (Claude Code imports it). Optional: `ln -s ~/copilot-ptt/talkback ~/.claude/skills/talkback` for a `/talkback` command |
 | Codex CLI | `~/.codex/AGENTS.md` (global) | link or append the snippet |
-| Cursor | rules in `~/.cursor/rules/` | `cursor/voice.mdc`: the snippet with `alwaysApply: true` (made from the snippet by `install.sh`). For hands-free replies into the editor's chat, also the keybinding `ctrl+alt+shift+f12` → `composer.focusComposer` in Cursor's `keybindings.json` (`install.sh agents` adds it) |
+| Cursor | rules in `~/.cursor/rules/` | `~/.cursor/rules/voice.mdc`: the snippet under a header with `alwaysApply: true`, written by `install.sh agents` (no copy in the repo). For hands-free replies into the editor's chat, also the keybinding `ctrl+alt+shift+f12` → `composer.focusComposer` in Cursor's `keybindings.json` (`install.sh agents` adds it) |
 | Anything else that reads `AGENTS.md` (Gemini CLI, opencode, Aider with a convention file, …) | the project's or its global `AGENTS.md` | append the snippet |
 
 Talkback tells agents apart by their process (Claude Code, Cursor's agent, Codex), or by `TALKBACK_AGENT=name` in the agent's environment. Each gets its own voice; unknown agents get a default one and introduce themselves by that name.
