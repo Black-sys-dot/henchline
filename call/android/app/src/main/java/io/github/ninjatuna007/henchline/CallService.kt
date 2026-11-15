@@ -266,7 +266,8 @@ class CallService : Service() {
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
                 heard.offer(bytes.toByteArray())
-                while (heard.size > MAX_BEHIND) heard.poll()  // over a second behind: drop the oldest
+                got.incrementAndGet()
+                while (heard.size > MAX_BEHIND) { heard.poll(); dropped.incrementAndGet() }  // over a second behind: drop the oldest
             }
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
@@ -335,8 +336,14 @@ class CallService : Service() {
                     .build()
                 try {
                     track.play()
+                    var reported = System.currentTimeMillis()
                     while (running && generation.get() == round) {
+                        if (System.currentTimeMillis() - reported >= 2000) {  // what was played, for the laptop's log
+                            reported = System.currentTimeMillis()
+                            report(track)
+                        }
                         val chunk = heard.poll(200, TimeUnit.MILLISECONDS) ?: continue
+                        if (loud(chunk)) loudMs.addAndGet(chunk.size / 2 * 1000L / SPEAKER_RATE)
                         val written = track.write(chunk, 0, chunk.size)
                         if (written < 0) {
                             fail("The speaker stopped working (error $written).")
@@ -352,6 +359,32 @@ class CallService : Service() {
                 fail("The speaker failed: ${e.message}")
             }
         }.apply { name = "speaker"; start() }
+    }
+
+    // What the phone played, told to the laptop every 2 s as the call page does: the laptop can't hear the phone,
+    // so sound lost on the way (the screen off, audio paused, chunks dropped) shows only in its log this way
+    // (2026-11-16: the agents went silent with the screen off, and nothing said why)
+    private val got = java.util.concurrent.atomic.AtomicInteger()
+    private val dropped = java.util.concurrent.atomic.AtomicInteger()
+    private val loudMs = java.util.concurrent.atomic.AtomicLong()
+
+    private fun loud(chunk: ByteArray): Boolean {
+        var sum = 0L
+        var i = 0
+        while (i + 1 < chunk.size) {
+            val v = (chunk[i].toInt() and 0xff) or (chunk[i + 1].toInt() shl 8)
+            sum += v.toLong() * v
+            i += 2
+        }
+        return chunk.size >= 2 && kotlin.math.sqrt(sum.toDouble() / (chunk.size / 2)) > 300  // above a quiet line
+    }
+
+    private fun report(track: AudioTrack) {
+        val screenOn = getSystemService(PowerManager::class.java).isInteractive
+        socket?.send(org.json.JSONObject().put("stats", org.json.JSONObject()
+            .put("got", got.getAndSet(0)).put("dropped", dropped.getAndSet(0)).put("loud_ms", loudMs.getAndSet(0))
+            .put("audio", if (track.playState == AudioTrack.PLAYSTATE_PLAYING) "running" else "stopped")
+            .put("hidden", !screenOn)).toString())
     }
 
     /** End the call with a reason the screen shows; safe from any thread. */

@@ -173,7 +173,7 @@ class Ear:
         if stats.get("dropped"):
             trouble.append(f"dropped {stats['dropped']} chunks (fell behind)")
         if stats.get("hidden"):
-            trouble.append("the page is in the background")
+            trouble.append("the page is in the background (the app: the screen is off)")
         if stats.get("loud_ms", 0) < 200:
             self.silent += 1
             trouble.append(f"played only {stats.get('loud_ms', 0)} ms of 2 s, got {stats.get('got', 0)} chunks")
