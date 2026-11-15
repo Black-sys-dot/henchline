@@ -97,8 +97,10 @@ class Turn:
         started = heard is not Heard.WOKE  # after "hey Claude" people pause for the chime
         end = CALL_END_FRAMES if in_call() else END_FRAMES
         held = heard is Heard.PUSHED  # the button decides when it ends, not a pause
+        released = False
         while (quiet < end or held) and time.monotonic() - since < MAX_SECONDS:
             if held and not CALL_PUSH.exists():
+                released = True
                 break
             samples = self.read()
             if samples is None:
@@ -116,8 +118,8 @@ class Turn:
             quiet = quiet + 1 if db < max(floor + END_DB, peak - BELOW_PEAK) else 0
             if quiet == OVER_FRAMES and self.ends_with_over(frames):
                 break
-        reason = ("the button" if held and not CALL_PUSH.exists() else "over" if quiet == OVER_FRAMES
-                  else "pause" if quiet >= end else "limit")
+        reason = ("the button" if released else "limit" if time.monotonic() - since >= MAX_SECONDS
+                  else "over" if quiet == OVER_FRAMES else "pause")
         log(HANDSFREE_LOG, f"recorded {time.monotonic() - since:.1f}s, ended by {reason} (floor {floor:.0f} dB)")
         return frames
 

@@ -101,17 +101,15 @@ const callButton = $('call'), talk = $('talk'), state = $('state'), chat = $('ch
 let buttonOnly = false;  // a noisy place: only holding the button gets in
 let ws = null, ctx = null, stream = null, wakeLock = null;
 
-// One chat per agent: each line carries its agent's session and only the current agent's are shown;
-// notes about the call itself (no session) show in all of them
+// One chat per agent: each line carries its agent's session and only the current agent's are shown (the
+// one replies go to, which follows whoever spoke last); notes about the call itself show in all of them
 let current = '';
-const unread = new Set();  // agents that said something while another one's chat was shown
 
 function say(who, words, kind = '', session = '') {
   const div = document.createElement('div');
   div.className = `msg ${kind}`;
   div.dataset.session = session;
   div.hidden = Boolean(session && current && session !== current);
-  if (div.hidden) unread.add(session);
   if (who) { const w = document.createElement('div'); w.className = 'who'; w.textContent = who; div.append(w); }
   div.append(document.createTextNode(words));
   chat.append(div);
@@ -120,19 +118,16 @@ function say(who, words, kind = '', session = '') {
 
 // Who the call talks to: the agents heard lately and still running; picking one switches, as saying it would
 const agentMenu = $('agent');
-let agentList = [];
 function showAgents(list, now) {
-  agentList = list;
   if (now && now !== current) {
     current = now;
-    unread.delete(now);
     for (const div of chat.querySelectorAll('.msg')) {
       div.hidden = Boolean(div.dataset.session && div.dataset.session !== current);
     }
     chat.scrollTop = chat.scrollHeight;
   }
   agentMenu.replaceChildren(...list.map((a) =>
-    new Option((unread.has(a.session) ? '● ' : '') + a.name, a.session, false, a.session === current)));
+    new Option(a.name, a.session, false, a.session === current)));
   if (!list.length) agentMenu.append(new Option('No agent yet'));
   agentMenu.disabled = !list.length || !ws;
 }
@@ -163,7 +158,6 @@ async function start() {
     if (status.chat) {
       const c = status.chat;
       say(c.from, c.text, c.from === 'you' ? 'you' : '', c.session || '');
-      if (unread.size) showAgents(agentList, current);  // the dot on whoever spoke unseen
       return;
     }
     if (status.agents) { showAgents(status.agents, status.current); return; }
