@@ -15,8 +15,9 @@ import time
 from enum import Enum
 from pathlib import Path
 
-from voice import x11
-from voice.agents import SPOKEN_TO, agent_in_tab
+from voice.agents import SPOKEN_TO
+from voice.desktop import Tab
+from voice.desktop import current as desktop
 from voice.state import BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, Speaker, last_speaker, log, recent_speakers
 
 SAY = Path(__file__).resolve().parent.parent / "talkback/scripts/say.py"
@@ -46,6 +47,9 @@ SEND_THAT = re.compile(rf"^\W*(?:please\s+)?(?:send|forward|give)\s+(?:that|this
 # "…actually, scratch that, hand this to Cursor": drop what came before, then switch
 DISCARD = re.compile(r".*\b(?:never\s*mind|scratch\s+that|forget\s+(?:it|that|all\s+that|what\s+i\s+(?:just\s+)?said))\W+(.+)$",
                      re.I | re.S)
+# A short lead-in sentence before the request: a long message that merely ends that way is a message
+LAST_SENTENCE = re.compile(r"^(.*[.!?])\s+([^.!?]+[.!?]?)\s*$", re.S)
+LEAD_IN_WORDS = 8
 WHO = re.compile(r"^\W*who\s+(?:am\s+i|are\s+you)\s+(?:talking\s+to|speaking\s+to)?\W*$|^\W*who\s+is\s+(?:this|listening)\W*$", re.I)
 THINK = re.compile(r"\b(give me a (minute|moment|second|sec)|let me think|hold on|hang on"
                    r"|one (sec|second|moment)|let me (get|come) back)\b", re.I)
@@ -110,6 +114,8 @@ def switch_request(text: str) -> tuple[str, str | None, bool] | None:
     match = SWITCH.match(text) or SEND_THAT.match(text)
     if not match and (tail := DISCARD.match(text)):
         match = SWITCH.match(tail.group(1))
+    if not match and (last := LAST_SENTENCE.match(text)) and len(last.group(1).split()) <= LEAD_IN_WORDS:
+        match = SWITCH.match(last.group(2))  # "Yeah, I'm talking to you now. Please switch me to Cursor."
     if not match:
         return None
     return match.group(1).lower(), match.group(2), bool(SEND_THAT.match(text))
@@ -147,19 +153,17 @@ def route(text: str, last_message: tuple[str, Heard] | None) -> bool:
 
 def reachable(speaker: Speaker) -> bool:
     """Is that agent still running where its words would be typed: its Konsole tab, or its Cursor window?"""
-    service, session = speaker.konsole
-    if service and session:
-        return agent_in_tab(service, session)
+    tab = Tab(*speaker.konsole)
+    if tab:
+        return desktop().terminals.agent_running(tab)
     return speaker.agent == "cursor" and bool(speaker.where) and bool(cursor_window(speaker.where))
 
 
 def cursor_window(where: str) -> str:
     """The Cursor editor window for a workspace, by its title "… - <where> - Cursor"."""
-    for wid in x11.windows():
-        if '"cursor"' in x11.window_class(wid):
-            title = x11.window_title(wid)
-            if title == f"{where} - Cursor" or title.endswith(f" - {where} - Cursor"):
-                return wid
+    for wid, title in desktop().windows("cursor"):
+        if title == f"{where} - Cursor" or title.endswith(f" - {where} - Cursor"):
+            return wid
     return ""
 
 
@@ -170,16 +174,16 @@ def type_into_cursor(wid: str, message: str) -> bool:
     install.sh agents adds). Run in a child process: Xlib from the listening
     thread, beside the Qt tray thread, crashed hands-free (SIGSEGV).
     """
-    if not x11.set_clipboard(message):
+    screen = desktop()
+    if not screen.set_clipboard(message):
         return False
-    with x11.Display() as display:
-        display.raise_window(wid)
-        time.sleep(0.4)
-        display.press(x11.CONTROL, x11.ALT, x11.SHIFT, x11.F12)
-        time.sleep(0.3)
-        display.press(x11.CONTROL, x11.V)
-        time.sleep(0.2)
-        display.press(x11.RETURN)
+    screen.raise_window(wid)
+    time.sleep(0.4)
+    screen.press("ctrl", "alt", "shift", "f12")
+    time.sleep(0.3)
+    screen.press("ctrl", "v")
+    time.sleep(0.2)
+    screen.press("return")
     return True
 
 
@@ -191,8 +195,8 @@ def deliver(text: str, heard: Heard) -> bool:
         log(HANDSFREE_LOG, "nobody to send to")
         say("I heard you, but no agent has spoken yet.")
         return False
-    service, session = speaker.konsole
-    if not service and speaker.agent == "cursor" and speaker.where:
+    tab = Tab(*speaker.konsole)
+    if not tab and speaker.agent == "cursor" and speaker.where:
         wid = cursor_window(speaker.where)
         if not wid:
             log(HANDSFREE_LOG, f"no Cursor window for {speaker.where}")
@@ -202,20 +206,18 @@ def deliver(text: str, heard: Heard) -> bool:
                              "type-into-cursor", wid, message], timeout=20).returncode == 0
         log(HANDSFREE_LOG, f"sent to cursor window {speaker.where}" if ok else "Cursor delivery failed")
         return ok
-    if not service or not session:
-        log(HANDSFREE_LOG, f"no konsole session for {speaker.agent}")
+    if not tab:
+        log(HANDSFREE_LOG, f"no terminal tab for {speaker.agent}")
         say("I heard you, but I don't know which terminal to type that into.")
         return False
-    if not agent_in_tab(service, session):
-        log(HANDSFREE_LOG, f"no agent running in {session}")
+    if not desktop().terminals.agent_running(tab):
+        log(HANDSFREE_LOG, f"no agent running in {tab.session}")
         say("I heard you, but the agent I was talking to isn't running any more, so I didn't type it anywhere.")
         return False
-    for chunk in (message, "\r"):
-        if subprocess.run(["qdbus", service, session, "sendText", chunk], capture_output=True).returncode != 0:
-            log(HANDSFREE_LOG, f"sendText to {session} failed")
-            say("I heard you, but that terminal is gone.")
-            return False
-        time.sleep(0.15)
-    log(HANDSFREE_LOG, f"sent to {speaker.agent} {session}")
+    if not desktop().terminals.type_line(tab, message):
+        log(HANDSFREE_LOG, f"typing into {tab.session} failed")
+        say("I heard you, but that terminal is gone.")
+        return False
+    log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.session}")
     return True
 

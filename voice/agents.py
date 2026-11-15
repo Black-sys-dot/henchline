@@ -1,8 +1,7 @@
 """Which agent is running us, where it lives, and whether it is still there.
 
-Talkback asks this when an agent speaks (whose voice, which workspace, which
-Konsole tab to type replies into); hands-free asks it before typing into a
-tab. The answers come from the process tree, because environment markers lie:
+Talkback asks this when an agent speaks (whose voice, which workspace); the
+desktop (voice/desktop.py) uses it to find the agent's terminal tab. The answers come from the process tree, because environment markers lie:
 an editor started from a Claude shell inherits CLAUDECODE, and a session
 moved into Claude's background daemon inherits another tab's Konsole address.
 """
@@ -68,8 +67,8 @@ def terminal_foreground(pid: int) -> int:
 def ancestors(start: int | None = None) -> list[Process]:
     """Our parent, its parent, … up to init, nearest first."""
     chain, pid = [], start or os.getppid()
-    while pid > 1 and (process := _process(pid)):
-        chain.append(process)
+    while pid > 1 and (found := process(pid)):
+        chain.append(found)
         try:
             pid = parent_of(pid)
         except (OSError, ValueError, IndexError):
@@ -119,48 +118,7 @@ def identity(agent: str = "", session: str = "") -> tuple[str, str]:
     return agent, re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{agent}-{session}")[-120:]
 
 
-def qdbus(service: str, *args: str) -> str:
-    return subprocess.run(["qdbus", service, *args], capture_output=True, text=True).stdout.strip()
-
-
-def konsole_tab() -> tuple[str, str]:
-    """(D-Bus service, session) of the Konsole tab the calling agent is shown in.
-
-    KONSOLE_DBUS_SESSION is trusted only when that tab's foreground program is
-    one of our ancestors with no Claude daemon in between. Otherwise the tab is
-    found by its "<workspace> : claude" title, from the agent's folder upwards,
-    and left empty when that is not unique. An agent in the Cursor editor has
-    no tab at all: hands-free reaches it through its window.
-    """
-    agent = nearest_agent()
-    service = os.environ.get("KONSOLE_DBUS_SERVICE", "")
-    if (agent and agent.is_editor) or not service:
-        return "", ""
-    session = os.environ.get("KONSOLE_DBUS_SESSION", "")
-    chain = ancestors(os.getpid())
-    daemon = any(_cmdline_has(p.pid, CLAUDE_DAEMON) for p in chain)
-    foreground = qdbus(service, session, "foregroundProcessId") if session else ""
-    if not daemon and foreground.isdigit() and int(foreground) in {p.pid for p in chain}:
-        return service, session
-    titles = {s: qdbus(service, s, "title", "1") for s in qdbus(service).split() if s.startswith("/Sessions/")}
-    starts = ([agent.folder] if agent else []) + [Path.cwd()]
-    for folder in (f for start in starts for f in (start, *start.parents)):
-        tabs = [s for s, title in titles.items() if title == f"{folder.name} : claude"]
-        if len(tabs) == 1:
-            return service, tabs[0]
-        if tabs:
-            break  # several Claude tabs in that folder: do not guess
-    return "", ""
-
-
-def agent_in_tab(service: str, session: str) -> bool:
-    """Is an agent the foreground program of that tab? If it quit, the tab is a
-    plain shell, and Enter after typed words would run them as a command."""
-    foreground = qdbus(service, session, "foregroundProcessId")
-    return foreground.isdigit() and any(p.agent for p in [_process(int(foreground))] if p)
-
-
-def _process(pid: int) -> Process | None:
+def process(pid: int) -> Process | None:
     try:
         raw = Path(f"/proc/{pid}/cmdline").read_bytes().split(b"\0")[:2]
     except OSError:
@@ -168,7 +126,7 @@ def _process(pid: int) -> Process | None:
     return Process(pid, [w.decode(errors="replace") for w in raw])
 
 
-def _cmdline_has(pid: int, needle: bytes) -> bool:
+def cmdline_has(pid: int, needle: bytes) -> bool:
     try:
         return needle in Path(f"/proc/{pid}/cmdline").read_bytes()
     except OSError:

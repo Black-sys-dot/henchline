@@ -14,7 +14,6 @@ how it was heard, into the agent that spoke last.
 
 from __future__ import annotations
 
-import shutil
 import signal
 import subprocess
 import sys
@@ -100,6 +99,4 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    if shutil.which("qdbus") is None:
-        sys.exit("qdbus is needed to type into Konsole")
     sys.exit(main())

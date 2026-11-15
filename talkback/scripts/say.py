@@ -22,6 +22,7 @@ import signal
 import subprocess
 import sys
 import time
+from dataclasses import astuple
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
@@ -30,7 +31,8 @@ sys.path.insert(0, str(HERE))
 
 from voice import spool  # noqa: E402
 import worker  # noqa: E402
-from voice.agents import agent_folder, identity, konsole_tab  # noqa: E402
+from voice.agents import agent_folder, identity  # noqa: E402
+from voice.desktop import current as desktop  # noqa: E402
 from voice.state import (HOLDS, PLAYING, SPOOL, TALKBACK_LOG, WORKER_PID, log,  # noqa: E402
                          read_json)
 
@@ -54,7 +56,7 @@ def new_clip(agent: str, session: str, text: str, voice: str) -> spool.Clip:
     folder = agent_folder()
     return spool.Clip.of_text(text, agent=agent, session=session, voice=voice,
                               where="home" if folder == Path.home() else folder.name,
-                              konsole=konsole_tab())
+                              konsole=astuple(desktop().terminals.tab_of_caller()))
 
 
 def text_from(words: list[str]) -> str:

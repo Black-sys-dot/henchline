@@ -26,7 +26,7 @@ from sensing import (EC_SOURCE, FRAME, LEVEL_SPAN, PER_SECOND, RATE, EarbudButto
 from voice import whisper
 from voice.spool import queued
 from voice.state import (BY_HANDSFREE, CLOSE, HANDSFREE_LOG, HANDSFREE_WAV, LISTEN, PAUSE, PLAYING, WORKER_PID,
-                         Phase, log, phase_now, release_phase, set_phase, set_target)
+                         Phase, log, phase_now, read_json, release_phase, set_phase, set_target)
 
 WINDOW = 8.0  # seconds to answer after a clip
 FOLLOW = 6.0  # seconds to carry on after their own message (once, never chained)
@@ -50,7 +50,13 @@ OVER_TAIL = 4 * PER_SECOND  # frames Whisper looks at for "over"
 PTT_CHECK = 10  # frames between checks that push-to-talk has not taken the mic
 PREROLL = 15  # frames kept from before speech started
 MAX_SECONDS = 120  # the user talks in long stretches; 60 s cut them off
-SUSTAIN = 0.5  # seconds of voice, added up, before talking over stops a clip: no false stop in the 80% echo set (2026-11-15)
+SUSTAIN = 0.8  # seconds of voice, added up, before talking over stops a clip (0.5 let echo slips through at 80%, 2026-11-15)
+WARY_SUSTAIN = 2  # times as much voice while wary: an echo slip at 0.5 s cut a clip then (2026-11-15)
+CLIP_START = 4.0  # seconds: our echo slipped through mostly at the start of a clip ("You're right", "Hands free",
+# "Welcome back", "came to me as a message" were each a clip's first words), so talking over needs more there.
+# The start is when our voice is heard after a silence, not when talkback begins a clip: rendering takes seconds
+ONSET_QUIET = 1.0  # seconds of silent playback before our voice counts as starting again
+AUDIBLE_DB = -45  # playback louder than this is our voice
 GAP = 1.5  # seconds without a voice that end a talk-over attempt: the user spoke in 1.5 s phrases with pauses
 STEP = CHECK_EVERY * FRAME / RATE  # seconds of voice one positive check stands for
 GOING_FRAMES = 4  # of the last LOUD_SPAN, loud and voiced, to count as still talking over (starting needs BARGE_FRAMES)
@@ -136,6 +142,7 @@ class Listener:
         self.wake = Wake.available()
         self.button, self.playback, self.output = EarbudButton(stop), Playback(stop), Output()
         self.echo_watch, self.restart_due = EchoWatch(), False
+        self.onset, self.silent_since = 0.0, time.monotonic()  # when our voice last started after a silence
         self.echo_watch.restarted = canceller_since  # a canceller this young is still learning: no restart yet
         self.last_activity, self.wary_until, self.play_started = time.monotonic(), 0.0, 0.0
         self.on_cpu = self.crashed = False
@@ -230,6 +237,7 @@ class Listener:
         """One 30 ms frame; True when it led to a turn."""
         db = level(frame)
         playing = PLAYING.exists()
+        self.track_onset()
         if self.play_started and not playing:
             self.restart_due |= self.echo_watch.clip_over()
         self.play_started = (self.play_started or time.monotonic()) if playing else 0.0
@@ -250,8 +258,8 @@ class Listener:
         self.checked += 1
         if playing and time.monotonic() - self.play_started > BARGE_GRACE:
             self.echo_watch.add(max(self.levels), self.playback.loudest())
-        if playing and self.output.on_speakers() and self.playback.loudest() is None:
-            history.append(db)  # playback level unknown: our voice might leak, so only the wake word
+        if playing and (self.notice_playing() or self.output.on_speakers() and self.playback.loudest() is None):
+            history.append(db)  # our own notice, or playback level unknown: only the wake word talks over it
             return self.woke(samples, turn_floor)
         speech = self.talking(frame, db, floor, playing)
         if playing or self.over:
@@ -274,13 +282,32 @@ class Listener:
             return False
         return bool(get_speech_timestamps(np.concatenate(self.recent), SPEECH_OVER))
 
+    def notice_playing(self) -> bool:
+        """Hands-free's own short notices: their echo was taken for the user ("Now talking to Claude in
+        peace", 2026-11-15), and nobody needs to talk over two seconds of "Now talking to …"."""
+        return read_json(PLAYING).get("session", "").startswith(f"{BY_HANDSFREE}-")
+
+    def track_onset(self) -> None:
+        played, now = self.playback.loudest(), time.monotonic()
+        if played is None or played < AUDIBLE_DB:
+            self.silent_since = self.silent_since or now
+        elif self.silent_since:
+            if now - self.silent_since >= ONSET_QUIET:
+                self.onset = now
+            self.silent_since = 0.0
+
+    def wary(self) -> bool:
+        """A young canceller, or one that just let our echo through: it slips more."""
+        return time.monotonic() - self.canceller_since < WARMUP or time.monotonic() < self.wary_until
+
     def talking_over(self, frame: np.ndarray, speech: bool, floor: float, history, db: float) -> bool:
         """Speech over a clip stops it only once it has lasted SUSTAIN seconds; True when it did."""
         now = time.monotonic()
         if self.over is None:
             history.append(db)
             if speech or self.still_speaking():  # a quiet voice starts it too: SUSTAIN keeps our echo bursts out
-                self.over = Overlap(now, now, list(self.preroll), self.last_check if speech else "a voice, quieter")
+                into = f"{now - self.onset:.1f}s after our voice started" if self.play_started else "after the clip"
+                self.over = Overlap(now, now, list(self.preroll), self.last_check if speech else f"a voice, quieter, {into}")
             return False
         self.over.frames.append(frame)
         if speech or self.still_speaking():
@@ -291,7 +318,8 @@ class Listener:
                                f"then quiet: kept playing (first: {self.over.first})")
             self.over = None
             return False
-        if self.over.voiced < SUSTAIN:
+        early = self.over.started - self.onset < CLIP_START
+        if self.over.voiced < SUSTAIN * (WARY_SUSTAIN if self.wary() or early else 1):
             return False
         over, self.over = self.over, None
         log(HANDSFREE_LOG, f"talking over: {over.voiced:.1f}s of voice in {over.speaking_for():.1f}s: "
@@ -301,7 +329,7 @@ class Listener:
 
     def talking(self, frame: np.ndarray, db: float, floor: float, playing: bool) -> bool:
         """Is the user speaking now (and, over a clip, not just our own echo)?"""
-        wary = playing and (time.monotonic() - self.canceller_since < WARMUP or time.monotonic() < self.wary_until)
+        wary = playing and self.wary()
         over = db > floor + (BARGE_DB + WARM_DB if wary else BARGE_DB if playing else START_DB)
         settled = not playing or time.monotonic() - self.play_started > BARGE_GRACE
         self.loud.append(over and settled and voiced(frame))
