@@ -10,7 +10,10 @@ model at once, and talkback says how many "hey Claude"s it caught; a miss
 is repeated. Hands-free listening is paused meanwhile, so the samples are
 not sent to an agent. Clips land in ~/.local/share/handsfree/samples/ for
 a later custom verifier (another word's in a folder of its own). A last
-"just talk normally" take checks for false wakes.
+"just talk normally" take checks for false wakes. Takes are scored with the
+published model, which is what a personal one is needed for: for "hey
+Jarvis" (8 of 20 caught) most spots get repeats; the trainer finds the words
+with Whisper, so a low score does not spoil a take.
 """
 
 from __future__ import annotations
@@ -77,6 +80,9 @@ def main() -> int:
     args = sys.argv[1:]
     word = "claude"
     if args[:1] == ["--word"]:
+        if len(args) < 2 or args[1].lower() not in WORDS:
+            print(f"usage: wakeword_collect.py [--word {'|'.join(WORDS)}] [POSITION ...]", file=sys.stderr)
+            return 2
         word, args = args[1].lower(), args[2:]
     published, folder = WORDS[word]
     wanted = set(args)

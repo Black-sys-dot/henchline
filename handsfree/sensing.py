@@ -220,7 +220,7 @@ class Wake:
 
     @classmethod
     def available(cls) -> Wake | None:
-        return cls() if WAKE_MODEL.exists() or JARVIS_MODEL.exists() else None
+        return cls() if any(m.exists() for m in (WAKE_MODEL, JARVIS_PERSONAL, JARVIS_MODEL)) else None
 
     def feed(self, samples: np.ndarray) -> bool:
         """Add 30 ms of audio; True when a detector says "maybe hey Claude" (or Jarvis)."""
