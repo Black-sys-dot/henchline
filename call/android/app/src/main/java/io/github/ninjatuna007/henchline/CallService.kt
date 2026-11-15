@@ -171,7 +171,9 @@ class CallService : Service() {
         Bus.service = null
         Bus.lastAgents = null
         Bus.lastMode = null
+        // Said once: the socket closing after this (onClosing, onFailure) would say it again (2026-11-15)
         if (!ended) Bus.listener?.invoke("""{"closed": "Call ended"}""")
+        ended = true
         super.onDestroy()
     }
 

@@ -293,7 +293,6 @@ class MainActivity : Activity() {
             }
             status.has("closed") -> {
                 showConnected(false)
-                state.text = status.getString("closed")  // off a call the chat is hidden: why it ended shows here
                 say("", status.getString("closed"), note = true)
             }
             status.has("chat") -> {
