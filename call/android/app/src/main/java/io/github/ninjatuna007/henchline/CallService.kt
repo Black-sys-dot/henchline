@@ -1,4 +1,4 @@
-package io.github.ninjatuna007.callagents
+package io.github.ninjatuna007.henchline
 
 import android.app.Notification
 import android.app.NotificationChannel
@@ -73,7 +73,7 @@ class CallService : Service() {
         running = true
         Bus.service = this
         wakeLock = getSystemService(PowerManager::class.java)
-            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "callagents:call").apply { acquire() }
+            .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "henchline:call").apply { acquire() }
         audio.mode = AudioManager.MODE_IN_COMMUNICATION  // the phone's echo cancelling, and call routing
         route()
         // Music and other sound pause or duck for the call, as for a phone call
@@ -236,8 +236,8 @@ class CallService : Service() {
         val hangUp = PendingIntent.getService(this, 1, Intent(this, CallService::class.java).setAction(STOP),
             PendingIntent.FLAG_IMMUTABLE)
         val notification = Notification.Builder(this, CHANNEL)
-            .setSmallIcon(R.drawable.ic_call)
-            .setContentTitle("On a call with the agents")
+            .setSmallIcon(R.drawable.ic_notify)
+            .setContentTitle("Henchline: on a call with your crew")
             .setContentIntent(open)
             .setOngoing(true)
             .addAction(Notification.Action.Builder(null, "Hang up", hangUp).build())

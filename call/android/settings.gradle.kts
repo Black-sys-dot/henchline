@@ -11,5 +11,5 @@ dependencyResolutionManagement {
         mavenCentral()
     }
 }
-rootProject.name = "call-agents"
+rootProject.name = "henchline"
 include(":app")

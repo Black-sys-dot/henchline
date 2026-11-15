@@ -4,11 +4,11 @@ plugins {
 }
 
 android {
-    namespace = "io.github.ninjatuna007.callagents"
+    namespace = "io.github.ninjatuna007.henchline"
     compileSdk = 35
 
     defaultConfig {
-        applicationId = "io.github.ninjatuna007.callagents"
+        applicationId = "io.github.ninjatuna007.henchline"
         minSdk = 29
         targetSdk = 35
         versionCode = 1
