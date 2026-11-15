@@ -35,10 +35,10 @@ sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree")]  # voice/, and
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
-from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_PORT,  # noqa: E402
-                         CALL_PUSH, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE, PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase,
-                         Playing, Sent, in_call, last_speaker, log, phase_now, recent_speakers, turn_on_handsfree,
-                         write_json)
+from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_PORT, CALL_PUSH,  # noqa: E402
+                         CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE, PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR,
+                         Phase, Playing, SPOOL, Sent, in_call, last_speaker, log, phase_now, recent_speakers,
+                         turn_on_handsfree, write_json)
 
 MIC_RATE = 16000  # what the page sends: what hands-free listens at
 SPEAKER_RATE = 24000  # what the page plays: Kokoro's own rate
@@ -47,7 +47,8 @@ CHUNK = SPEAKER_RATE // 50 * 2  # bytes of s16 mono sent to the phone at a time:
 
 STATUS_EVERY = 0.2  # seconds between looks at what hands-free and talkback are doing
 AGENTS_EVERY = 3.0  # seconds between looks at which agents can be switched to
-HANGUP_SAY, HANGUP_MAX = 1.5, 10.0  # a hang-up waits this long for the goodbye to start playing, at most this
+HANGUP_SAY, HANGUP_MAX = 0.5, 10.0  # a hang-up waits for talkback to finish (its queue empty, nothing playing),
+# at least this long for the goodbye to be queued, and at most this: past it the call ends even mid-sentence
 
 
 class Status:
@@ -264,6 +265,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
         speaker = await asyncio.create_subprocess_exec(
             "parec", "--raw", f"--device={PHONE_SPEAKER_MONITOR}", "--format=s16le", f"--rate={SPEAKER_RATE}",
             "--channels=1", "--latency-msec=40", "--client-name=phone-call", stdout=asyncio.subprocess.PIPE)
+        CALL_HANGUP.unlink(missing_ok=True)  # a hang-up asked for when no call was up is not for this one
         write_json(CALL, {"from": request.remote or "", "pid": os.getpid(),
                           "cmdline": Path("/proc/self/cmdline").read_text()})
         await asyncio.get_running_loop().run_in_executor(None, turn_on_handsfree, False)  # with talkback
@@ -284,7 +286,8 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                 if CALL_HANGUP.exists():  # the user said "hang up", or an agent ran `handsfree hangup`
                     asked = asked or time.monotonic()
                     waited = time.monotonic() - asked
-                    if (waited > HANGUP_SAY and Playing.now() is None) or waited > HANGUP_MAX:  # after the goodbye
+                    quiet = Playing.now() is None and not any(SPOOL.glob("*.json"))  # said and nothing waiting
+                    if (waited > HANGUP_SAY and quiet) or waited > HANGUP_MAX:
                         CALL_HANGUP.unlink(missing_ok=True)
                         log(HANDSFREE_LOG, "call: hung up from the laptop")
                         await ws.close(message=b"Hung up from the laptop")
@@ -321,6 +324,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
         finally:
             CALL_PUSH.unlink(missing_ok=True)
             CALL_BUTTON_ONLY.unlink(missing_ok=True)  # the next call starts with an open line again
+            CALL_HANGUP.unlink(missing_ok=True)  # the phone went first: the hang-up is moot
             sender.cancel()
             shower.cancel()
             unmuter.cancel()

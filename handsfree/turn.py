@@ -176,8 +176,9 @@ class Turn:
             return 0.0
         if meaning is Meaning.HANGUP:
             log(HANDSFREE_LOG, "heard: hang up")
-            routing.say("Bye! Hanging up.")
-            CALL_HANGUP.touch()  # the call server ends the call once that has been said
+            if in_call():  # it may have ended while the words were transcribed
+                routing.say("Bye! Hanging up.")
+                CALL_HANGUP.touch()  # the call server ends the call once that has been said
             return None
         if meaning is Meaning.OFF:
             log(HANDSFREE_LOG, "heard: hands-free off")

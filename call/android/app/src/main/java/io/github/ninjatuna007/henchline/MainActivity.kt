@@ -85,6 +85,22 @@ class MainActivity : Activity() {
         }
         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.BLUETOOTH_CONNECT), 1)
+        answer(intent)
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        answer(intent)
+    }
+
+    /** Opened from henchline://call (an agent rang): connect, unless a call is up already. */
+    private fun answer(intent: Intent?) {
+        if (intent?.data?.scheme == "henchline" && intent.data?.host == "call" && CallService.Bus.service == null) {
+            intent.data = null  // once: rotating the screen must not call again
+            say("", "Answering…", note = true)
+            call()
+        }
     }
 
     override fun onResume() {

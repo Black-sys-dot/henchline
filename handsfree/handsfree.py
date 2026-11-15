@@ -6,6 +6,8 @@
     handsfree listen [SECONDS]         keep listening that long (default 180)
     handsfree close                    stop listening until the wake word
     handsfree hangup                   end the phone call (call/), once talkback has finished speaking
+    handsfree ring [WHY]               ask the user to call: an ntfy notification whose Answer opens Henchline
+                                       and connects (the topic is read from ~/.config/ptt/ntfy-topic)
 
 The built-in mic runs through the echo canceller (sensing.py). The listener
 (listener.py) records a turn when the user talks after a clip, over a clip,
@@ -19,6 +21,7 @@ import signal
 import subprocess
 import sys
 import threading
+import urllib.request
 import time
 from pathlib import Path
 
@@ -31,8 +34,37 @@ from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import whisper  # noqa: E402
 from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CLOSE, HANDSFREE_LOG, HANDSFREE_ON, LISTEN,  # noqa: E402
-                         in_call, log, release_phase, turn_on_handsfree)
+                         in_call, last_speaker, log, release_phase, turn_on_handsfree)
 from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
+
+
+RING_TOPIC = Path.home() / ".config/ptt/ntfy-topic"  # the user's own ntfy topic: never printed or logged
+RING_SERVER = "https://ntfy.sh"
+
+
+def ring(why: str) -> int:
+    """An agent wants to talk: a loud notification whose Answer button opens Henchline's call (henchline://call)."""
+    if in_call():
+        print("a phone call is up already")
+        return 1
+    try:
+        topic = RING_TOPIC.read_text().strip()
+    except OSError:
+        print(f"no ntfy topic in {RING_TOPIC}: put the topic your phone's ntfy app follows there")
+        return 1
+    who = (last_speaker().agent.capitalize() if last_speaker() else "Your crew")
+    request = urllib.request.Request(f"{RING_SERVER}/{topic}", data=(why or "Tap Answer to talk.").encode(),
+                                     headers={"Title": f"{who} is calling", "Priority": "high", "Tags": "telephone",
+                                              "Click": "henchline://call",
+                                              "Actions": "view, Answer, henchline://call, clear=true"})
+    try:
+        urllib.request.urlopen(request, timeout=10).close()
+    except OSError as exc:
+        print(f"couldn't ring: {exc}")
+        return 1
+    log(HANDSFREE_LOG, f"rang the user ({who})")
+    print("rang")
+    return 0
 
 
 def run() -> int:
@@ -86,6 +118,8 @@ def main() -> int:
     if command == "listen":
         LISTEN.write_text(str(time.time() + float(args[0] if args else 180)))
         return 0
+    if command == "ring":
+        return ring(" ".join(args))
     if command == "hangup":
         if not in_call():
             print("no phone call is up")

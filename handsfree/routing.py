@@ -62,7 +62,7 @@ JUST_TIME = 12  # words: "hold on, let me think about that" asks for time and sa
 CANCEL = re.compile(r"^\W*(never ?mind|cancel( that)?|scratch that)\W*$", re.I)
 OFF = re.compile(r"\b(hands[- ]?free (mode )?off|stop hands[- ]?free|turn off hands[- ]?free)\b", re.I)
 # On a phone call only: the whole turn is the request, so "how do I hang up?" is still a message
-HANGUP = re.compile(r"^\W*(okay\W+|ok\W+|alright\W+)?(please\s+)?(hang up|end (the|this) call)(\s+(now|please))?\W*$",
+HANGUP = re.compile(r"^\W*(okay\W+|ok\W+|alright\W+)?(please\W+)?(hang up|end (the|this) call)(\s+(now|please))?\W*$",
                     re.I)
 # One word is a real answer ("yes", "go", "stop"); only bare fillers are noise
 FILLER = re.compile(r"\W*(um+|uh+|hmm+|mm+|ah+|oh|eh)\W*", re.I)
