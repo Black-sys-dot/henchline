@@ -15,6 +15,8 @@ import android.media.AudioManager
 import android.media.AudioRecord
 import android.media.AudioTrack
 import android.media.MediaRecorder
+import android.media.audiofx.AcousticEchoCanceler
+import android.media.audiofx.NoiseSuppressor
 import android.net.Uri
 import android.os.Build
 import android.os.IBinder
@@ -50,6 +52,13 @@ class CallService : Service() {
     @Volatile private var recorder: Thread? = null
     @Volatile private var player: Thread? = null
     private var focus: AudioFocusRequest? = null
+    // Clear voice (the default): the agents as media, not through the phone-call path, which sounded muffled and
+    // tinny; the mic then asks for the phone's echo canceller itself. Tested 2026-11-15: a lot clearer, and no
+    // echo of a 22 s clip came back. Off: the phone-call path, its routing and processing
+    @Volatile var clear = true
+        private set
+    @Volatile private var generation = 0  // the audio threads' round: a switch of sound starts a new one
+    private val attributes get() = if (clear) MEDIA else VOICE
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var running = false
     @Volatile private var ended = false  // the screen was already told why the call ended
@@ -70,15 +79,12 @@ class CallService : Service() {
             return START_NOT_STICKY
         }
         if (running) return START_NOT_STICKY  // already calling or connecting
+        clear = intent.getBooleanExtra(CLEAR, true)
         running = true
         Bus.service = this
         wakeLock = getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "henchline:call").apply { acquire() }
-        audio.mode = AudioManager.MODE_IN_COMMUNICATION  // the phone's echo cancelling, and call routing
-        route()
-        // Music and other sound pause or duck for the call, as for a phone call
-        focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
-            .setAudioAttributes(VOICE).build().also { audio.requestAudioFocus(it) }
+        applySound()
         connect(server)
         return START_NOT_STICKY
     }
@@ -102,6 +108,34 @@ class CallService : Service() {
 
     fun send(json: String) {
         socket?.send(json)
+    }
+
+    /** Clear or call sound, mid-call: the audio starts again in the other mode, the connection stays. */
+    fun switchSound(toClear: Boolean) {
+        Thread {
+            val (mic, speaker) = recorder to player
+            clear = toClear
+            generation++  // the running threads see this and stop
+            mic?.join(1000)
+            speaker?.join(1000)
+            applySound()
+            if (running) startAudio()
+        }.start()
+    }
+
+    /** The phone's audio for this sound: call mode and routing, or plain media; focus to match. */
+    private fun applySound() {
+        focus?.let { audio.abandonAudioFocusRequest(it) }
+        if (clear) {
+            if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
+            audio.mode = AudioManager.MODE_NORMAL
+        } else {
+            audio.mode = AudioManager.MODE_IN_COMMUNICATION  // the phone's echo cancelling, and call routing
+            route()
+        }
+        // Music and other sound pause or duck for the call, as for a phone call
+        focus = AudioFocusRequest.Builder(AudioManager.AUDIOFOCUS_GAIN_TRANSIENT)
+            .setAudioAttributes(attributes).build().also { audio.requestAudioFocus(it) }
     }
 
     private fun connect(server: String) {
@@ -144,6 +178,9 @@ class CallService : Service() {
     }
 
     private fun startAudio() {
+        val round = generation
+        // The server logs each sound, so turns can be compared by it (transcription, turn taking)
+        socket?.send(org.json.JSONObject().put("sound", if (clear) "clear" else "call").toString())
         recorder = Thread {
             try {
                 val size = maxOf(AudioRecord.getMinBufferSize(MIC_RATE, AudioFormat.CHANNEL_IN_MONO,
@@ -156,9 +193,15 @@ class CallService : Service() {
                     return@Thread
                 }
                 val buffer = ByteArray(FRAME * 2)
+                val effects = if (clear) listOfNotNull(  // outside call mode, ask for them by name
+                    if (AcousticEchoCanceler.isAvailable()) AcousticEchoCanceler.create(mic.audioSessionId) else null,
+                    if (NoiseSuppressor.isAvailable()) NoiseSuppressor.create(mic.audioSessionId) else null,
+                ).onEach { it.enabled = true } else emptyList()
+                if (clear) Bus.listener?.invoke(org.json.JSONObject().put("note",
+                    "Clear voice: phone echo canceller ${if (effects.any { it is AcousticEchoCanceler }) "on" else "not available"}").toString())
                 try {
                     mic.startRecording()
-                    while (running) {
+                    while (running && generation == round) {
                         val got = mic.read(buffer, 0, buffer.size)
                         if (got < 0) {
                             fail("The microphone stopped working (error $got).")
@@ -168,6 +211,7 @@ class CallService : Service() {
                     }
                 } finally {
                     if (mic.recordingState == AudioRecord.RECORDSTATE_RECORDING) mic.stop()
+                    effects.forEach { it.release() }
                     mic.release()
                 }
             } catch (e: Exception) {  // never let the call take the app down with it
@@ -177,7 +221,7 @@ class CallService : Service() {
         player = Thread {
             try {
                 val track = AudioTrack.Builder()
-                    .setAudioAttributes(VOICE)
+                    .setAudioAttributes(attributes)
                     .setAudioFormat(AudioFormat.Builder().setSampleRate(SPEAKER_RATE)
                         .setChannelMask(AudioFormat.CHANNEL_OUT_MONO)
                         .setEncoding(AudioFormat.ENCODING_PCM_16BIT).build())
@@ -186,7 +230,7 @@ class CallService : Service() {
                     .build()
                 try {
                     track.play()
-                    while (running) {
+                    while (running && generation == round) {
                         val chunk = heard.poll(200, TimeUnit.MILLISECONDS) ?: continue
                         val written = track.write(chunk, 0, chunk.size)
                         if (written < 0) {
@@ -247,6 +291,7 @@ class CallService : Service() {
 
     companion object {
         const val SERVER = "server"
+        const val CLEAR = "clear"
         const val STOP = "stop"
         const val CHANNEL = "call"
         const val MIC_RATE = 16000  // what hands-free listens at
@@ -255,6 +300,9 @@ class CallService : Service() {
         const val MAX_BEHIND = 50  // chunks queued before the oldest are dropped: the server sends 20 ms, so a second
         val VOICE: AudioAttributes = AudioAttributes.Builder()
             .setUsage(AudioAttributes.USAGE_VOICE_COMMUNICATION)
+            .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
+        val MEDIA: AudioAttributes = AudioAttributes.Builder()
+            .setUsage(AudioAttributes.USAGE_MEDIA)
             .setContentType(AudioAttributes.CONTENT_TYPE_SPEECH).build()
     }
 }

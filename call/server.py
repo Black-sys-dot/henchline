@@ -169,7 +169,9 @@ def flag(path: Path, on: bool) -> None:
 
 async def from_page(message: dict, ear: Ear) -> str:
     """The talk button held or let go, a switch, or a typed chat message; a note for the page, if any."""
-    if "stats" in message:
+    if "sound" in message:  # the app's sound mode: turns after this line ran in it, for comparing them
+        log(HANDSFREE_LOG, f"call: phone sound {message['sound']}")
+    elif "stats" in message:
         ear.report(message["stats"])
     elif "push" in message:
         flag(CALL_PUSH, message["push"])

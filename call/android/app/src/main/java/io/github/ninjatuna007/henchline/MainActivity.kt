@@ -37,6 +37,7 @@ class MainActivity : Activity() {
     private lateinit var text: EditText
     private lateinit var send: Button
     private lateinit var agentMenu: Spinner
+    private lateinit var sound: Button
 
     private val main = Handler(Looper.getMainLooper())
     private var buttonOnly = false  // a noisy place: only holding the button gets in
@@ -58,11 +59,20 @@ class MainActivity : Activity() {
         send = findViewById(R.id.send)
         agentMenu = findViewById(R.id.agent)
         showMode("waiting")
-        say("", "Tap Call. Then just talk, hold the round button to talk, or type below. " +
-            "Long-press Call to change the server.", note = true)
+        say("", "Tap Call. Then just talk, hold the round button to talk, or type below.", note = true)
 
         callButton.setOnClickListener { if (CallService.Bus.connected) hangUp() else call() }
         callButton.setOnLongClickListener { askServer { }; true }
+        findViewById<Button>(R.id.settings).setOnClickListener { askServer { } }
+        sound = findViewById(R.id.sound)
+        sound.setOnClickListener {
+            val service = CallService.Bus.service ?: return@setOnClickListener
+            val toClear = !service.clear
+            prefs().edit().putBoolean("clear", toClear).apply()
+            service.switchSound(toClear)
+            showSound(toClear)
+            say("", if (toClear) "Sound: clear (media)" else "Sound: call (the phone-call path)", note = true)
+        }
         setUpTalkButton()
         send.setOnClickListener { sendTyped() }
         text.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_SEND).also { if (it) sendTyped() } }
@@ -104,24 +114,36 @@ class MainActivity : Activity() {
             return
         }
         state.text = "Starting…"
-        startForegroundService(Intent(this, CallService::class.java).putExtra(CallService.SERVER, server))
+        startForegroundService(Intent(this, CallService::class.java).putExtra(CallService.SERVER, server)
+            .putExtra(CallService.CLEAR, prefs().getBoolean("clear", true)))
     }
 
     private fun hangUp() {
         startService(Intent(this, CallService::class.java).setAction(CallService.STOP))
     }
 
-    /** The call page's address: https://<laptop's Tailscale name>/ (the laptop's `tailscale serve`). */
+    /** Settings: the call page's address, https://<laptop's Tailscale name>/ (the laptop's `tailscale serve`),
+     *  and the clear-voice experiment. */
     private fun askServer(then: () -> Unit) {
         val box = EditText(this).apply {
             setText(prefs().getString("server", "https://"))
             hint = "https://laptop.your-tailnet.ts.net/"
         }
+        val clear = android.widget.CheckBox(this).apply {
+            text = "Clear voice: media sound, not the muffled phone-call sound. Untick if your voice echoes back."
+            isChecked = prefs().getBoolean("clear", true)
+        }
+        val form = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(48, 16, 48, 0)
+            addView(box)
+            addView(clear)
+        }
         AlertDialog.Builder(this)
-            .setTitle("Call page address")
-            .setView(box)
+            .setTitle("Settings")
+            .setView(form)
             .setPositiveButton("Save") { _, _ ->
-                prefs().edit().putString("server", box.text.toString().trim()).apply()
+                prefs().edit().putString("server", box.text.toString().trim()).putBoolean("clear", clear.isChecked).apply()
                 then()
             }
             .setNegativeButton("Cancel", null)
@@ -216,8 +238,14 @@ class MainActivity : Activity() {
         text.setText("")
     }
 
+    private fun showSound(clear: Boolean) {
+        sound.text = if (clear) "Sound: clear" else "Sound: call"
+    }
+
     private fun showConnected(on: Boolean) {
         callButton.text = if (on) "Hang up" else "Call"
+        sound.isEnabled = on
+        showSound(CallService.Bus.service?.clear ?: prefs().getBoolean("clear", true))
         talk.isEnabled = on
         text.isEnabled = on
         send.isEnabled = on
