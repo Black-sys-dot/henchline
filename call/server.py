@@ -79,6 +79,8 @@ class Status:
             return {"mode": mode, "state": "Writing it down…"}
         if self.waiting_for:
             return {"mode": mode, "state": f"Sent to {self.waiting_for}: waiting for the answer…"}
+        if CALL_BUTTON_ONLY.exists():
+            return {"mode": mode, "state": "Open line off: hold the button to talk"}
         return {"mode": mode, "state": "Listening"}
 
     def close(self) -> None:
