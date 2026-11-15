@@ -20,7 +20,7 @@ from voice.desktop import current as desktop
 from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, Sent, Speaker, in_call, last_speaker, log,
                          recent_speakers)
 
-SAY = Path(__file__).resolve().parent.parent / "talkback/scripts/say.py"
+SAY = Path(__file__).resolve().parents[2] / "talkback/scripts/say.py"
 AFTER_SWITCH = 30.0  # seconds to start talking after "Now talking to …"
 
 
@@ -218,7 +218,7 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
             log(HANDSFREE_LOG, f"no Cursor window for {speaker.where}")
             say("I heard you, but I can't find Cursor's window for that project.")
             return False
-        ok = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "handsfree.py"),
+        ok = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "handsfree.py"),
                              "type-into-cursor", wid, message], timeout=20).returncode == 0
         log(HANDSFREE_LOG, f"sent to cursor window {speaker.where}" if ok else "Cursor delivery failed")
         if ok:

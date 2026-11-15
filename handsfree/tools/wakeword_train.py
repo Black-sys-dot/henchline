@@ -38,7 +38,7 @@ from sklearn.linear_model import LogisticRegression
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
-REPO = Path(__file__).resolve().parent.parent
+REPO = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO))  # voice/
 from voice.state import JARVIS_PERSONAL, KOKORO_MODELS as KOKORO, WAKE_MODEL, WAKE_SAMPLES  # noqa: E402
 

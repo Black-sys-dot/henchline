@@ -18,7 +18,7 @@ import wave
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-sys.path[:0] = [str(REPO / "handsfree"), str(REPO)]
+sys.path[:0] = [str(REPO / "handsfree/core"), str(REPO / "handsfree/tools"), str(REPO)]
 import numpy as np  # noqa: E402
 
 import listener  # noqa: E402

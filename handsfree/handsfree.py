@@ -43,7 +43,7 @@ import urllib.request
 from pathlib import Path
 
 HERE = Path(__file__).resolve().parent
-sys.path[:0] = [str(HERE), str(HERE.parent)]  # here, and the repository for voice/
+sys.path[:0] = [str(HERE / "core"), str(HERE.parent)]  # hands-free's modules (core/), and the repository for voice/
 
 import routing  # noqa: E402
 import tray  # noqa: E402

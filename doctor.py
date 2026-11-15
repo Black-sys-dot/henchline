@@ -167,7 +167,7 @@ def handsfree() -> list[Check]:
         check("handsfree", "wake word and analysis packages in the venv", ok, err, "./install.sh handsfree"),
         check("handsfree", "wake word feature models", bool(feature_models), "", "./install.sh handsfree"),
         check("handsfree", "personal wake word", WAKE_MODEL.exists(), "",
-              "handsfree/wakeword_collect.py, then handsfree/wakeword_train.py", warn_only=True),
+              "handsfree/tools/wakeword_collect.py, then handsfree/tools/wakeword_train.py", warn_only=True),
         check("handsfree", "echo canceller settings", bool(conf), str(CANCELLER_CONF), "./install.sh handsfree"),
         check("handsfree", "echo canceller's mic exists", bool(mic) and mic.group(1) in sources,
               mic.group(1) if mic else "no mic set (uses the default mic)", "./install.sh handsfree (picks the mic again)",

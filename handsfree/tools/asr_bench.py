@@ -30,7 +30,7 @@ import threading
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
+sys.path[:0] = [str(Path(__file__).resolve().parents[1] / "core"), str(Path(__file__).resolve().parents[2])]  # hands-free's modules; voice/
 from voice.state import HANDSFREE_DATA  # noqa: E402
 from voice.speech.whisper import CPU_THREADS, DEFAULT_HOTWORDS, Config  # noqa: E402
 

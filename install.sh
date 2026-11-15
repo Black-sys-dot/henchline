@@ -129,21 +129,21 @@ install_handsfree() {  # the call needs it too: once is enough
   mkdir -p "$units" "$HOME/.config/pipewire" "$bin"
   conf="$HOME/.config/pipewire/talkback-echo-cancel.conf"
   if [ -n "$mic" ]; then
-    sed "s|@MIC@|$mic|" "$root/handsfree/talkback-echo-cancel.conf" > "$conf"
+    sed "s|@MIC@|$mic|" "$root/handsfree/system/talkback-echo-cancel.conf" > "$conf"
     say "Echo canceller listens to $mic"
   else
-    grep -v "@MIC@" "$root/handsfree/talkback-echo-cancel.conf" > "$conf"
+    grep -v "@MIC@" "$root/handsfree/system/talkback-echo-cancel.conf" > "$conf"
     say "Echo canceller listens to the default mic: none found on the output's sound card"
   fi
-  install -m 644 "$root/handsfree/talkback-echo-cancel.service" "$units/talkback-echo-cancel.service"
-  install -m 644 "$root/handsfree/handsfree.service" "$units/handsfree.service"
+  install -m 644 "$root/handsfree/system/talkback-echo-cancel.service" "$units/talkback-echo-cancel.service"
+  install -m 644 "$root/handsfree/system/handsfree.service" "$units/handsfree.service"
   ln -sfn "$root/handsfree/handsfree.py" "$bin/handsfree"
   systemctl --user daemon-reload
   start_or_restart talkback-echo-cancel.service handsfree.service
   say "Hands-free: handsfree on (then it starts again at login)."
   [ -f "$share/handsfree/hey_jarvis_v0.1.onnx" ] && say "\"Hey Jarvis\" wakes it."
   say "\"Hey Claude\" needs your voice first:"
-  say "  handsfree/wakeword_collect.py, then handsfree/wakeword_train.py"
+  say "  handsfree/tools/wakeword_collect.py, then handsfree/tools/wakeword_train.py"
 }
 
 install_call() {

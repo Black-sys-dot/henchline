@@ -25,7 +25,7 @@ from pathlib import Path
 
 import numpy as np
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
+sys.path[:0] = [str(Path(__file__).resolve().parents[1] / "core"), str(Path(__file__).resolve().parents[2])]  # hands-free's modules; voice/
 from collect import CHIME, speak as say  # noqa: E402
 from sensing import RATE  # noqa: E402
 from voice.state import EC_SOURCE, HANDSFREE_DATA, PAUSE  # noqa: E402

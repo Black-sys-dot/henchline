@@ -21,7 +21,7 @@ import sys
 import time
 from pathlib import Path
 
-sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
+sys.path[:0] = [str(Path(__file__).resolve().parents[1] / "core"), str(Path(__file__).resolve().parents[2])]  # hands-free's modules; voice/
 from collect import chime, ours_queued, speak as say  # noqa: E402
 from sensing import RATE  # noqa: E402
 from voice.state import EC_SOURCE, ECHO_SET as SET, PAUSE, PLAYING, canceller_mic  # noqa: E402

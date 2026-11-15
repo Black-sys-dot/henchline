@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 
 HERE = Path(__file__).resolve().parent
-sys.path[:0] = [str(HERE), str(HERE.parent)]  # hands-free's modules; voice/
+sys.path[:0] = [str(HERE), str(HERE.parent / "core"), str(HERE.parents[1])]  # the tools, hands-free's modules; voice/
 from listener import BARGE_GRACE, FLOOR_SPAN, PREROLL, floor_of  # noqa: E402
 from sensing import FRAME, LEVEL_SPAN, RATE, level  # noqa: E402
 from talkover import GAP, SUSTAIN, TalkOver, Verdict  # noqa: E402
