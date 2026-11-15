@@ -96,7 +96,7 @@ Log: `~/.local/state/ptt/handsfree.log` (events, no words)
 
 ## Phone call
 
-`./install.sh call` runs a small web server (`call/server.py`, user unit `call.service`) on the laptop's Tailscale address, so only your own devices reach it, with a certificate of its own (the phone accepts it once). Open `https://<laptop's Tailscale IP>:8790` on the phone and tap **Call**: your mic goes into a virtual sink that hands-free listens to instead of the laptop mic, and talkback plays into another one that is streamed to the phone, so the laptop stays quiet. The phone's browser cancels its own echo.
+`./install.sh call` runs a small web server (`call/server.py`, user unit `call.service`) on the laptop's Tailscale address, so only your own devices reach it, with a certificate of its own (the phone accepts it once). Open `https://<laptop's Tailscale IP>:8790` on the phone and tap **Call**: your mic goes into a virtual sink that hands-free listens to instead of the laptop mic, and talkback plays into another one that is streamed to the phone, so the laptop stays quiet. The phone's browser cancels its own echo. A call turns hands-free and talkback on, and leaves them on when it ends.
 
 - On a call the line is open: just talk, no wake word needed; talking over the agent and switching agents work as at home.
 - The round button shows hands-free's state in the tray's colours (green listening, red recording, yellow transcribing, grey only the button gets in). **Hold** it to talk; **tap** it to turn the open line off in a noisy place, so noise cannot cut the agent off, and on again.

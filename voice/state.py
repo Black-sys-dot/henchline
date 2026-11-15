@@ -69,6 +69,7 @@ class Sent:
     agent: str
     heard: str  # routing.Heard's value: "reply", "call, typed", …
     at: float = field(default_factory=time.time)
+    session: str = ""  # which of the agent's sessions: two Claudes are both "claude"
 
     @classmethod
     def last(cls) -> Sent | None:
@@ -93,9 +94,15 @@ def turn_on_handsfree(announce: bool = True) -> int:
 
 
 def in_call() -> bool:
-    """A call is up: its marker exists and the server that wrote it still runs (a killed one leaves it)."""
-    pid = read_json(CALL).get("pid", 0)
-    return bool(pid) and Path(f"/proc/{pid}").exists()
+    """A call is up: its marker exists and the server that wrote it still runs (a killed one leaves it).
+
+    The pid alone could be reused by another process: its command line must match the one written down too.
+    """
+    call = read_json(CALL)
+    try:
+        return Path(f"/proc/{call['pid']}/cmdline").read_text() == call["cmdline"]
+    except (KeyError, OSError):
+        return False
 
 
 def mic_source() -> str:

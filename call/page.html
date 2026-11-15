@@ -27,6 +27,7 @@
   .msg .who { font-size: .75rem; color: var(--muted); margin-bottom: .1rem; }
   .msg.you { align-self: flex-end; background: color-mix(in srgb, var(--call) 18%, var(--card)); }
   .msg.note { align-self: center; background: none; border: 0; color: var(--muted); font-size: .85rem; }
+  .msg[hidden] { display: none; }
   #talk-area { display: flex; flex-direction: column; align-items: center; gap: .4rem; padding: .8rem 16px .4rem; }
   #talk { width: 92px; height: 92px; border-radius: 50%; border: 0; background: var(--waiting); color: #fff;
           font-size: .9rem; font-weight: 600; touch-action: none; user-select: none; -webkit-user-select: none;
@@ -100,9 +101,17 @@ const callButton = $('call'), talk = $('talk'), state = $('state'), chat = $('ch
 let buttonOnly = false;  // a noisy place: only holding the button gets in
 let ws = null, ctx = null, stream = null, wakeLock = null;
 
-function say(who, words, kind = '') {
+// One chat per agent: each line carries its agent's session and only the current agent's are shown;
+// notes about the call itself (no session) show in all of them
+let current = '';
+const unread = new Set();  // agents that said something while another one's chat was shown
+
+function say(who, words, kind = '', session = '') {
   const div = document.createElement('div');
   div.className = `msg ${kind}`;
+  div.dataset.session = session;
+  div.hidden = Boolean(session && current && session !== current);
+  if (div.hidden) unread.add(session);
   if (who) { const w = document.createElement('div'); w.className = 'who'; w.textContent = who; div.append(w); }
   div.append(document.createTextNode(words));
   chat.append(div);
@@ -111,8 +120,19 @@ function say(who, words, kind = '') {
 
 // Who the call talks to: the agents heard lately and still running; picking one switches, as saying it would
 const agentMenu = $('agent');
-function showAgents(list, current) {
-  agentMenu.replaceChildren(...list.map((a) => new Option(a.name, a.session, false, a.session === current)));
+let agentList = [];
+function showAgents(list, now) {
+  agentList = list;
+  if (now && now !== current) {
+    current = now;
+    unread.delete(now);
+    for (const div of chat.querySelectorAll('.msg')) {
+      div.hidden = Boolean(div.dataset.session && div.dataset.session !== current);
+    }
+    chat.scrollTop = chat.scrollHeight;
+  }
+  agentMenu.replaceChildren(...list.map((a) =>
+    new Option((unread.has(a.session) ? '● ' : '') + a.name, a.session, false, a.session === current)));
   if (!list.length) agentMenu.append(new Option('No agent yet'));
   agentMenu.disabled = !list.length || !ws;
 }
@@ -140,7 +160,12 @@ async function start() {
   ws.onmessage = (e) => {
     if (typeof e.data !== 'string') { speaker.port.postMessage(e.data, [e.data]); return; }
     const status = JSON.parse(e.data);
-    if (status.chat) { say(status.chat.from, status.chat.text, status.chat.from === 'you' ? 'you' : ''); return; }
+    if (status.chat) {
+      const c = status.chat;
+      say(c.from, c.text, c.from === 'you' ? 'you' : '', c.session || '');
+      if (unread.size) showAgents(agentList, current);  // the dot on whoever spoke unseen
+      return;
+    }
     if (status.agents) { showAgents(status.agents, status.current); return; }
     state.textContent = status.state;
     talk.dataset.mode = status.mode || 'waiting';
@@ -187,7 +212,7 @@ $('send').onsubmit = (e) => {
   const words = text.value.trim();
   if (!words) return;
   send({chat: words});
-  say('you', words, 'you');
+  say('you', words, 'you', current);
   text.value = '';
 };
 </script>

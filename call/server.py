@@ -67,11 +67,13 @@ class Status:
             self.since = sent.at
             self.waiting_for = sent.agent.capitalize()
             if sent.heard != Heard.TYPED.value:  # a typed one is in the chat already, as the page sent it
-                lines.append({"chat": {"from": "you", "text": f"(spoken, sent to {self.waiting_for})"}})
+                lines.append({"chat": {"from": "you", "text": f"(spoken, sent to {self.waiting_for})",
+                                       "session": sent.session}})
         playing = Playing.now()
         if playing and playing.clip != self.clip:
             self.clip = playing.clip
-            lines.append({"chat": {"from": playing.agent.capitalize(), "text": playing.text}})
+            lines.append({"chat": {"from": playing.agent.capitalize(), "text": playing.text,
+                                   "session": playing.session}})
         return lines
 
     def now(self) -> dict:
@@ -160,8 +162,9 @@ def typed(words: str) -> None:
 
 
 async def call(request: web.Request) -> web.WebSocketResponse:
-    # Browsers let any web page open a WebSocket to any address: only the call page itself may, or a page
-    # on some other site, open on the phone, could type into the agents' terminals
+    # Browsers let any web page open a WebSocket to any address: without this, a page on some other site,
+    # open on the phone, could type into the agents' terminals. Not a password: a program on the tailnet
+    # can send any Origin. Only your own devices reaching the Tailscale address is the real boundary
     if request.headers.get("Origin") != f"https://{request.host}":
         raise web.HTTPForbidden(text="only the call page may connect")
     ws = web.WebSocketResponse(heartbeat=15)
@@ -176,7 +179,8 @@ async def call(request: web.Request) -> web.WebSocketResponse:
         speaker = await asyncio.create_subprocess_exec(
             "parec", "--raw", f"--device={PHONE_SPEAKER_MONITOR}", "--format=s16le", f"--rate={SPEAKER_RATE}",
             "--channels=1", "--latency-msec=40", "--client-name=phone-call", stdout=asyncio.subprocess.PIPE)
-        write_json(CALL, {"from": request.remote or "", "pid": os.getpid()})
+        write_json(CALL, {"from": request.remote or "", "pid": os.getpid(),
+                          "cmdline": Path("/proc/self/cmdline").read_text()})
         await asyncio.get_running_loop().run_in_executor(None, turn_on_handsfree, False)  # with talkback
         log(HANDSFREE_LOG, "phone call started")
 
@@ -225,7 +229,11 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             shower.cancel()
             CALL.unlink(missing_ok=True)  # hands-free and talkback go back to the laptop first
             for proc in (mic, speaker):
-                proc.terminate()
+                if proc.returncode is None:
+                    try:
+                        proc.terminate()
+                    except ProcessLookupError:  # gone already: the service being stopped kills the whole group
+                        pass
                 await proc.wait()
             log(HANDSFREE_LOG, f"phone call ended ({heard / 2 / MIC_RATE:.0f} s of the phone's mic arrived)")
     return ws
@@ -241,11 +249,12 @@ def main() -> int:
                         help="tailscale (default): this machine's Tailscale address, so only your own devices "
                              "reach it; 127.0.0.1 behind `tailscale serve`")
     args = parser.parse_args()
-    CALL.unlink(missing_ok=True)  # leftovers from a crash: the marker, and the call's sinks
-    for line in pactl("list", "short", "modules").splitlines():
-        found = re.search(r"sink_name=(\S+)", line)
-        if "module-null-sink" in line and found and found.group(1) in (PHONE_MIC, PHONE_SPEAKER):
-            pactl("unload-module", line.split()[0])
+    if not in_call():  # leftovers from a crash: the marker, and the call's sinks (never a live call's)
+        CALL.unlink(missing_ok=True)
+        for line in pactl("list", "short", "modules").splitlines():
+            found = re.search(r"sink_name=(\S+)", line)
+            if "module-null-sink" in line and found and found.group(1) in (PHONE_MIC, PHONE_SPEAKER):
+                pactl("unload-module", line.split()[0])
     app = web.Application()
     app.router.add_get("/", lambda _: web.FileResponse(HERE / "page.html"))
     app.router.add_get("/call", call)
