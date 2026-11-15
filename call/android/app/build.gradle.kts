@@ -26,4 +26,5 @@ android {
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
     implementation("androidx.drawerlayout:drawerlayout:1.2.0")  // the crew and settings drawer
+    implementation("org.unifiedpush.android:connector:3.0.10")  // rung awake through the ntfy app, no Google
 }

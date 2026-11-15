@@ -17,6 +17,7 @@ how it was heard, into the agent that spoke last.
 
 from __future__ import annotations
 
+import json
 import signal
 import subprocess
 import sys
@@ -33,8 +34,9 @@ import tray  # noqa: E402
 from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import whisper  # noqa: E402
-from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CLOSE, HANDSFREE_LOG, HANDSFREE_ON, LISTEN,  # noqa: E402
-                         in_call, last_speaker, log, release_phase, turn_on_handsfree)
+from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_RING, CLOSE, HANDSFREE_LOG,  # noqa: E402
+                         HANDSFREE_ON, LISTEN, in_call, last_speaker, log, release_phase,
+                         turn_on_handsfree)
 from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
 
 
@@ -59,6 +61,19 @@ def ring(why: str) -> int:
         return 1
     speaker = last_speaker()
     who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
+    if CALL_RING.exists():  # Henchline's own push address: a full-screen call, the agent's henchman and ringtone
+        ring = json.dumps({"agent": speaker.agent if speaker else "handsfree", "why": why}).encode()
+        try:
+            urllib.request.urlopen(urllib.request.Request(CALL_RING.read_text().strip(), data=ring,
+                                                          headers={"Content-Type": "application/json"}),
+                                   timeout=10).close()
+            RANG.parent.mkdir(parents=True, exist_ok=True)
+            RANG.touch()
+            log(HANDSFREE_LOG, f"rang the user through Henchline ({who})")
+            print("rang")
+            return 0
+        except (OSError, ValueError) as exc:
+            print(f"Henchline's push address failed ({exc.__class__.__name__}): an ntfy notification instead")
     request = urllib.request.Request(f"{RING_SERVER}/{topic}", data=(why or "Tap Answer to talk.").encode(),
                                      headers={"Title": f"{who} is calling", "Priority": "high", "Tags": "telephone",
                                               "Click": "henchline://call",

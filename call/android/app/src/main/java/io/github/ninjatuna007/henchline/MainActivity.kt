@@ -79,6 +79,8 @@ class MainActivity : Activity() {
         text.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_SEND).also { if (it) sendTyped() } }
         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.BLUETOOTH_CONNECT), 1)
+        RingService.register(this)  // so agents can ring this phone
+        askFullScreen()
         answer(intent)
     }
 
@@ -91,6 +93,11 @@ class MainActivity : Activity() {
     /** Opened from henchline://call (an agent rang): ask, as a phone does. Any app or web page can open the
      *  link, so it never turns the mic on by itself: only Answer connects. */
     private fun answer(intent: Intent?) {
+        if (intent?.action == ANSWER) {  // Answer on IncomingActivity: the user's own tap, so connect
+            intent.action = null
+            call()
+            return
+        }
         if (intent?.data?.scheme == "henchline" && intent.data?.host == "call" && CallService.Bus.service == null) {
             intent.data = null  // once: rotating the screen must not ask again
             AlertDialog.Builder(this)
@@ -143,6 +150,23 @@ class MainActivity : Activity() {
 
     private fun hangUp() {
         startService(Intent(this, CallService::class.java).setAction(CallService.STOP))
+    }
+
+    /** A ring shows over the lock screen only with this permission, which Android 14+ asks the user for, once. */
+    private fun askFullScreen() {
+        val manager = getSystemService(android.app.NotificationManager::class.java)
+        if (android.os.Build.VERSION.SDK_INT < 34 || manager.canUseFullScreenIntent() || prefs().getBoolean("asked_full", false)) return
+        prefs().edit().putBoolean("asked_full", true).apply()
+        AlertDialog.Builder(this)
+            .setIcon(R.mipmap.ic_launcher)
+            .setTitle("Let your crew ring you")
+            .setMessage("Allow Henchline to show calls over the lock screen, as a phone call does.")
+            .setPositiveButton("Allow") { _, _ ->
+                startActivity(Intent(android.provider.Settings.ACTION_MANAGE_APP_USE_FULL_SCREEN_INTENT,
+                    android.net.Uri.parse("package:$packageName")))
+            }
+            .setNegativeButton("Not now", null)
+            .show()
     }
 
     /** The call page's address: https://<laptop's Tailscale name>/ (the laptop's `tailscale serve`). */
@@ -307,7 +331,11 @@ class MainActivity : Activity() {
         talk.isEnabled = on
         text.isEnabled = on
         send.isEnabled = on
-        send.alpha = if (on) 1f else 0.4f
+        // Off a call there is nothing to hold or type to: just the henchman and how to call
+        val shown = if (on) View.VISIBLE else View.GONE
+        talk.visibility = shown
+        findViewById<View>(R.id.inputRow).visibility = shown
+        findViewById<View>(R.id.idle).visibility = if (on || chat.childCount > 0) View.GONE else View.VISIBLE
         showClear(CallService.Bus.service?.clear ?: prefs().getBoolean("clear", true))
         if (!on) {
             state.text = "Not connected"
@@ -370,6 +398,7 @@ class MainActivity : Activity() {
 
     companion object {
         const val HOLD_MS = 300L  // longer than this is a hold; shorter is a tap
+        const val ANSWER = "io.github.ninjatuna007.henchline.ANSWER"  // from IncomingActivity's Answer
 
         /** Each agent's henchman, by its session (claude-…, cursor-…, codex-…) or its name. */
         fun avatarOf(sessionOrName: String): Int = when {

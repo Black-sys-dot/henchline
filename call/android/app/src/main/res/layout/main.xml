@@ -78,20 +78,49 @@
                 android:tint="#FFFFFF" />
         </LinearLayout>
 
-        <ScrollView
-            android:id="@+id/chatScroll"
+        <FrameLayout
             android:layout_width="match_parent"
             android:layout_height="0dp"
-            android:layout_weight="1"
-            android:paddingHorizontal="12dp">
+            android:layout_weight="1">
 
-            <LinearLayout
-                android:id="@+id/chat"
+            <ScrollView
+                android:id="@+id/chatScroll"
                 android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:paddingHorizontal="12dp">
+
+                <LinearLayout
+                    android:id="@+id/chat"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingBottom="8dp" />
+            </ScrollView>
+
+            <!-- Not on a call: just the henchman and how to call -->
+            <LinearLayout
+                android:id="@+id/idle"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:paddingBottom="8dp" />
-        </ScrollView>
+                android:layout_gravity="center"
+                android:gravity="center_horizontal"
+                android:orientation="vertical">
+
+                <ImageView
+                    android:layout_width="160dp"
+                    android:layout_height="160dp"
+                    android:importantForAccessibility="no"
+                    android:src="@drawable/avatar_handsfree" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:paddingTop="16dp"
+                    android:text="Tap ☎ to call your crew"
+                    android:textColor="@color/muted"
+                    android:textSize="16sp" />
+            </LinearLayout>
+        </FrameLayout>
 
         <!-- Hold to talk; tap for the open line off (noisy places) or on -->
         <Button
@@ -106,6 +135,7 @@
             android:textStyle="bold" />
 
         <LinearLayout
+            android:id="@+id/inputRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
             android:gravity="center_vertical"

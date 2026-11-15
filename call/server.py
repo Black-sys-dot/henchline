@@ -36,9 +36,10 @@ import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_PORT, CALL_PUSH,  # noqa: E402
-                         CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE, PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR,
-                         Phase, Playing, SPOOL, Sent, in_call, last_speaker, log, phase_now, recent_speakers,
-                         turn_on_handsfree, write_json)
+                         CALL_RING, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE, PHONE_MIC,
+                         PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SPOOL, Sent,
+                         in_call, last_speaker, log, phase_now, recent_speakers, turn_on_handsfree,
+                         write_json)
 
 MIC_RATE = 16000  # what the page sends: what hands-free listens at
 SPEAKER_RATE = 24000  # what the page plays: Kokoro's own rate
@@ -194,7 +195,10 @@ def flag(path: Path, on: bool) -> None:
 
 async def from_page(message: dict, ear: Ear) -> str:
     """The talk button held or let go, a switch, or a typed chat message; a note for the page, if any."""
-    if "sound" in message:  # the app's sound mode: turns after this line ran in it, for comparing them
+    if "ring_endpoint" in message:  # where `handsfree ring` reaches the app: kept private, never logged
+        CALL_RING.write_text(str(message["ring_endpoint"]))
+        CALL_RING.chmod(0o600)
+    elif "sound" in message:  # the app's sound mode: turns after this line ran in it, for comparing them
         log(HANDSFREE_LOG, f"call: phone sound {message['sound']}")
     elif "stats" in message:
         ear.report(message["stats"])

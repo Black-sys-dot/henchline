@@ -9,6 +9,7 @@
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.USE_FULL_SCREEN_INTENT" />
 
     <application
         android:allowBackup="false"
@@ -33,6 +34,24 @@
                 <data android:scheme="henchline" android:host="call" />
             </intent-filter>
         </activity>
+
+        <!-- An agent is calling: over the lock screen -->
+        <activity
+            android:name=".IncomingActivity"
+            android:excludeFromRecents="true"
+            android:exported="false"
+            android:launchMode="singleInstance"
+            android:showWhenLocked="true"
+            android:turnScreenOn="true" />
+
+        <!-- Rings from the laptop, woken by the phone's UnifiedPush distributor (the ntfy app) -->
+        <service
+            android:name=".RingService"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="org.unifiedpush.android.connector.PUSH_EVENT" />
+            </intent-filter>
+        </service>
 
         <!-- The call itself: mic out, the agents' voices in, kept going with the screen off -->
         <service

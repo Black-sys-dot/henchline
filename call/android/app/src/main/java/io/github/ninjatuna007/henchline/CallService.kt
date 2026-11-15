@@ -165,6 +165,10 @@ class CallService : Service() {
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
                 Bus.connected = true
+                // Where the laptop can ring this phone later (`handsfree ring`), refreshed every call
+                getSharedPreferences("call", MODE_PRIVATE).getString(RingService.ENDPOINT, null)?.let {
+                    webSocket.send(org.json.JSONObject().put("ring_endpoint", it).toString())
+                }
                 startAudio()
                 Bus.listener?.invoke("""{"opened": true}""")
             }
