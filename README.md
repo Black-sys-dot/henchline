@@ -113,7 +113,7 @@ The same conversation from your phone, over your own Tailscale network: `./insta
 
 <img src="docs/peek_codex.svg" align="left" width="190" alt="">
 
-The call as a real app (Android 10+): it keeps going with the screen off, rings full screen with each henchman's own tone, takes texts you reply to from the notification, carries files both ways, keeps a chat per agent, and turns your earbuds into push-to-talk. Build it with `./gradlew assembleDebug` in `call/android/` and install over USB. More: [call/android/README.md](call/android/README.md).
+The call as a real app (Android 10+): it keeps going with the screen off, rings full screen with each henchman's own tone, takes texts you reply to from the notification, carries files both ways, keeps a chat per agent, and turns your earbuds into push-to-talk. **[Download the APK](https://github.com/NinjaTuna007/henchline/releases/latest)**, or build it yourself with `./gradlew assembleDebug` in `call/android/` and install over USB. More: [call/android/README.md](call/android/README.md).
 
 <br clear="left">
 
