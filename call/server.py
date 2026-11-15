@@ -302,22 +302,25 @@ def typed(words: str, session: str) -> str:
     return to_agent(words, session, Heard.TYPED)[1]
 
 
-def to_agent(words: str, session: str, heard: Heard) -> tuple[str, str]:
+def to_agent(words: str, session: str, heard: Heard, switch: bool = True) -> tuple[str, str]:
     """Words for the agent whose chat the phone shows: (who got them, "") or ("", a note why nobody did).
 
     Another agent may have spoken since the phone last heard who is current: the chat shown wins, so the words
-    go where the phone put them, or nowhere (and a note says so). No session: no agent yet, to the last one.
+    go to exactly that session (typed to it by name, never to whoever is last by then), or nowhere, with a note.
+    On a call that agent also becomes the one spoken words go to (switch); a text leaves that alone. No session:
+    no agent yet, to the last one (calls only; texts need a session).
     """
+    target = None
     if session:
         target = next((s for s in recent_speakers() if s.session == session), None)
         if not target or not routing.reachable(target):
             return "", "That agent isn't reachable, so I didn't send that. Pick another and send again."
         current = last_speaker()
-        if not current or current.session != session:
+        if switch and (not current or current.session != session):
             routing.switch_to(target)
-    if not routing.deliver(words, heard):  # it says why out loud on the laptop
+    if not routing.deliver(words, heard, to=target):  # it says why out loud on the laptop
         return "", "No agent could take that just now (the laptop says why)."
-    got = last_speaker()
+    got = target or last_speaker()
     return (got.spoken() if got else "your agent"), ""
 
 
@@ -385,8 +388,9 @@ async def share_tell(request: web.Request) -> web.Response:
     if not paths and not (text + note).strip():
         return web.json_response({"note": "Nothing to share."}, status=400)
     words = files.message(paths, text, note)
-    got, why = await asyncio.get_running_loop().run_in_executor(
-        None, to_agent, words, str(shared.get("session", "")), Heard.SHARED)
+    session = str(shared.get("session", ""))
+    got, why = await asyncio.get_running_loop().run_in_executor(  # off a call it is a text: to that agent only
+        None, to_agent, words, session, Heard.SHARED, in_call())
     return web.json_response({"to": got} if got else {"note": why})
 
 
@@ -399,10 +403,10 @@ async def texted(request: web.Request) -> web.Response:
         words, session = str(message.get("text", "")).strip(), str(message.get("session", ""))
     except (ValueError, AttributeError):
         raise web.HTTPBadRequest(text="expected JSON")
-    if not words:
-        return web.json_response({"note": "Nothing to send."}, status=400)
+    if not words or not session:  # a text is for one agent, named: never whoever spoke last
+        return web.json_response({"note": "Nothing to send, or no agent named."}, status=400)
     got, why = await asyncio.get_running_loop().run_in_executor(
-        None, to_agent, " ".join(words.split()), session, Heard.TEXTED)
+        None, to_agent, " ".join(words.split()), session, Heard.TEXTED, False)
     return web.json_response({"to": got} if got else {"note": why})
 
 

@@ -203,10 +203,10 @@ def type_into_cursor(wid: str, message: str) -> bool:
     return False
 
 
-def deliver(text: str, heard: Heard) -> bool:
-    """Type the words, tagged with how they were heard, to the agent that spoke last."""
+def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
+    """Type the words, tagged with how they were heard, to `to`, or else to the agent that spoke last."""
     message = f"[hands-free · {heard.value}] {text}"
-    speaker = last_speaker()
+    speaker = to or last_speaker()
     if speaker is None:
         log(HANDSFREE_LOG, "nobody to send to")
         say("I heard you, but no agent has spoken yet.")
