@@ -177,9 +177,12 @@ def write_json(path: Path, data: dict, private: bool = False) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # Its own name: the call server and hands-free both write some files, and must not share one temp file
     tmp = path.parent / f".{path.name}.{os.getpid()}.{time.monotonic_ns()}.tmp"
-    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600 if private else 0o644), "w") as out:
-        out.write(json.dumps(data))
-    tmp.replace(path)
+    try:
+        with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600 if private else 0o644), "w") as out:
+            out.write(json.dumps(data))
+        tmp.replace(path)
+    finally:
+        tmp.unlink(missing_ok=True)  # only left when the write or the replace failed
 
 
 def log(path: Path, line: str, echo: bool = False) -> None:
