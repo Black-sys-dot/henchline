@@ -133,8 +133,11 @@ class IncomingActivity : Activity() {
                 isLooping = loop
                 setVolume(volume, volume)
                 prepare()
-                seekTo(from().coerceAtLeast(0) % duration.coerceAtLeast(1))  // before it starts: never heard jumping
-                start()
+                val place = from().coerceAtLeast(0) % duration.coerceAtLeast(1)
+                if (place > 0) {  // a seek is asynchronous: start once it has landed, never heard jumping
+                    setOnSeekCompleteListener { it.start() }
+                    seekTo(place)
+                } else start()
             }
         } catch (e: Exception) {
             android.util.Log.w("Henchline", "ring sound failed: ${e.message}")
