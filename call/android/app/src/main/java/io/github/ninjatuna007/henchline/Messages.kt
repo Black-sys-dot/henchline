@@ -94,13 +94,27 @@ object Messages {
     /** How far an agent's texts got, told to the laptop (`handsfree text-status`): "delivered" when on the phone,
      *  "read" when you opened that chat or replied. Best effort: off Tailscale it is just not told. */
     fun receipt(context: Context, ids: List<String>, status: String) {
-        if (ids.isEmpty()) return
+        // Kept until the laptop has them: one that doesn't arrive (Tailscale off, the laptop restarting) goes again
+        // with the next, so `handsfree text --until-read` never rings for a text you've read
+        val prefs = context.getSharedPreferences("call", Context.MODE_PRIVATE)
+        val key = "pending_$status"
+        synchronized(this) {
+            val pending = (prefs.getStringSet(key, emptySet()) ?: emptySet()) + ids
+            prefs.edit().putStringSet(key, pending).apply()
+        }
         Thread {
+            val send = synchronized(this) { prefs.getStringSet(key, emptySet())?.toList() ?: emptyList() }
+            if (send.isEmpty()) return@Thread
             try {
                 val origin = Files.origin(context) ?: return@Thread
                 QUICK.newCall(Request.Builder().url("$origin/text-status").header("Origin", origin)
-                    .post(JSONObject().put("ids", org.json.JSONArray(ids)).put("status", status).toString()
-                        .toRequestBody("application/json".toMediaType())).build()).execute().close()
+                    .post(JSONObject().put("ids", org.json.JSONArray(send)).put("status", status).toString()
+                        .toRequestBody("application/json".toMediaType())).build()).execute().use { answer ->
+                    if (answer.isSuccessful) synchronized(this) {
+                        val left = (prefs.getStringSet(key, emptySet()) ?: emptySet()) - send.toSet()
+                        prefs.edit().putStringSet(key, left).apply()
+                    }
+                }
             } catch (_: Exception) {
             }
         }.start()
@@ -108,8 +122,7 @@ object Messages {
 
     /** You've seen that chat: its agents' texts not yet marked read are, and the laptop is told. */
     fun seen(context: Context, session: String) {
-        val ids = Chats.markSeen(context, session)
-        receipt(context, ids, "read")
+        receipt(context, Chats.markSeen(context, session), "read")  // also sends any earlier ones still waiting
     }
 
     /** A reply typed into the notification: to the laptop, then into the chat and the notification. */

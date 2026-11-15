@@ -80,7 +80,8 @@ object Chats {
     @Synchronized
     fun markSeen(context: Context, session: String): List<String> {
         val chat = file(context, session)
-        if (session.isEmpty() || !chat.exists() || !chat.readText().contains("\"tid\"")) return emptyList()
+        // Only when one is unseen: opening a chat must not rewrite its file each time
+        if (session.isEmpty() || !chat.exists() || chat.readLines().none { "\"tid\"" in it && "\"seen\":true" !in it }) return emptyList()
         val ids = mutableListOf<String>()
         rewrite(context, session) { line ->
             val tid = line.optString("tid")

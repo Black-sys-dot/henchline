@@ -367,7 +367,9 @@ def main() -> int:
         return text(" ".join(args), minutes)
     if command == "text-status":
         status = text_status(args[0] if args else "")
-        print(status or "unknown id")
+        down = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "call.service"]).returncode != 0
+        print((status or "unknown id") + (" (the call server is down: the phone can't report back)"
+                                         if status == "sent" and down else ""))
         return 0 if status else 1
     if command == "hangup":
         if not in_call():

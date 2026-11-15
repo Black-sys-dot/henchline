@@ -394,7 +394,8 @@ class MainActivity : Activity() {
                 val file = line.optJSONObject("file")
                 // The call has kept it already (CallService): drawn here only
                 if (file == null || line.optString("text").isNotEmpty())
-                    say(from, line.getString("text"), mine = from == "you", session = line.optString("session"), keep = false)
+                    say(from, line.getString("text"), mine = from == "you", session = line.optString("session"), keep = false,
+                        status = if (from == "you") "delivered" else "")
                 if (file != null) fileCard(from, file, line.optString("session"), keep = false)
                 // An agent's text arriving in the chat you're looking at: read at once
                 if (line.optString("session") == current && chatScreen.visibility == View.VISIBLE) {
@@ -836,16 +837,19 @@ class MainActivity : Activity() {
     /** The current agent's kept chat, from the start: on opening the app, and on switching agents. */
     private fun showHistory() {
         chat.removeAllViews()
-        if (current.isNotEmpty() && chatScreen.visibility == View.VISIBLE) {  // you're looking: read
+        val history = Chats.load(this, current)
+        val lastAgent = history.indexOfLast { !it.optBoolean("mine") && it.optString("from").isNotEmpty() }
+        if (current.isNotEmpty() && chatScreen.visibility == View.VISIBLE && sheet?.isOpen != true) {  // you're looking: read
             Messages.seen(this, current)
             markRead(current)
         }
-        for (line in Chats.load(this, current)) {
+        for ((i, line) in history.withIndex()) {
             val file = line.optJSONObject("file")
             if (file != null) fileCard(line.optString("from"), file, current, keep = false)
             else if (line.has("thumb")) picture(line.getString("thumb"), line.optString("text"), current)
             else say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"), session = current, keep = false,
-                status = line.optString("status"))
+                status = line.optString("status").ifEmpty {  // from before ticks: answered since means read
+                    if (!line.optBoolean("mine")) "" else if (i < lastAgent) "read" else "delivered" })
         }
         if (!CallService.Bus.connected) showConnected(false)  // off a call: the chat if there is one, else the henchman
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
