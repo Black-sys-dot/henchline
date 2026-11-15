@@ -49,6 +49,8 @@ HANDSFREE_WAV = STATE / "handsfree.wav"  # a turn being transcribed, deleted aft
 # A phone call (call/): while CALL exists, hands-free hears PHONE_MIC and talkback plays into PHONE_SPEAKER
 CALL = STATE / "call"
 CALL_PUSH = STATE / "call.push"  # exists while the call page's talk button is held
+CALL_BUTTON_ONLY = STATE / "call.button-only"  # in a noisy place: only the talk button gets in, nothing else
+CALL_PORT = 8790
 HANDSFREE_MODE = STATE / "handsfree.mode"  # waiting / listening / recording / transcribing: the tray's colours
 PHONE_MIC = "phone_mic"  # a virtual sink the call page writes the phone's mic into; listened to as its monitor
 PHONE_SPEAKER = "phone_speaker"  # a virtual sink talkback plays into during a call; streamed to the phone
@@ -78,6 +80,7 @@ ECHO_SET = HANDSFREE_DATA / "echo-set"  # talk-over recordings, one folder per s
 EC_SOURCE = "talkback_ec_source"  # the echo-cancelled mic hands-free listens to
 EC_UNIT = "talkback-echo-cancel.service"
 EC_CONF = Path.home() / ".config/pipewire/talkback-echo-cancel.conf"
+CALL_TLS = SHARE / "copilot-ptt/call"  # cert.pem and key.pem: the call page's own certificate (install.sh call)
 
 # Who wrote the phase, and the agent name hands-free's own notices speak as
 BY_PTT = "ptt"

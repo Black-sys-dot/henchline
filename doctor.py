@@ -23,6 +23,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 sys.path.insert(0, str(ROOT))  # voice/state.py: standard library only
 from voice.desktop import kde_session  # noqa: E402
+from voice.state import CALL_TLS  # noqa: E402
 from voice.state import EC_CONF as CANCELLER_CONF, EC_SOURCE, KOKORO_MODELS as KOKORO, VENV, WAKE_MODEL  # noqa: E402
 
 HOME = Path.home()
@@ -198,7 +199,21 @@ def agents() -> list[Check]:
     return checks
 
 
-PIECES = {"ptt": ptt, "talkback": talkback, "handsfree": handsfree, "agents": agents}
+def call() -> list[Check]:
+    ok, err = venv_imports("aiohttp")
+    enabled, active = unit_state("call.service")
+    rc, ip = run("tailscale", "ip", "-4")
+    return [
+        check("call", "web server package in the venv", ok, err, "./install.sh call"),
+        check("call", "Tailscale up (the phone reaches the page through it)", rc == 0, ip.splitlines()[0] if ip else "",
+              "sudo tailscale up"),
+        check("call", "the page's certificate", (CALL_TLS / "cert.pem").exists(), str(CALL_TLS), "./install.sh call"),
+        check("call", "call page running", active == "active", f"{active}, {enabled} at login",
+              "./install.sh call", warn_only=True),
+    ]
+
+
+PIECES = {"ptt": ptt, "talkback": talkback, "handsfree": handsfree, "call": call, "agents": agents}
 
 
 def main() -> int:

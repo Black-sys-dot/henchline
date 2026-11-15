@@ -34,6 +34,7 @@
   #talk[data-mode="transcribing"] { background: var(--transcribing); }
   #talk:disabled { opacity: .45; }
   #state { color: var(--muted); font-size: .9rem; min-height: 1.3em; text-align: center; }
+  #hint { color: var(--muted); font-size: .8rem; text-align: center; }
   form { display: flex; gap: .5rem; padding: .5rem 16px calc(.8rem + env(safe-area-inset-bottom)); }
   form input { flex: 1; min-width: 0; font: inherit; padding: .65rem .8rem; border-radius: 12px; border: 1px solid var(--line);
                background: var(--card); color: var(--fg); }
@@ -49,6 +50,7 @@
 <div id="talk-area">
   <button id="talk" data-mode="waiting" disabled>Hold to talk</button>
   <div id="state">Not connected</div>
+  <div id="hint">Hold to talk · tap to switch the open line off (noisy places) or on</div>
 </div>
 <form id="send"><input id="text" placeholder="Message the agent…" autocomplete="off" disabled><button>Send</button></form>
 <script>
@@ -90,6 +92,7 @@ registerProcessor('mic', Mic); registerProcessor('speaker', Speaker);`;
 
 const $ = (id) => document.getElementById(id);
 const callButton = $('call'), talk = $('talk'), state = $('state'), chat = $('chat'), text = $('text');
+let buttonOnly = false;  // a noisy place: only holding the button gets in
 let ws = null, ctx = null, stream = null, wakeLock = null;
 
 function say(who, words, kind = '') {
@@ -117,6 +120,7 @@ async function start() {
   ws.onopen = () => {
     callButton.textContent = 'Hang up'; callButton.classList.add('on');
     talk.disabled = text.disabled = false;
+    if (buttonOnly) send({button_only: true});
     say('', 'Call started', 'note');
   };
   ws.onmessage = (e) => {
@@ -143,11 +147,24 @@ function stop() {
 
 callButton.onclick = () => (ws ? stop() : start().catch((err) => { stop(); say('', err.message, 'note'); }));
 
-// Hold to talk: hands-free records while the button is down, and sends when it is let go
-const press = (down) => (e) => { e.preventDefault(); send({push: down}); };
-talk.addEventListener('pointerdown', (e) => { talk.setPointerCapture(e.pointerId); press(true)(e); });
-talk.addEventListener('pointerup', press(false));
-talk.addEventListener('pointercancel', press(false));
+// One button. Hold it to talk: hands-free records while it is down and sends when it is let go.
+// Tap it to switch the open line off (a noisy place: only holding gets in) or back on.
+const HOLD_MS = 300;
+let holdTimer = null, talking = false;
+talk.addEventListener('pointerdown', (e) => {
+  e.preventDefault(); talk.setPointerCapture(e.pointerId);
+  holdTimer = setTimeout(() => { talking = true; send({push: true}); }, HOLD_MS);
+});
+const release = (e) => {
+  e.preventDefault(); clearTimeout(holdTimer);
+  if (talking) { talking = false; send({push: false}); return; }
+  if (e.type !== 'pointerup') return;
+  buttonOnly = !buttonOnly;
+  send({button_only: buttonOnly});
+  say('', buttonOnly ? 'Open line off: hold the button to talk' : 'Open line on: just talk', 'note');
+};
+talk.addEventListener('pointerup', release);
+talk.addEventListener('pointercancel', release);
 talk.addEventListener('contextmenu', (e) => e.preventDefault());
 
 $('send').onsubmit = (e) => {

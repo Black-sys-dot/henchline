@@ -1,10 +1,12 @@
 #!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
 """A phone call with the agents: a web page that streams the phone's mic in and talkback out.
 
-    call/server.py [--port 8790] [--host ADDRESS]
+    call/server.py [--port 8790] [--host tailscale|ADDRESS] [--cert PEM --key PEM]
 
-Serve it over Tailscale (`tailscale serve --bg 8790`), open the https address
-on the phone and tap Call. While a call is up, two virtual sinks exist: the
+It listens on this machine's Tailscale address, with its own certificate
+(install.sh call makes one; the phone accepts it once), so only your own
+devices reach it; or on 127.0.0.1 behind `tailscale serve`, once Tailscale
+lets this user configure it. Open the https address on the phone, tap Call. While a call is up, two virtual sinks exist: the
 phone's mic is played into PHONE_MIC, whose monitor hands-free listens to,
 and talkback plays into PHONE_SPEAKER, whose monitor is streamed back to the
 phone. The phone's browser cancels its own echo. One call at a time.
@@ -25,8 +27,8 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
-from voice.state import (BY_HANDSFREE, CALL, CALL_PUSH, HANDSFREE_MODE, HANDSFREE_ON, PHONE_MIC,  # noqa: E402
-                         PHONE_SPEAKER, Phase, Playing, log, phase_now, write_json)
+from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_PORT, CALL_PUSH, CALL_TLS, HANDSFREE_MODE,  # noqa: E402
+                         HANDSFREE_ON, PHONE_MIC, PHONE_SPEAKER, Phase, Playing, log, phase_now, write_json)
 from voice.state import HANDSFREE_LOG  # noqa: E402  (calls are logged with hands-free, which they drive)
 
 MIC_RATE = 16000  # what the page sends: what hands-free listens at
@@ -110,6 +112,8 @@ async def from_page(message: dict) -> None:
     """The talk button held or let go, or a typed chat message for the agent that spoke last."""
     if "push" in message:
         CALL_PUSH.touch() if message["push"] else CALL_PUSH.unlink(missing_ok=True)
+    elif "button_only" in message:
+        CALL_BUTTON_ONLY.touch() if message["button_only"] else CALL_BUTTON_ONLY.unlink(missing_ok=True)
     elif words := message.get("chat", "").strip():
         await asyncio.get_running_loop().run_in_executor(None, typed, words)
 
@@ -176,6 +180,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                     break
         finally:
             CALL_PUSH.unlink(missing_ok=True)
+            CALL_BUTTON_ONLY.unlink(missing_ok=True)  # the next call starts with an open line again
             sender.cancel()
             shower.cancel()
             CALL.unlink(missing_ok=True)  # hands-free and talkback go back to the laptop first
@@ -188,18 +193,22 @@ async def call(request: web.Request) -> web.WebSocketResponse:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--port", type=int, default=8790)
+    parser.add_argument("--port", type=int, default=CALL_PORT)
     parser.add_argument("--cert", type=Path, help="serve https with this certificate (and --key): a self-signed one\n"
                         "works when `tailscale serve` is not available; the phone accepts it once")
     parser.add_argument("--key", type=Path)
-    parser.add_argument("--host", default="127.0.0.1",
-                        help="127.0.0.1 behind `tailscale serve`; or this machine's Tailscale address, reached as "
-                             "http:// from a phone whose browser treats that address as secure")
+    parser.add_argument("--host", default="tailscale",
+                        help="tailscale (default): this machine's Tailscale address, so only your own devices "
+                             "reach it; 127.0.0.1 behind `tailscale serve`")
     args = parser.parse_args()
     CALL.unlink(missing_ok=True)  # a leftover from a crash
     app = web.Application()
     app.router.add_get("/", lambda _: web.FileResponse(HERE / "page.html"))
     app.router.add_get("/call", call)
+    if args.host == "tailscale":
+        args.host = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True).stdout.split()[0]
+    if args.cert is None and (CALL_TLS / "cert.pem").exists():
+        args.cert, args.key = CALL_TLS / "cert.pem", CALL_TLS / "key.pem"
     tls = None
     if args.cert:
         tls = ssl.create_default_context(ssl.Purpose.CLIENT_AUTH)

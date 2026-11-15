@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install or remove the pieces, each on its own:
-#   ./install.sh ptt|talkback|handsfree|agents|all ...
-#   ./install.sh remove ptt|talkback|handsfree|agents|all ...
+#   ./install.sh ptt|talkback|handsfree|call|agents|all ...
+#   ./install.sh remove ptt|talkback|handsfree|call|agents|all ...
 # Python packages go into one private venv (~/.local/share/copilot-ptt/venv);
 # nothing is installed into the system or the user's own Python. Removing a
 # piece leaves the venv, voice models and wake-word recordings in place.
@@ -111,7 +111,10 @@ builtin_mic() {
   done
 }
 
-install_handsfree() {
+handsfree_done=""
+install_handsfree() {  # the call needs it too: once is enough
+  [ -z "$handsfree_done" ] || return 0
+  handsfree_done=1
   install_talkback
   need_apt
   pip_install ptt handsfree
@@ -136,6 +139,30 @@ install_handsfree() {
   start_or_restart talkback-echo-cancel.service handsfree.service
   say "Hands-free: handsfree on (then it starts again at login). The wake word needs your voice first:"
   say "  handsfree/wakeword_collect.py, then handsfree/wakeword_train.py"
+}
+
+install_call() {
+  install_handsfree  # a call is hands-free with the phone as mic and speaker
+  pip_install call
+  for tool in tailscale openssl; do
+    command -v "$tool" >/dev/null || { say "The call page needs $tool"; exit 1; }
+  done
+  tls="$share/copilot-ptt/call"
+  if [ ! -s "$tls/cert.pem" ]; then  # its own certificate; the phone accepts it once
+    mkdir -p "$tls"
+    ip=$(tailscale ip -4 | head -n 1)
+    name=$(tailscale status --json | venv_python -c 'import json, sys; print(json.load(sys.stdin)["Self"]["DNSName"].rstrip("."))')
+    openssl req -x509 -newkey rsa:2048 -nodes -days 825 -keyout "$tls/key.pem" -out "$tls/cert.pem" \
+      -subj "/CN=$name" -addext "subjectAltName=IP:$ip,DNS:$name" 2>/dev/null
+    chmod 600 "$tls/key.pem"
+  fi
+  mkdir -p "$bin" "$units"
+  ln -sfn "$root/call/server.py" "$bin/voice-call"
+  install -m 644 "$root/call/call.service" "$units/call.service"
+  systemctl --user daemon-reload
+  systemctl --user enable call.service
+  systemctl --user restart call.service
+  say "Call page: https://$(tailscale ip -4 | head -n 1):8790 on your phone (accept the certificate once), then Call."
 }
 
 install_agents() {
@@ -211,6 +238,13 @@ remove_handsfree() {
   say "Hands-free removed (wake word model and recordings kept in $share/handsfree)"
 }
 
+remove_call() {
+  remove_unit call.service
+  remove_link "$bin/voice-call"
+  systemctl --user daemon-reload
+  say "Call page removed (its certificate kept in $share/copilot-ptt/call)"
+}
+
 remove_agents() {
   remove_link "$share/talkback/skill"
   remove_link "$HOME/.claude/skills/talkback"
@@ -232,8 +266,8 @@ if [ "${1:-}" = remove ]; then action=remove; shift; fi
 if [ $# -eq 0 ]; then sed -n '2,7p' "$0"; exit 1; fi
 for piece in "$@"; do
   case "$piece" in
-    all) set -- ptt talkback handsfree agents; break ;;
-    ptt|talkback|handsfree|agents) ;;
+    all) set -- ptt talkback handsfree call agents; break ;;
+    ptt|talkback|handsfree|call|agents) ;;
     *) say "Unknown piece: $piece"; exit 1 ;;
   esac
 done

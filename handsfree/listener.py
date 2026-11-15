@@ -24,7 +24,7 @@ from turn import Mode, Turn
 from voicegate import VoiceGate
 from voice import whisper
 from voice.spool import queued
-from voice.state import (BY_HANDSFREE, CALL_PUSH, CLOSE, HANDSFREE_LOG, HANDSFREE_MODE, LISTEN, PAUSE, PLAYING,
+from voice.state import (BY_HANDSFREE, CALL_BUTTON_ONLY, CALL_PUSH, CLOSE, HANDSFREE_LOG, HANDSFREE_MODE, LISTEN, PAUSE, PLAYING,
                          WORKER_PID, in_call, log, mic_source, ptt_busy, release_phase)
 
 WINDOW = 8.0  # seconds to answer after a clip
@@ -190,11 +190,16 @@ class Listener:
         # On a phone call the line is always open, as on any call: the phone's own echo cancelling keeps
         # our voice out, and only "hey Claude" getting in made calls deaf between clips (2026-11-15)
         calling = in_call()
-        open_ = (playing or calling or self.window.is_open()) and not ptt_busy() and not PAUSE.exists()
+        button_only = calling and CALL_BUTTON_ONLY.exists()  # a noisy place: noise must not talk over us
+        open_ = ((playing or calling or self.window.is_open()) and not button_only
+                 and not ptt_busy() and not PAUSE.exists())
         self.show(Mode.LISTENING if open_ else Mode.WAITING)
-        if open_ and calling and CALL_PUSH.exists():  # the call page's talk button: a turn now, until it is let go
+        if calling and CALL_PUSH.exists() and not ptt_busy():  # the call page's talk button: a turn until let go
             self.turn(list(self.preroll), Heard.PUSHED, floor_of(self.room, db))
             return True
+        if button_only:
+            self.preroll.append(frame)  # the button's turn starts with what came just before it
+            return False
         if not open_:
             self.gate.clear()
             self.preroll.clear()
