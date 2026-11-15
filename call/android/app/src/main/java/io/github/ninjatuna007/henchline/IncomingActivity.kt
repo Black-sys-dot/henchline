@@ -25,6 +25,7 @@ class IncomingActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private var ring: MediaPlayer? = null
     private var phrase: MediaPlayer? = null
+    private var reply: String? = null  // where the laptop hears how this ring went
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -32,6 +33,7 @@ class IncomingActivity : Activity() {
         setTurnScreenOn(true)
         val agent = (intent.getStringExtra(AGENT) ?: "").takeIf { it in FLAVOURS } ?: "handsfree"
         val why = intent.getStringExtra(WHY) ?: ""
+        reply = intent.getStringExtra(REPLY)
         val lines = phrasesOf(agent)
         val pick = lines.indices.random()
 
@@ -72,11 +74,11 @@ class IncomingActivity : Activity() {
             contentDescription = what
             setOnClickListener { then() }
         }
-        buttons.addView(round(R.drawable.ic_call_end, R.drawable.round_hang, "Decline") { stop() },
+        buttons.addView(round(R.drawable.ic_call_end, R.drawable.round_hang, "Decline") { Reply.send(reply, "declined"); stop() },
             LinearLayout.LayoutParams((76 * dp).toInt(), (76 * dp).toInt()).apply { marginEnd = (88 * dp).toInt() })
         buttons.addView(round(R.drawable.ic_phone, R.drawable.round_call, "Answer") {
             startActivity(Intent(this, MainActivity::class.java).setAction(MainActivity.ANSWER)
-                .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
+                .putExtra(REPLY, reply).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP))
             stop()
         }, LinearLayout.LayoutParams((76 * dp).toInt(), (76 * dp).toInt()))
         screen.addView(buttons)
@@ -85,7 +87,7 @@ class IncomingActivity : Activity() {
         ring = player(resourceId("ring_$agent"), loop = true, volume = 0.45f)  // started by sayAgain's first beat
         phrase = player(resourceId("phrase_${agent}_$pick"), loop = false, volume = 1f)
         sayAgain()
-        main.postDelayed({ stop() }, RingService.RING_SECONDS * 1000)
+        main.postDelayed({ Reply.send(reply, "missed"); stop() }, RingService.RING_SECONDS * 1000)
     }
 
     /** The phrase over the ringtone, on the ringtone's beat: it starts with the tone's loop and again on
@@ -150,6 +152,7 @@ class IncomingActivity : Activity() {
     companion object {
         const val AGENT = "agent"
         const val WHY = "why"
+        const val REPLY = "reply"
         const val SAY_GAP = 700L  // ms between the phrase ending and starting again
         val FLAVOURS = setOf("claude", "cursor", "codex", "handsfree")  // henchmen, tones and phrases there are
 

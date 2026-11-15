@@ -95,7 +95,7 @@ class MainActivity : Activity() {
     private fun answer(intent: Intent?) {
         if (intent?.action == ANSWER) {  // Answer on IncomingActivity: the user's own tap, so connect
             intent.action = null
-            call()
+            call(intent.getStringExtra(IncomingActivity.REPLY))
             return
         }
         if (intent?.data?.scheme == "henchline" && intent.data?.host == "call" && CallService.Bus.service == null) {
@@ -128,7 +128,7 @@ class MainActivity : Activity() {
         super.onPause()
     }
 
-    private fun call() {
+    private fun call(reply: String? = null) {
         if (CallService.Bus.service != null) {  // already connecting: one call at a time
             state.text = "Connecting…"
             return
@@ -145,7 +145,7 @@ class MainActivity : Activity() {
         }
         state.text = "Connecting…"
         startForegroundService(Intent(this, CallService::class.java).putExtra(CallService.SERVER, server)
-            .putExtra(CallService.CLEAR, prefs().getBoolean("clear", true)))
+            .putExtra(CallService.CLEAR, prefs().getBoolean("clear", true)).putExtra(IncomingActivity.REPLY, reply))
     }
 
     private fun hangUp() {

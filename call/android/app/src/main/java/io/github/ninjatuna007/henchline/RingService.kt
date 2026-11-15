@@ -32,7 +32,9 @@ class RingService : PushService() {
             JSONObject()
         }
         if (CallService.Bus.service != null) return  // on a call already: the agent is heard there
-        ringNow(this, ring.optString("agent", "handsfree"), ring.optString("why"))
+        val reply = Reply.valid(ring.optString("reply"))
+        Reply.send(reply, "rang")  // it reached the phone
+        ringNow(this, ring.optString("agent", "handsfree"), ring.optString("why"), reply)
     }
 
     override fun onRegistrationFailed(reason: FailedReason, instance: String) {
@@ -57,12 +59,13 @@ class RingService : PushService() {
         }
 
         /** The incoming call: a full-screen screen on a locked phone, a heads-up notification otherwise. */
-        fun ringNow(context: Context, agent: String, why: String) {
+        fun ringNow(context: Context, agent: String, why: String, reply: String? = null) {
             val manager = context.getSystemService(NotificationManager::class.java)
             manager.createNotificationChannel(NotificationChannel(CHANNEL, "Incoming calls", NotificationManager.IMPORTANCE_HIGH)
                 .apply { setSound(null, null) })  // IncomingActivity rings, with the agent's own tone
             val screen = Intent(context, IncomingActivity::class.java)
                 .putExtra(IncomingActivity.AGENT, agent).putExtra(IncomingActivity.WHY, why)
+                .putExtra(IncomingActivity.REPLY, reply)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_NO_USER_ACTION)
             val open = PendingIntent.getActivity(context, 3, screen, PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT)
             val name = IncomingActivity.nameOf(agent)

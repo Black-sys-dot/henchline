@@ -64,6 +64,7 @@ class CallService : Service() {
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var running = false
     @Volatile private var ended = false  // the screen was already told why the call ended
+    private var reply: String? = null  // an answered ring's report-back address: told if the call can't connect
     private val heard = LinkedBlockingDeque<ByteArray>()  // the agents' voices, waiting to be played
     private val audio by lazy { getSystemService(AudioManager::class.java) }
 
@@ -82,6 +83,7 @@ class CallService : Service() {
         }
         if (running) return START_NOT_STICKY  // already calling or connecting
         clear = intent.getBooleanExtra(CLEAR, true)
+        reply = intent.getStringExtra(IncomingActivity.REPLY)
         running = true
         Bus.service = this
         wakeLock = getSystemService(PowerManager::class.java)
@@ -271,6 +273,7 @@ class CallService : Service() {
     private fun fail(why: String) {
         if (ended) return
         ended = true
+        if (!Bus.connected) Reply.send(reply, "unreachable")  // answered, but the laptop is out of reach
         Bus.listener?.invoke(org.json.JSONObject().put("closed", why).toString())
         android.os.Handler(mainLooper).post { stopSelf() }
     }

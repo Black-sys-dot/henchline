@@ -4,7 +4,7 @@
 
 Reads record_phrases.py's takes (~/.local/share/handsfree/phrase-takes/<agent>_<n>.wav), cleans each
 (the room's own sound, learnt from the take's quietest moments, taken out; rumble under 90 Hz cut;
-the silence around it trimmed; its loudest peak set) and makes it henchman-sized: pitch about
+the silence around it trimmed, its own pauses kept; its loudest peak set) and makes it henchman-sized: pitch about
 five semitones up and formants 25 % up, the performer's own timing kept. A performance pitched up
 this way sounded natural where generated voices did not (2026-11-15).
 
@@ -35,15 +35,18 @@ QUIETEST = 0.02  # a take whose loudest moment is under this (full scale 1) is t
 def clean(audio: np.ndarray, rate: int) -> np.ndarray:
     frame = rate // 50
     frames = audio[: len(audio) // frame * frame].reshape(-1, frame)
-    energy = (frames ** 2).mean(1)
-    room = np.concatenate([frames[i] for i in sorted(np.argsort(energy)[:25])])  # its quietest half second
+    room = np.concatenate([frames[i] for i in sorted(np.argsort((frames ** 2).mean(1))[:25])])  # quietest 0.5 s
     audio = noisereduce.reduce_noise(y=audio, sr=rate, y_noise=room, prop_decrease=0.75, stationary=True)
     audio = sosfilt(butter(4, 90, "highpass", fs=rate, output="sos"), audio)
-    level = 10 * np.log10(energy + 1e-12)
-    voiced = np.percentile(level, 90)  # the performance's level, so one click can't set it (it fills >10 %)
-    loud = np.flatnonzero(level > voiced - 18)  # the performance; 30 dB under kept the room (-42 dB) as a tail
-    start, end = max(0, loud[0] * frame - int(EDGE * rate)), min(len(audio), (loud[-1] + 1) * frame + int(EDGE * rate))
-    audio = audio[start:end]
+    # Loudness of the cleaned take: on the raw one the room sat near the voice, and seconds of silence
+    # were kept as part of the phrase (2026-11-15)
+    frames = audio[: len(audio) // frame * frame].reshape(-1, frame)
+    level = 10 * np.log10((frames ** 2).mean(1) + 1e-12)
+    voiced = np.percentile(level, 90)  # the performance's level, so one click can't set it
+    loud = level > voiced - 18
+    keep = np.flatnonzero(loud)
+    first, last = max(0, keep[0] - int(EDGE * 50)), min(len(frames), keep[-1] + 1 + int(EDGE * 50))
+    audio = frames[first:last].reshape(-1)  # the performance as given, pauses and all: only the edges go
     return audio / np.abs(audio).max() * 0.9  # by the loudest peak only: a soft clipper made it sound brittle
 
 

@@ -8,9 +8,12 @@
     handsfree hangup                   end the phone call (call/), once talkback has finished speaking
     handsfree ring [--now] [--no-wait] [WHY]
                                        ring the user's phone (Henchline full-screen, else an ntfy notification
-                                       whose Answer opens Henchline), and wait for the answer: exit 0 answered,
-                                       2 no answer (a missed call with WHY is left in ntfy), 1 not rung.
-                                       The ntfy topic is read from ~/.config/ptt/ntfy-topic
+                                       whose Answer opens Henchline) and wait up to a minute for what happened:
+                                       exit 0 answered, 2 rang but not answered, 3 declined, 4 answered but the
+                                       call couldn't reach the laptop, 5 never reached the phone, 1 not rung.
+                                       Unless answered, a missed call with WHY is left in ntfy (the topic is
+                                       read from ~/.config/ptt/ntfy-topic). --now: past the 2-minute limit,
+                                       for a ring the user asked for. --no-wait: ring and return
 
 The built-in mic runs through the echo canceller (sensing.py). The listener
 (listener.py) records a turn when the user talks after a clip, over a clip,
@@ -21,6 +24,7 @@ how it was heard, into the agent that spoke last.
 from __future__ import annotations
 
 import json
+import secrets
 import signal
 import subprocess
 import sys
@@ -53,8 +57,15 @@ RANG = Path.home() / ".local/state/ptt/call.rang"  # when the user was last rung
 
 def ring(why: str, now: bool = False, wait: bool = True) -> int:
     """An agent wants to talk: the phone rings (Henchline full-screen, or an ntfy notification whose Answer
-    opens Henchline's call). Then it waits for the answer: 0 answered, 2 no answer (a "missed call" with
-    the reason is left in ntfy, so the user sees what it wanted), 1 not rung."""
+    opens Henchline's call), then this waits for what happened. Henchline reports back on a one-time ntfy
+    address carried in the ring (it works off Tailscale too):
+
+        0 answered            2 rang, not answered       3 declined
+        4 answered, but the call couldn't reach the laptop (the phone off Tailscale?)
+        5 never reached the phone (offline?)             1 not rung (refused, or no way to ring)
+
+    Without Henchline's push address (the ntfy notification), nothing reports back: no answer is 2. Unless
+    answered, a "missed call" with the reason is left in ntfy, which the phone shows when it is online."""
     if in_call():
         print("a phone call is up already")
         return 1
@@ -67,37 +78,65 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
         topic = ""
     speaker = last_speaker()
     who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
-    if not (ring_henchline(speaker.agent if speaker else "handsfree", why, who)
-            or topic and ntfy(topic, f"{who} is calling", why or "Tap Answer to talk.",
-                    {"Priority": "high", "Tags": "telephone", "Click": "henchline://call",
-                     "Actions": "view, Answer, henchline://call, clear=true"})):
+    reply = f"henchline-{secrets.token_urlsafe(16)}"  # this ring's own, used once
+    pushed = ring_henchline(speaker.agent if speaker else "handsfree", why, f"{RING_SERVER}/{reply}")
+    if not (pushed or topic and ntfy(topic, f"{who} is calling", why or "Tap Answer to talk.",
+                                     {"Priority": "high", "Tags": "telephone", "Click": "henchline://call",
+                                      "Actions": "view, Answer, henchline://call, clear=true"})):
         print("couldn't ring" + ("" if topic else f": no Henchline push address, and no ntfy topic in {RING_TOPIC}"))
         return 1
+    since = int(time.time()) - 1
     RANG.parent.mkdir(parents=True, exist_ok=True)
     RANG.touch()
     log(HANDSFREE_LOG, f"rang the user ({who})")
     print("rang", flush=True)
     if not wait:
         return 0
+    heard: set[str] = set()
     deadline = time.time() + RING_WAIT
     while time.time() < deadline:
         if in_call():
-            log(HANDSFREE_LOG, f"the user answered {who}'s call")
-            print("answered")
-            return 0
-        time.sleep(1)
-    if topic:
+            return ring_ended(who, "answered", 0)
+        if pushed:
+            heard |= replies(reply, since)
+            if "declined" in heard:
+                return ring_ended(who, "declined", 3, topic, why)
+            if "unreachable" in heard:
+                return ring_ended(who, "answered, but the call couldn't reach the laptop (the phone off Tailscale?)",
+                                  4, topic, why)
+            if "missed" in heard:
+                break
+        time.sleep(2)
+    if pushed and "rang" not in heard and "missed" not in heard:
+        return ring_ended(who, "never reached the phone (offline?)", 5, topic, why)
+    return ring_ended(who, "rang, not answered", 2, topic, why)
+
+
+def ring_ended(who: str, what: str, code: int, topic: str = "", why: str = "") -> int:
+    """Says how the ring went (and logs it); unless answered, leaves a missed call in ntfy."""
+    if code and topic:
         ntfy(topic, f"Missed call from {who}", why or "They wanted to talk.", {"Tags": "telephone_receiver"})
-    log(HANDSFREE_LOG, f"no answer to {who}'s call: left a missed call")
-    print("no answer (a missed call was left in ntfy)")
-    return 2
+    log(HANDSFREE_LOG, f"{who}'s call: {what}")
+    print(what + (" (a missed call was left in ntfy)" if code and topic else ""))
+    return code
 
 
-def ring_henchline(agent: str, why: str, who: str) -> bool:
-    """Henchline's own push address, if it gave one: a full-screen call with the agent's henchman and tone."""
+def replies(reply: str, since: int) -> set[str]:
+    """What Henchline has posted to this ring's reply address so far: rang, declined, missed, unreachable."""
+    try:
+        with urllib.request.urlopen(f"{RING_SERVER}/{reply}/json?poll=1&since={since}", timeout=10) as answer:
+            events = [json.loads(line) for line in answer.read().decode().splitlines() if line.strip()]
+    except (OSError, ValueError):
+        return set()
+    return {e.get("message", "").strip() for e in events if e.get("event") == "message"}
+
+
+def ring_henchline(agent: str, why: str, reply: str) -> bool:
+    """Henchline's own push address, if it gave one: a full-screen call with the agent's henchman and tone,
+    which posts what happens to it (rang, declined, missed, unreachable) to `reply`."""
     if not CALL_RING.exists():
         return False
-    body = json.dumps({"agent": agent, "why": why}).encode()
+    body = json.dumps({"agent": agent, "why": why, "reply": reply}).encode()
     try:
         urllib.request.urlopen(urllib.request.Request(CALL_RING.read_text().strip(), data=body,
                                                       headers={"Content-Type": "application/json"}),
