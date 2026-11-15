@@ -39,8 +39,6 @@ class IncomingActivity : Activity() {
         why = intent.getStringExtra(WHY) ?: ""
         reply = intent.getStringExtra(REPLY)
         phrase = intent.getIntExtra(PHRASE, 0)
-        // This screen rings now: the notification stays, silent, for Answer and Decline and to come back to
-        RingService.ringNow(this, agent, why, reply, quiet = true, seconds = maxOf(1, Ringing.secondsLeft(this)), phrase = phrase)
         val lines = phrasesOf(agent)
 
         val dp = resources.displayMetrics.density
@@ -96,6 +94,16 @@ class IncomingActivity : Activity() {
         // never differ (2026-11-15: they said different phrases)
         ring = player(listOf("banner_${agent}_$phrase", "banner_$agent", "ring_$agent").map { resourceId(it) }.firstOrNull { it != 0 } ?: 0, loop = true,
             volume = loudness())
+        // Carry on where the banner's sound is, not from the start (the user's wish, 2026-11-15): it began when the
+        // ring did and loops, so the place is the time since then, round the file's length
+        ring?.let { sound ->
+            val started = (Ringing.now(this)?.optLong("until") ?: 0) - RingService.RING_SECONDS * 1000
+            val into = System.currentTimeMillis() - started + LATENCY
+            if (started > 0 && into > 0 && sound.duration > 0) sound.seekTo((into % sound.duration).toInt())
+        }
+        // This screen rings now: the notification stays, silent, for Answer and Decline and to come back to (after
+        // the screen's sound has started, so the banner's stops into it rather than before it)
+        RingService.ringNow(this, agent, why, reply, quiet = true, seconds = maxOf(1, Ringing.secondsLeft(this)), phrase = phrase)
         main.postDelayed({ tell("missed"); Ringing.end(this); stop() }, maxOf(1, Ringing.secondsLeft(this)) * 1000)
     }
 
@@ -192,6 +200,7 @@ class IncomingActivity : Activity() {
         const val WHY = "why"
         const val REPLY = "reply"
         const val PHRASE = "phrase"
+        const val LATENCY = 150L  // ms the banner's sound runs ahead of the post time (the system starting it)
         const val SAY_GAP = 700L  // ms between the phrase ending and starting again
         val FLAVOURS = setOf("claude", "cursor", "codex", "handsfree")  // henchmen, tones and phrases there are
 
