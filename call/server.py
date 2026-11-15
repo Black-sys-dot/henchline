@@ -93,7 +93,7 @@ class Status:
             self.clip = playing.clip
             lines.append({"chat": {"from": playing.agent.capitalize(), "text": playing.text,
                                    "session": playing.session}})
-        for line in sorted(CALL_MIRROR.glob("*.json")):  # typed in the terminal, or written there (call/hooks/mirror.py)
+        for line in sorted(CALL_MIRROR.glob("*.json")):  # typed in the terminal (call/hooks)
             mirrored = read_json(line)
             line.unlink(missing_ok=True)
             if mirrored.get("text"):
@@ -415,6 +415,15 @@ async def texted(request: web.Request) -> web.Response:
     return web.json_response({"to": got} if got else {"note": why})
 
 
+async def crew(request: web.Request) -> web.Response:
+    """Henchline's pull-to-refresh: every agent running is looked for and registered, then the crew is listed as
+    on a call ({"agents": [{session, name}], "current": session})."""
+    trusted(request)
+    loop = asyncio.get_running_loop()
+    await loop.run_in_executor(None, routing.discover_all)
+    return web.json_response(await loop.run_in_executor(None, agents))
+
+
 async def sent_file(request: web.Request) -> web.StreamResponse:
     """A file an agent sent (`handsfree send`): only its secret folder name finds it."""
     path = files.find(request.match_info["secret"], request.match_info["name"])
@@ -565,6 +574,7 @@ def main() -> int:
     app.router.add_post("/share/file", share_file)
     app.router.add_post("/share/tell", share_tell)
     app.router.add_post("/text", texted)
+    app.router.add_get("/crew", crew)
     app.router.add_get("/files/{secret}/{name}", sent_file)
     proxied = False
     if args.host in ("serve", "tailscale"):

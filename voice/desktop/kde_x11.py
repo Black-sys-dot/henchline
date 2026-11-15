@@ -39,10 +39,13 @@ class Konsole(AnyTerminal):
         found = []
         services = qdbus().split()
         for service in (s for s in services if s.startswith("org.kde.konsole")):
+            # Named as Konsole names itself to its tabs (KONSOLE_DBUS_SERVICE is the unique ":1.n" name), so a tab
+            # found here is the same Tab an agent in it records for itself
+            owner = qdbus("org.freedesktop.DBus", "/", "org.freedesktop.DBus.GetNameOwner", service) or service
             for session in (s for s in qdbus(service).split() if s.startswith("/Sessions/")):
                 foreground = qdbus(service, session, "foregroundProcessId")
                 if foreground.isdigit() and (p := process(int(foreground))) and p.agent:
-                    found.append((Tab(service, session), int(foreground)))
+                    found.append((Tab(owner, session), int(foreground)))
         return found
 
     def tab_of_caller(self) -> Tab:

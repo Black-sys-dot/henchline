@@ -46,6 +46,6 @@ android {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("androidx.drawerlayout:drawerlayout:1.2.0")  // the crew and settings drawer
+    implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")  // pull down the chat list to find every agent
     implementation("org.unifiedpush.android:connector:3.0.10")  // rung awake through the ntfy app, no Google
 }

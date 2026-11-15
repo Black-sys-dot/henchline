@@ -1,16 +1,74 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The call screen, and a drawer from the left (☰) with the crew and the settings -->
-<androidx.drawerlayout.widget.DrawerLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/drawer"
+<!-- Three screens, one shown at a time: the chat list (home), a chat, and settings. WhatsApp's way: the list,
+     then into a chat and back; your avatar on the list opens settings -->
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/screens"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/navy"
     android:fitsSystemWindows="true">
 
+    <!-- The chat list: your crew, newest first; pull down to look for every agent running -->
     <LinearLayout
+        android:id="@+id/listScreen"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
+        android:background="@color/navy"
         android:orientation="vertical">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="20dp"
+            android:paddingVertical="14dp">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Henchline"
+                android:textColor="@color/text"
+                android:textSize="26sp"
+                android:textStyle="bold" />
+
+            <ImageButton
+                android:id="@+id/profile"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="You: profile and settings"
+                android:scaleType="fitCenter"
+                android:src="@drawable/avatar_you" />
+        </LinearLayout>
+
+        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+            android:id="@+id/refresh"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent">
+
+            <ScrollView
+                android:layout_width="match_parent"
+                android:layout_height="match_parent">
+
+                <LinearLayout
+                    android:id="@+id/crew"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical" />
+            </ScrollView>
+        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+    </LinearLayout>
+
+    <!-- A chat -->
+    <LinearLayout
+        android:id="@+id/chatScreen"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@color/navy"
+        android:orientation="vertical"
+        android:visibility="gone">
 
         <!-- Who you are talking to: their henchman, their name, what is happening; and the call button -->
         <LinearLayout
@@ -26,8 +84,8 @@
                 android:layout_width="48dp"
                 android:layout_height="48dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Your crew and settings"
-                android:src="@drawable/ic_menu"
+                android:contentDescription="Back to your chats"
+                android:src="@drawable/ic_back"
                 android:tint="@color/text" />
 
             <ImageView
@@ -134,6 +192,22 @@
             android:textColor="#FFFFFF"
             android:textStyle="bold" />
 
+        <!-- Replying to a message (swipe it right): shown above the box, sent with the answer -->
+        <TextView
+            android:id="@+id/quote"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginHorizontal="12dp"
+            android:layout_marginBottom="6dp"
+            android:background="@drawable/pill"
+            android:ellipsize="end"
+            android:maxLines="2"
+            android:paddingHorizontal="16dp"
+            android:paddingVertical="8dp"
+            android:textColor="@color/muted"
+            android:textSize="13sp"
+            android:visibility="gone" />
+
         <LinearLayout
             android:id="@+id/inputRow"
             android:layout_width="match_parent"
@@ -183,15 +257,15 @@
         </LinearLayout>
     </LinearLayout>
 
-    <!-- The drawer: the crew, then the settings as single rows -->
+    <!-- Settings: you, the sound, the laptop's address, Do Not Disturb -->
     <LinearLayout
-        android:id="@+id/panel"
-        android:layout_width="300dp"
+        android:id="@+id/settingsScreen"
+        android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:layout_gravity="start"
-        android:background="@color/surface"
+        android:background="@color/navy"
         android:orientation="vertical"
-        android:padding="16dp">
+        android:padding="16dp"
+        android:visibility="gone">
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -200,42 +274,63 @@
             android:orientation="horizontal"
             android:paddingBottom="20dp">
 
-            <ImageView
+            <ImageButton
+                android:id="@+id/settingsBack"
                 android:layout_width="48dp"
                 android:layout_height="48dp"
-                android:importantForAccessibility="no"
-                android:src="@mipmap/ic_launcher" />
+                android:background="?android:attr/selectableItemBackgroundBorderless"
+                android:contentDescription="Back to your chats"
+                android:src="@drawable/ic_back"
+                android:tint="@color/text" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:layout_marginStart="12dp"
-                android:text="Henchline"
+                android:layout_marginStart="8dp"
+                android:text="Settings"
                 android:textColor="@color/text"
                 android:textSize="22sp"
                 android:textStyle="bold" />
         </LinearLayout>
 
-        <TextView
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:paddingBottom="6dp"
-            android:text="YOUR CREW"
-            android:textColor="@color/muted"
-            android:textSize="12sp"
-            android:textStyle="bold" />
-
-        <ScrollView
+        <!-- You: the boss -->
+        <LinearLayout
             android:layout_width="match_parent"
-            android:layout_height="0dp"
-            android:layout_weight="1">
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingBottom="24dp">
+
+            <ImageView
+                android:layout_width="72dp"
+                android:layout_height="72dp"
+                android:importantForAccessibility="no"
+                android:src="@drawable/avatar_you" />
 
             <LinearLayout
-                android:id="@+id/crew"
-                android:layout_width="match_parent"
+                android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:orientation="vertical" />
-        </ScrollView>
+                android:layout_marginStart="16dp"
+                android:orientation="vertical">
+
+                <TextView
+                    android:id="@+id/myName"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:background="?android:attr/selectableItemBackground"
+                    android:text="Boss"
+                    android:textColor="@color/text"
+                    android:textSize="20sp"
+                    android:textStyle="bold" />
+
+                <TextView
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:text="Tap your name to change it"
+                    android:textColor="@color/muted"
+                    android:textSize="13sp" />
+            </LinearLayout>
+        </LinearLayout>
 
         <LinearLayout
             android:id="@+id/soundRow"
@@ -295,4 +390,4 @@
                 android:textSize="16sp" />
         </LinearLayout>
     </LinearLayout>
-</androidx.drawerlayout.widget.DrawerLayout>
+</FrameLayout>

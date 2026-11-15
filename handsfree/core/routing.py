@@ -143,13 +143,37 @@ def discover(agent: str, where: str | None) -> list[Speaker]:
                 pass
         _, key = identity(agent, session or str(folder))
         found.append(Speaker(key, agent, "home" if folder == Path.home() else folder.name, tab))
-    if agent == "cursor" and where:  # the editor: its window title ends "<workspace> - Cursor"
+    if agent == "cursor":  # the editor: its window title ends "<workspace> - Cursor"
         for window in desktop().windows("cursor"):
             name = window.title.removesuffix(" - Cursor").rsplit(" - ", 1)[-1]
-            if name and (squash(where) in squash(name) or squash(name) in squash(where)):
+            if name and (not where or squash(where) in squash(name) or squash(name) in squash(where)):
                 found.append(Speaker(identity("cursor", f"/{name}")[1], "cursor", name))
-                break
+                if where:
+                    break
     return found
+
+
+def discover_all() -> int:
+    """Every agent running that the crew doesn't know yet, found and registered (Henchline's pull-to-refresh):
+    how many were new. One already known in that tab (or that Cursor window) isn't added again."""
+    known = recent_speakers()
+    new = 0
+    for agent in SPOKEN_TO:
+        for found in discover(agent, None):
+            def same(k: Speaker) -> bool:
+                if k.agent != found.agent:
+                    return False
+                if found.tab and k.tab:
+                    return k.tab == found.tab
+                return k.where == found.where  # a record without its tab: the same folder is the same agent
+            if any(same(k) for k in known):
+                continue
+            found.save(SPEAKERS / f"{found.session}.json")
+            known.append(found)
+            new += 1
+    if new:
+        log(HANDSFREE_LOG, f"found {new} agent(s) running, not yet heard: registered")
+    return new
 
 
 def switch_to(speaker: Speaker) -> None:

@@ -22,7 +22,7 @@ import android.widget.LinearLayout
 import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
-import androidx.drawerlayout.widget.DrawerLayout
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import org.json.JSONObject
 
 /**
@@ -32,7 +32,12 @@ import org.json.JSONObject
  */
 class MainActivity : Activity() {
 
-    private lateinit var drawer: DrawerLayout
+    private lateinit var listScreen: View
+    private lateinit var chatScreen: View
+    private lateinit var settingsScreen: View
+    private lateinit var refresh: SwipeRefreshLayout
+    private lateinit var quoteBar: TextView
+    private var quote = ""  // the message being replied to (swiped right), sent along with the answer
     private lateinit var callButton: ImageButton
     private lateinit var talk: Button
     private lateinit var who: TextView
@@ -57,7 +62,21 @@ class MainActivity : Activity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         setContentView(R.layout.main)
-        drawer = findViewById(R.id.drawer)
+        listScreen = findViewById(R.id.listScreen)
+        chatScreen = findViewById(R.id.chatScreen)
+        settingsScreen = findViewById(R.id.settingsScreen)
+        refresh = findViewById(R.id.refresh)
+        quoteBar = findViewById(R.id.quote)
+        refresh.setColorSchemeColors(getColor(R.color.cyan))
+        refresh.setProgressBackgroundColorSchemeColor(getColor(R.color.surface))
+        refresh.setOnRefreshListener { findCrew() }
+        quoteBar.setOnClickListener { setQuote("") }  // tap it to stop replying
+        findViewById<View>(R.id.profile).setOnClickListener { show(settingsScreen) }
+        findViewById<View>(R.id.settingsBack).setOnClickListener { show(listScreen) }
+        findViewById<TextView>(R.id.myName).apply {
+            text = prefs().getString("my_name", "Boss")
+            setOnClickListener { askName(this) }
+        }
         callButton = findViewById(R.id.call)
         talk = findViewById(R.id.talk)
         who = findViewById(R.id.who)
@@ -78,7 +97,7 @@ class MainActivity : Activity() {
         } catch (_: Exception) { emptyMap() }
         showCrew()
 
-        findViewById<ImageButton>(R.id.menu).setOnClickListener { drawer.openDrawer(Gravity.START) }
+        findViewById<ImageButton>(R.id.menu).setOnClickListener { show(listScreen) }
         callButton.setOnClickListener { if (CallService.Bus.connected) hangUp() else call() }
         findViewById<View>(R.id.serverRow).setOnClickListener { askServer { } }
         showClear(prefs().getBoolean("clear", true))
@@ -89,6 +108,7 @@ class MainActivity : Activity() {
         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.BLUETOOTH_CONNECT), 1)
         showHistory()
+        show(if (CallService.Bus.connected) chatScreen else listScreen)  // home: the chat list
         RingService.register(this)  // so agents can ring this phone
         askFullScreen()
         DoNotDisturb.ask(this)
@@ -170,9 +190,27 @@ class MainActivity : Activity() {
 
     private var sheet: Sheet? = null  // the paperclip's share sheet, while it is up
 
+    /** A swipe in from the left edge of a chat goes back to the list, as the old drawer's swipe did. */
+    private var edgeStart = -1f
+
+    override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        if (chatScreen.visibility == View.VISIBLE && sheet?.isOpen != true) when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> edgeStart = if (event.x < dp(24)) event.x else -1f
+            MotionEvent.ACTION_UP -> {
+                if (edgeStart >= 0 && event.x - edgeStart > dp(100)) { edgeStart = -1f; show(listScreen); return true }
+                edgeStart = -1f
+            }
+        }
+        return super.dispatchTouchEvent(event)
+    }
+
     @Deprecated("the platform Activity's back handling, kept for Android 10-12")
     override fun onBackPressed() {
-        if (sheet?.isOpen == true) sheet?.close() else super.onBackPressed()  // back closes the sheet, not the app
+        when {  // back closes the sheet, then a chat or settings (to the list); only the list leaves the app
+            sheet?.isOpen == true -> sheet?.close()
+            listScreen.visibility != View.VISIBLE -> show(listScreen)
+            else -> super.onBackPressed()
+        }
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -271,6 +309,7 @@ class MainActivity : Activity() {
             return
         }
         state.text = "Connecting…"
+        show(chatScreen)
         startForegroundService(Intent(this, CallService::class.java).putExtra(CallService.SERVER, server)
             .putExtra(CallService.CLEAR, prefs().getBoolean("clear", true)).putExtra(IncomingActivity.REPLY, reply))
     }
@@ -372,42 +411,47 @@ class MainActivity : Activity() {
         showCrew()
     }
 
-    /** The drawer's crew list and the top bar: each agent's henchman and name, the current one marked. */
+    /** The chat list (the home screen): each agent with its henchman, its name and workspace, its last line and
+     *  when, newest first; the one you're talking to marked. Tap one to open its chat. */
     private fun showCrew() {
         crew.removeAllViews()
         if (names.isEmpty()) {
             crew.addView(TextView(this).apply {
-                text = if (CallService.Bus.connected) "Nobody has spoken lately." else "Call once to meet your crew."
+                text = "No crew yet. Pull down to look for agents running on your computer, or call once."
                 setTextColor(getColor(R.color.muted))
-                setPadding(0, 12, 0, 12)
+                setPadding(dp(20), dp(24), dp(20), dp(24))
             })
         }
-        for ((session, name) in names) {
+        val lasts = names.keys.associateWith { Chats.load(this, it).lastOrNull() }
+        for ((session, name) in names.entries.sortedByDescending { lasts[it.key]?.optLong("at") ?: 0 }.map { it.key to it.value }) {
+            val last = lasts[session]
             val row = LinearLayout(this).apply {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
-                setPadding(12, 12, 12, 12)
-                if (session == current) setBackgroundResource(R.drawable.row_current)
-                setOnClickListener {
-                    if (session != current) {
-                        if (CallService.Bus.connected) CallService.Bus.service?.send(JSONObject().put("switch", session).toString())
-                        else {  // off a call: that agent's chat, and texts go to it
-                            current = session
-                            prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
-                            showHistory()
-                            showCrew()
-                        }
-                    }
-                    drawer.closeDrawer(Gravity.START)
-                }
+                setPadding(dp(20), dp(12), dp(20), dp(12))
+                background = getDrawable(if (session == current) R.drawable.row_current else android.R.color.transparent)
+                setOnClickListener { open(session) }
             }
-            row.addView(ImageView(this).apply { setImageResource(avatarOf(session)) }, LinearLayout.LayoutParams(dp(40), dp(40)))
-            row.addView(TextView(this).apply {
-                text = name
-                setTextColor(getColor(R.color.text))
-                textSize = 15f
-                setPadding(dp(14), 0, 0, 0)
+            row.addView(ImageView(this).apply { setImageResource(avatarOf(session)) }, LinearLayout.LayoutParams(dp(52), dp(52)))
+            val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
+            val top = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL }
+            top.addView(TextView(this).apply {
+                text = name.substringBefore(",")
+                setTextColor(getColor(R.color.text)); textSize = 17f; typeface = android.graphics.Typeface.DEFAULT_BOLD
+            }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            top.addView(TextView(this).apply {
+                text = last?.optLong("at")?.takeIf { it > 0 }?.let { android.text.format.DateUtils.getRelativeTimeSpanString(it).toString() } ?: ""
+                setTextColor(getColor(R.color.muted)); textSize = 12f
             })
+            words.addView(top)
+            words.addView(TextView(this).apply {
+                val workspace = name.substringAfter(", ", "").removePrefix("in ")
+                val line = last?.let { (if (it.optBoolean("mine")) "You: " else "") + it.optString("text").ifEmpty { "📎 file" } } ?: ""
+                text = listOf(workspace, line).filter { it.isNotEmpty() }.joinToString(" · ")
+                setTextColor(getColor(R.color.muted)); textSize = 14f; maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+            row.addView(words, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
             crew.addView(row)
         }
         val name = names[current] ?: prefs().getString("current_name", "")?.ifEmpty { null }.takeIf { current.isNotEmpty() }
@@ -445,8 +489,11 @@ class MainActivity : Activity() {
     }
 
     private fun sendTyped() {
-        val words = text.text.toString().trim()
-        if (words.isEmpty()) return
+        val entered = text.text.toString().trim()
+        if (entered.isEmpty()) return
+        // Replying to a message: it goes along, on the same line (a newline would send early in a terminal)
+        val words = if (quote.isEmpty()) entered else "(replying to: \"${quote.replace("\n", " ").take(160)}\") $entered"
+        setQuote("")
         if (!CallService.Bus.connected) {  // off a call: a text, to the agent whose chat this is
             if (current.isEmpty()) return
             val bubble = say("you", words, mine = true, session = current)
@@ -555,6 +602,7 @@ class MainActivity : Activity() {
             row.addView(ImageView(this).apply { setImageResource(avatarOf(session.ifEmpty { from })) },
                 LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) })
         }
+        if (!note) swipeToReply(row, words)
         row.addView(bubble, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT).apply { if (!note) width = LinearLayout.LayoutParams.WRAP_CONTENT })
         if (mine && !note) {  // you: the boss the crew works for
@@ -569,6 +617,90 @@ class MainActivity : Activity() {
     }
 
     private fun dp(value: Int) = (value * resources.displayMetrics.density).toInt()
+
+    /** One screen at a time: the chat list, a chat, or settings. */
+    private fun show(screen: View) {
+        for (s in listOf(listScreen, chatScreen, settingsScreen)) s.visibility = if (s === screen) View.VISIBLE else View.GONE
+        if (screen === listScreen) showCrew()
+    }
+
+    /** Into an agent's chat from the list: on a call the laptop switches to it (and says so); off one, its chat
+     *  is shown and texts go to it. */
+    private fun open(session: String) {
+        if (session != current) {
+            if (CallService.Bus.connected) CallService.Bus.service?.send(JSONObject().put("switch", session).toString())
+            else {
+                current = session
+                prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
+                showHistory()
+            }
+        }
+        showCrew()
+        show(chatScreen)
+    }
+
+    /** Pull down on the list: the laptop looks for every agent running (as "switch me to" does) and lists them. */
+    private fun findCrew() {
+        val origin = Files.origin(this) ?: run { refresh.isRefreshing = false; return say("", "Set the laptop's address in Settings first.", note = true).let {} }
+        Thread {
+            val found = try {
+                Files.client.newCall(okhttp3.Request.Builder().url("$origin/crew").header("Origin", origin).build())
+                    .execute().use { org.json.JSONObject(it.body?.string() ?: "{}").optJSONArray("agents") }
+            } catch (_: Exception) { null }
+            main.post {
+                refresh.isRefreshing = false
+                if (found == null) {
+                    android.widget.Toast.makeText(this, "Couldn't reach the laptop (is Tailscale on?)", android.widget.Toast.LENGTH_SHORT).show()
+                    return@post
+                }
+                names = (0 until found.length()).associate { found.getJSONObject(it).getString("session") to found.getJSONObject(it).getString("name") }
+                prefs().edit().putString("crew", found.toString()).apply()
+                showCrew()
+            }
+        }.start()
+    }
+
+    /** Replying to a message: shown above the box until sent, or tapped away. */
+    private fun setQuote(words: String) {
+        quote = words
+        quoteBar.text = "↩ " + words
+        quoteBar.visibility = if (words.isEmpty()) View.GONE else View.VISIBLE
+        if (words.isNotEmpty()) text.requestFocus()
+    }
+
+    /** A message dragged to the right far enough is the one being replied to, as in WhatsApp. */
+    private fun swipeToReply(row: View, words: String) {
+        var startX = 0f
+        var dragging = false
+        row.setOnTouchListener { view, event ->
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { startX = event.rawX; dragging = false; false }
+                MotionEvent.ACTION_MOVE -> {
+                    val dx = event.rawX - startX
+                    if (dx > dp(12)) { dragging = true; view.parent.requestDisallowInterceptTouchEvent(true) }
+                    if (dragging) view.translationX = dx.coerceIn(0f, dp(96).toFloat())
+                    dragging
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (dragging && view.translationX >= dp(72)) setQuote(words)
+                    view.animate().translationX(0f).setDuration(150).start()
+                    dragging.also { dragging = false }
+                }
+                else -> false
+            }
+        }
+    }
+
+    private fun askName(view: TextView) {
+        val box = EditText(this).apply { setText(view.text) }
+        AlertDialog.Builder(this).setTitle("Your name").setView(LinearLayout(this).apply { setPadding(48, 16, 48, 0); addView(box) })
+            .setPositiveButton("Save") { _, _ ->
+                val name = box.text.toString().trim().ifEmpty { "Boss" }
+                prefs().edit().putString("my_name", name).apply()
+                view.text = name
+            }
+            .setNegativeButton("Cancel", null).show()
+    }
 
     /** The current agent's kept chat, from the start: on opening the app, and on switching agents. */
     private fun showHistory() {
