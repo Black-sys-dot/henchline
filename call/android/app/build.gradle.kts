@@ -25,4 +25,5 @@ android {
 
 dependencies {
     implementation("com.squareup.okhttp3:okhttp:4.12.0")
+    implementation("androidx.drawerlayout:drawerlayout:1.2.0")  // the crew and settings drawer
 }
