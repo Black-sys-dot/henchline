@@ -116,6 +116,12 @@ class Sheet(
         send.setPadding(px(24), 0, px(24), 0)
         send.setOnClickListener {
             activity.startForegroundService(UploadService.intent(activity, uris, names, text, note.text.toString(), picked))
+            // In that agent's chat too, as the paperclip's are (2026-11-15: a share reached the agent but never
+            // showed in the app's chat)
+            val what = if (uris.isEmpty()) text.take(300) else names.joinToString("\n") { "📎 $it" }
+            val said = note.text.toString().trim()
+            Chats.add(activity, picked, org.json.JSONObject().put("from", "you").put("mine", true)
+                .put("text", if (said.isEmpty()) what else "$what\n$said"))
             close()
         }
         sheet.addView(buttons, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
