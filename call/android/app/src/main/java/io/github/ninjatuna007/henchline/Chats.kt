@@ -30,9 +30,19 @@ object Chats {
                 trimmed.renameTo(chat)
             }
             // Chats of agent sessions untouched for PRUNE_DAYS go
-            chat.parentFile?.listFiles()?.filter { System.currentTimeMillis() - it.lastModified() > PRUNE_DAYS * 86_400_000L }
+            chat.parentFile?.listFiles()?.filter { it.isFile && System.currentTimeMillis() - it.lastModified() > PRUNE_DAYS * 86_400_000L }
                 ?.forEach { it.delete() }
+            sweep(context)
         }
+    }
+
+    /** Pictures' small copies that no kept line names any more (trimmed away, or its chat pruned) go too. */
+    private fun sweep(context: Context) {
+        val folder = File(context.filesDir, "chats")
+        val named = folder.listFiles { f -> f.isFile && f.name.endsWith(".jsonl") }.orEmpty()
+            .flatMap { it.readLines() }.mapNotNull { try { JSONObject(it).optString("thumb").ifEmpty { null } } catch (_: Exception) { null } }
+            .toSet()
+        File(folder, "thumbs").listFiles()?.filter { it.path !in named }?.forEach { it.delete() }
     }
 
     @Synchronized

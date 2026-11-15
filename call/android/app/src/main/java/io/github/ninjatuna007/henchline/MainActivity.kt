@@ -129,21 +129,42 @@ class MainActivity : Activity() {
 
     /** What you attached, on your side of the chat: a picture small, anything else its name. */
     private fun attachedCard(uri: android.net.Uri, name: String) {
-        val thumb = Files.keepThumb(this, uri)
-        val line = JSONObject().put("from", "you").put("mine", true).put("text", "📎 $name")
-        thumb?.let { line.put("thumb", it) }
-        Chats.add(this, current, line)
-        if (thumb != null) picture(thumb, "📎 $name", current) else say("you", "📎 $name", mine = true, session = current, keep = false)
+        val session = current
+        Thread {  // the small copy off the main thread; the line once it's there
+            val thumb = Files.keepThumb(this, uri)
+            val line = JSONObject().put("from", "you").put("mine", true).put("text", "📎 $name")
+            thumb?.let { line.put("thumb", it) }
+            Chats.add(this, session, line)
+            main.post {
+                if (thumb != null) picture(thumb, "📎 $name", session)
+                else say("you", "📎 $name", mine = true, session = session, keep = false)
+            }
+        }.start()
     }
 
     /** A picture you sent, from its small copy: shown on your side of the chat, its name under it. */
     private fun picture(thumb: String, caption: String, session: String) {
         val bubble = say("you", caption, mine = true, session = session, keep = false)
-        val bitmap = android.graphics.BitmapFactory.decodeFile(thumb) ?: return
         val width = dp(220)
-        val shown = android.graphics.Bitmap.createScaledBitmap(bitmap, width, bitmap.height * width / bitmap.width, true)
-        bubble.setCompoundDrawablesWithIntrinsicBounds(null, android.graphics.drawable.BitmapDrawable(resources, shown), null, null)
-        bubble.compoundDrawablePadding = dp(8)
+        Thread {  // decoded small and off the main thread: a chat may hold many pictures
+            val shown = try {
+                val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+                android.graphics.BitmapFactory.decodeFile(thumb, bounds)
+                var sample = 1
+                while (bounds.outWidth / (sample * 2) >= width) sample *= 2
+                val bitmap = android.graphics.BitmapFactory.decodeFile(thumb,
+                    android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+                bitmap?.let {
+                    android.graphics.Bitmap.createScaledBitmap(it, width, (it.height * width / it.width.coerceAtLeast(1)).coerceAtLeast(1), true)
+                }
+            } catch (_: Exception) {
+                null
+            } ?: return@Thread
+            main.post {
+                bubble.setCompoundDrawablesWithIntrinsicBounds(null, android.graphics.drawable.BitmapDrawable(resources, shown), null, null)
+                bubble.compoundDrawablePadding = dp(8)
+            }
+        }.start()
     }
 
     override fun onNewIntent(intent: Intent) {
