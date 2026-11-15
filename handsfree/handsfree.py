@@ -132,8 +132,18 @@ def caller() -> Speaker | None:
     """The agent running `handsfree ring`: its henchman, its name, and where the call goes. Not whoever
     spoke last (a Cursor ring was announced and answered as Claude, 2026-11-15)."""
     agent, session = identity()
-    # Never heard through talkback: its name and henchman still, though hands-free can't type to it yet
-    return Speaker.load(SPEAKERS / f"{session}.json") or (Speaker(session, agent) if agent != "agent" else None)
+    known = Speaker.load(SPEAKERS / f"{session}.json")
+    if known or agent == "agent":
+        return known
+    # Never heard through talkback: found now, as talkback would (its workspace, its terminal tab), and kept, so an
+    # answered ring can be put through to it (a Cursor ring was routed to Claude, 2026-11-15). Not made the one
+    # spoken words go to: that is still whoever spoke last, until the ring is answered
+    from voice.agents import agent_folder
+    from voice.desktop import current as desktop
+    folder = agent_folder()
+    speaker = Speaker(session, agent, "home" if folder == Path.home() else folder.name, desktop().terminals.tab_of_caller())
+    speaker.save(SPEAKERS / f"{session}.json")
+    return speaker
 
 
 def ring_ended(who: str, what: str, code: int, topic: str = "", why: str = "") -> int:

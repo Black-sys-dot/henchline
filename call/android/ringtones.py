@@ -62,6 +62,12 @@ def note(name: str) -> float:
 
 
 def ringtone(agent: str) -> np.ndarray:
+    """Every henchman rings with the same warm marimba now: the user found Cursor's blips sharp (2026-11-15), and
+    the phrases tell the henchmen apart. The others' tones are kept below, unused, should one come back."""
+    return tone_of("claude")
+
+
+def tone_of(agent: str) -> np.ndarray:
     if agent == "claude":  # warm: a marimba climbing a major seventh, twice
         bar = [tone(note(n), 0.18, "marimba", 6) for n in ("C5", "E5", "G5", "B5")]
         phrase = np.concatenate(bar + [tone(note("C6"), 0.5, "marimba", 4)])
