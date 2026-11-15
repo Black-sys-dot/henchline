@@ -774,6 +774,7 @@ class MainActivity : Activity() {
         // A chat opens at its newest message, as a messaging app's does (it opened at the oldest, 2026-11-16)
         if (screen === chatScreen) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
         Messages.viewing = if (screen === chatScreen) current else ""
+        if (screen !== chatScreen) { sentBubbles.clear(); myBubbles.clear() }  // only bubbles on screen are kept
     }
 
     /** Into an agent's chat from the list: on a call the laptop switches to it (and says so); off one, its chat
@@ -878,9 +879,14 @@ class MainActivity : Activity() {
             val file = line.optJSONObject("file")
             if (file != null) fileCard(line.optString("from"), file, current, keep = false)
             else if (line.has("thumb")) picture(line.getString("thumb"), line.optString("text"), current)
-            else say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"), session = current, keep = false,
-                status = line.optString("status").ifEmpty {  // from before ticks: answered since means read
-                    if (!line.optBoolean("mine")) "" else if (i < lastAgent) "read" else "delivered" })
+            else {
+                val bubble = say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"),
+                    session = current, keep = false,
+                    status = line.optString("status").ifEmpty {  // from before ticks: answered since means read
+                        if (!line.optBoolean("mine")) "" else if (i < lastAgent) "read" else "delivered" })
+                // Yours, by id: a delivered reply arriving later changes this bubble, the one on screen
+                if (line.optBoolean("mine") && line.has("id")) sentBubbles[line.getString("id")] = bubble to line.optString("text")
+            }
         }
         if (!CallService.Bus.connected) showConnected(false)  // off a call: the chat if there is one, else the henchman
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
