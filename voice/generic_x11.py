@@ -17,7 +17,6 @@ from voice.agents import SHELLS, ancestors, comm, process, terminal_foreground
 from voice.desktop import Desktop, Tab, Terminals, Window
 
 
-
 def tty_of(pid: int) -> str:
     """The terminal device a process runs on, e.g. /dev/pts/3; "" if none."""
     try:
