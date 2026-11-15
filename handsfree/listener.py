@@ -21,7 +21,7 @@ from faster_whisper.vad import VadOptions, get_speech_timestamps
 
 import routing
 from routing import Heard, Meaning
-from sensing import (EC_SOURCE, LEVEL_SPAN, PER_SECOND, RATE, EarbudButton, EchoWatch, Output, Playback, Wake,
+from sensing import (EC_SOURCE, FRAME, LEVEL_SPAN, PER_SECOND, RATE, EarbudButton, EchoWatch, Output, Playback, Wake,
                      level, mic_stream, read_frame, start_canceller, voiced)
 from voice import whisper
 from voice.spool import queued
@@ -50,6 +50,10 @@ OVER_TAIL = 4 * PER_SECOND  # frames Whisper looks at for "over"
 PTT_CHECK = 10  # frames between checks that push-to-talk has not taken the mic
 PREROLL = 15  # frames kept from before speech started
 MAX_SECONDS = 120  # the user talks in long stretches; 60 s cut them off
+SUSTAIN = 0.8  # seconds of voice, added up, before talking over stops a clip (1.2 s took the user ~7 s from the hallway)
+GAP = 1.5  # seconds without a voice that end a talk-over attempt: the user spoke in 1.5 s phrases with pauses
+STEP = CHECK_EVERY * FRAME / RATE  # seconds of voice one positive check stands for
+GOING_FRAMES = 4  # of the last LOUD_SPAN, loud and voiced, to count as still talking over (starting needs BARGE_FRAMES)
 # Silero must find a voice before anything stops. While a clip plays the canceller
 # squashes the user's voice, but 0.3/150 ms cut talkback off on its own echo and
 # 0.45/200 ms on a throat clear (2026-11-14): 0.5/300 ms
@@ -87,6 +91,25 @@ class Window:
         return time.monotonic() < self.until
 
 
+@dataclass
+class Overlap:
+    """Speech over a clip, kept while it lasts: the clip only stops once it has gone on SUSTAIN seconds.
+
+    The canceller lets our own voice through in bursts of about a second
+    (2026-11-15); a person interrupting keeps talking. Like a person, we
+    finish the word and then stop, and every frame since it began is kept.
+    """
+
+    started: float
+    last: float  # last time it still sounded like speech
+    frames: list
+    first: str  # how the first check looked, for the log
+    voiced: float = STEP  # seconds that sounded like speech, added up
+
+    def speaking_for(self) -> float:
+        return self.last - self.started
+
+
 def talkback_busy() -> bool:
     return PLAYING.exists() or WORKER_PID.exists() or bool(queued())
 
@@ -105,12 +128,15 @@ class Listener:
     def __init__(self, cfg: whisper.Config, model, stop, canceller_since: float) -> None:
         self.cfg, self.model, self.stop = cfg, model, stop
         self.canceller_since = canceller_since
-        self.stream = None
+        self.stream, self.opened, self.frames_read = None, 0.0, 0
+        self.over: Overlap | None = None  # talking over a clip, not yet long enough to stop it
+        self.last_check = ""
         self.mode = Mode.WAITING
         self.window = Window()
         self.wake = Wake.available()
         self.button, self.playback, self.output = EarbudButton(stop), Playback(stop), Output()
         self.echo_watch, self.restart_due = EchoWatch(), False
+        self.echo_watch.restarted = canceller_since  # a canceller this young is still learning: no restart yet
         self.last_activity, self.wary_until, self.play_started = time.monotonic(), 0.0, 0.0
         self.on_cpu = self.crashed = False
         self.last_message: tuple[str, Heard] | None = None  # for "send that to …"
@@ -136,10 +162,10 @@ class Listener:
             self.stop.set()
 
     def listen(self) -> None:
-        self.stream = mic_stream(EC_SOURCE)
+        self.open_stream()
         was_busy = False
         try:
-            while not self.stop.is_set() and (samples := read_frame(self.stream)) is not None:
+            while not self.stop.is_set() and (samples := self.read()) is not None:
                 frame = samples.astype(np.float32) / 32768
                 busy = talkback_busy()
                 if busy:
@@ -167,6 +193,18 @@ class Listener:
         finally:
             self.stream.terminate()
 
+    def open_stream(self) -> None:
+        self.stream = mic_stream(EC_SOURCE)
+        self.opened, self.frames_read = time.monotonic(), 0
+
+    def read(self) -> np.ndarray | None:
+        self.frames_read += 1
+        return read_frame(self.stream)
+
+    def behind(self) -> float:
+        """Seconds the frame being handled lags real time (the stream's start latency included)."""
+        return time.monotonic() - self.opened - self.frames_read * FRAME / RATE
+
     def restart_canceller(self) -> None:
         """A fresh canceller, between clips (about a second; a reply starting then loses its first words)."""
         log(HANDSFREE_LOG, "restarting the echo canceller before it drifts further")
@@ -175,7 +213,7 @@ class Listener:
         self.canceller_since = start_canceller(restart=True)
         self.echo_watch.restarted = time.monotonic()
         self.echo.clear()
-        self.stream = mic_stream(EC_SOURCE)
+        self.open_stream()
 
     def follow_requests(self) -> None:
         """`handsfree close` and `handsfree listen N` / a switch, through their files."""
@@ -200,6 +238,7 @@ class Listener:
         if not open_:
             self.loud.clear()
             self.preroll.clear()
+            self.over = None
             (self.echo if playing else self.room).append(db)
             return not playing and self.woke(samples, floor_of(self.room, db))
         history = self.echo if playing else self.room
@@ -214,10 +253,50 @@ class Listener:
         if playing and self.output.on_speakers() and self.playback.loudest() is None:
             history.append(db)  # playback level unknown: our voice might leak, so only the wake word
             return self.woke(samples, turn_floor)
-        if not self.talking(frame, db, floor, playing):
+        speech = self.talking(frame, db, floor, playing)
+        if playing or self.over:
+            return self.talking_over(frame, speech, turn_floor, history, db)
+        if not speech:
             history.append(db)
             return False
-        self.turn(list(self.preroll), Heard.OVER_YOU if playing else self.window.kind, turn_floor)
+        self.turn(list(self.preroll), self.window.kind, turn_floor)
+        return True
+
+    def still_speaking(self) -> bool:
+        """A voice, near the playback's loudness or not, starts and keeps up talking over.
+
+        Asking that it be nearly as loud as our playback lost a voice from the
+        hallway between its words and made it talk for seconds before it
+        counted (2026-11-15). Our echo can pass this too, but only for its
+        burst, short of SUSTAIN.
+        """
+        if self.checked % CHECK_EVERY or sum(self.loud) < GOING_FRAMES:
+            return False
+        return bool(get_speech_timestamps(np.concatenate(self.recent), SPEECH_OVER))
+
+    def talking_over(self, frame: np.ndarray, speech: bool, floor: float, history, db: float) -> bool:
+        """Speech over a clip stops it only once it has lasted SUSTAIN seconds; True when it did."""
+        now = time.monotonic()
+        if self.over is None:
+            history.append(db)
+            if speech or self.still_speaking():  # a quiet voice starts it too: SUSTAIN keeps our echo bursts out
+                self.over = Overlap(now, now, list(self.preroll), self.last_check if speech else "a voice, quieter")
+            return False
+        self.over.frames.append(frame)
+        if speech or self.still_speaking():
+            self.over.last = now
+            self.over.voiced += STEP
+        if now - self.over.last > GAP:
+            log(HANDSFREE_LOG, f"talking over: {self.over.voiced:.1f}s of voice in {self.over.speaking_for():.1f}s, "
+                               f"then quiet: kept playing (first: {self.over.first})")
+            self.over = None
+            return False
+        if self.over.voiced < SUSTAIN:
+            return False
+        over, self.over = self.over, None
+        log(HANDSFREE_LOG, f"talking over: {over.voiced:.1f}s of voice in {over.speaking_for():.1f}s: "
+                           f"stopping the clip (first: {over.first})")
+        self.turn(over.frames, Heard.OVER_YOU, floor)
         return True
 
     def talking(self, frame: np.ndarray, db: float, floor: float, playing: bool) -> bool:
@@ -238,11 +317,11 @@ class Listener:
         echo = played is not None and heard - played < ECHO_MARGIN  # far quieter than we play: our own echo
         near_miss = echo and self.echo_watch.near_miss(heard - played)
         self.restart_due |= near_miss
-        # Every decision over a clip, in numbers (never audio), so a false cut can be explained
-        log(HANDSFREE_LOG, f"over a clip: mic {heard:.0f} dB, playing {'?' if played is None else f'{played:.0f}'} dB, "
-                           f"floor {floor:.0f} dB, {time.monotonic() - self.play_started:.1f}s in"
-                           f"{', wary' if wary else ''}{', whisper on cpu' if self.on_cpu else ''}: "
-                           f"{'echo, kept playing' if echo else 'cut'}{'; near miss: restart the canceller when quiet' if near_miss else ''}")
+        # In numbers (never audio), so a talk-over, or a false one, can be explained
+        self.last_check = (f"mic {heard:.0f} dB, playing {'?' if played is None else f'{played:.0f}'} dB, "
+                           f"floor {floor:.0f} dB, {time.monotonic() - self.play_started:.1f}s in, "
+                           f"{self.behind() * 1000:.0f} ms behind{', wary' if wary else ''}"
+                           f"{', whisper on cpu' if self.on_cpu else ''}{', near miss' if near_miss else ''}")
         return not echo
 
     def woke(self, samples: np.ndarray, floor: float) -> bool:
@@ -289,7 +368,7 @@ class Listener:
         since, quiet, peak = time.monotonic(), 0, -120.0
         started = heard is not Heard.WOKE  # after "hey Claude" people pause for the chime
         while quiet < END_FRAMES and time.monotonic() - since < MAX_SECONDS:
-            samples = read_frame(self.stream)
+            samples = self.read()
             if samples is None:
                 break
             if len(frames) % PTT_CHECK == 0 and ptt_busy():

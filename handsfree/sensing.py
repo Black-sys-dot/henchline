@@ -115,7 +115,7 @@ class EchoWatch:
         if closest is None:
             return False
         drifting = closest > self.EARLY and self.may_restart()
-        log(HANDSFREE_LOG, f"clip echo: {-closest:.0f} dB under the playback at the closest"
+        log(HANDSFREE_LOG, f"clip echo: {abs(closest):.0f} dB {'under' if closest < 0 else 'over'} the playback at the closest"
                            f"{', canceller drifting: restart when quiet' if drifting else ''}")
         return drifting
 
