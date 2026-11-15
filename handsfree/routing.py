@@ -221,7 +221,7 @@ def deliver(text: str, heard: Heard) -> bool:
                              "type-into-cursor", wid, message], timeout=20).returncode == 0
         log(HANDSFREE_LOG, f"sent to cursor window {speaker.where}" if ok else "Cursor delivery failed")
         if ok:
-            Sent(speaker.agent, heard.value, session=speaker.session).save()
+            Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
         if not ok and desktop().locked():
             say("The laptop's screen is locked, so I can't type into Cursor. "
                 "Agents in a terminal still get your words.")
@@ -242,6 +242,6 @@ def deliver(text: str, heard: Heard) -> bool:
         say("I heard you, but that terminal is gone.")
         return False
     log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.address}")
-    Sent(speaker.agent, heard.value, session=speaker.session).save()
+    Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
     return True
 

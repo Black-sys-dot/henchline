@@ -81,9 +81,11 @@ class Status:
             self.since = sent.at
             self.waiting_for = sent.agent.capitalize()
             if sent.heard != Heard.TYPED.value:  # a typed one is in the chat already, as the page sent it
-                how = "shared from your phone" if sent.heard == Heard.SHARED.value else "spoken"
-                lines.append({"chat": {"from": "you", "text": f"({how}, sent to {self.waiting_for})",
-                                       "session": sent.session}})
+                if sent.heard == Heard.SHARED.value:
+                    said = f"(shared from your phone, sent to {self.waiting_for})"
+                else:  # what it heard you say, so a mishearing shows
+                    said = f"🎙 {sent.words}" if sent.words else f"(spoken, sent to {self.waiting_for})"
+                lines.append({"chat": {"from": "you", "text": said, "session": sent.session}})
         playing = Playing.now()
         if playing and playing.clip != self.clip:
             self.clip = playing.clip
@@ -455,6 +457,9 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             shower.cancel()
             unmuter.cancel()
             CALL.unlink(missing_ok=True)  # hands-free and talkback go back to the laptop first
+            if (sent := Sent.last()) and sent.words:  # the call's words don't outlast it
+                sent.words = ""
+                sent.save()
             for proc in (mic, speaker):
                 if proc.returncode is None:
                     try:

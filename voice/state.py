@@ -75,14 +75,18 @@ class Sent:
     heard: str  # routing.Heard's value: "reply", "call, typed", …
     at: float = field(default_factory=time.time)
     session: str = ""  # which of the agent's sessions: two Claudes are both "claude"
+    # The words as transcribed, only while a call is up, for the phone's chat to show what was heard (the
+    # user's wish, 2026-11-15); the file is then private, and the call server blanks them when the call ends
+    words: str = ""
 
     @classmethod
     def last(cls) -> Sent | None:
         data = read_json(SENT)
-        return cls(**data) if data.keys() >= {"agent", "heard", "at"} else None
+        known = {k: v for k, v in data.items() if k in cls.__dataclass_fields__}  # newer fields: left out
+        return cls(**known) if known.keys() >= {"agent", "heard", "at"} else None
 
     def save(self) -> None:
-        write_json(SENT, asdict(self))
+        write_json(SENT, asdict(self), private=True)
 
 
 HANDSFREE_UNIT = "handsfree.service"
