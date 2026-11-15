@@ -7,7 +7,9 @@ For each phrase: talkback says which one, a chime, then the default mic (a good 
 records at 48 kHz until the performer has finished: two seconds quiet after they started, at most
 twenty. Hands-free is paused meanwhile, so nothing reaches an agent.
 The takes land in ~/.local/share/handsfree/phrase-takes/<agent>_<n>.wav, for ringtones.py to turn
-into henchman voices. They stay on this machine: a person's voice is theirs.
+into henchman voices. They stay on this machine: a person's voice is theirs. (henchify_takes.py's
+results are git-ignored; a local pre-commit hook refusing call/android/app/src/debug/ backs that up
+in this clone, see the README.)
 """
 
 from __future__ import annotations
@@ -31,6 +33,7 @@ RATE = 48000
 FRAME = RATE // 50  # 20 ms
 DONE_AFTER, LONGEST = 2.0, 20.0  # seconds quiet after they started, and at most
 LOUDER = 15  # dB over the room's own sound counts as performing
+MISSING: set[str] = set()  # helpers already said to be missing
 SUSTAINED = 15  # frames (0.3 s) that loud in a row before the performance counts as started: not a click
 
 
@@ -71,7 +74,9 @@ def run_quietly(command: list[str]) -> None:
     try:
         subprocess.run(command, check=False)
     except FileNotFoundError:
-        print(f"  ({command[0]} is not installed: going on without it)", flush=True)
+        if command[0] not in MISSING:
+            MISSING.add(command[0])
+            print(f"  ({command[0]} is not installed: going on without it)", flush=True)
 
 
 def save(path: Path, audio: np.ndarray) -> None:

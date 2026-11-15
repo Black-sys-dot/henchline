@@ -40,7 +40,7 @@ def clean(audio: np.ndarray, rate: int) -> np.ndarray:
     audio = noisereduce.reduce_noise(y=audio, sr=rate, y_noise=room, prop_decrease=0.75, stationary=True)
     audio = sosfilt(butter(4, 90, "highpass", fs=rate, output="sos"), audio)
     level = 10 * np.log10(energy + 1e-12)
-    voiced = np.percentile(level, 90)  # the performance's level, so a single loud click can't set it
+    voiced = np.percentile(level, 90)  # the performance's level, so one click can't set it (it fills >10 %)
     loud = np.flatnonzero(level > voiced - 30)  # the performance, not the room
     start, end = max(0, loud[0] * frame - int(EDGE * rate)), min(len(audio), (loud[-1] + 1) * frame + int(EDGE * rate))
     audio = audio[start:end]
@@ -50,18 +50,21 @@ def clean(audio: np.ndarray, rate: int) -> np.ndarray:
 def henchify(path: Path, out: Path) -> str:
     """Makes the henchman phrase; or why not (left out, so the app keeps its default phrase)."""
     audio, rate = soundfile.read(str(path))
-    if len(audio) < rate // 2 or np.abs(audio).max() < QUIETEST:
-        return "too short or too quiet: re-record it"
+    if len(audio) < rate // 2:
+        return "shorter than half a second: re-record it"
+    if (peak := np.abs(audio).max()) < QUIETEST:
+        return f"too quiet (peak {peak:.3f}, needs {QUIETEST}): re-record it closer to the mic"
     tmp = out.with_suffix(".clean.wav")
     soundfile.write(str(tmp), clean(audio, rate), rate)
-    sound = parselmouth.Sound(str(tmp))
-    median = call(sound.to_pitch(), "Get quantile", 0, 0, 0.5, "Hertz")
-    if not np.isfinite(median):  # whispered, or no voice at all
-        tmp.unlink()
-        return "no voiced pitch found: re-record it out loud"
-    call(sound, "Change gender", 75, 600, FORMANTS_UP, median * PITCH_UP, 1.2, 1.0).save(str(out), "WAV")
-    tmp.unlink()
-    return ""
+    try:
+        sound = parselmouth.Sound(str(tmp))
+        median = call(sound.to_pitch(), "Get quantile", 0, 0, 0.5, "Hertz")
+        if not np.isfinite(median):  # whispered, or no voice at all
+            return "no voiced pitch found: re-record it out loud"
+        call(sound, "Change gender", 75, 600, FORMANTS_UP, median * PITCH_UP, 1.2, 1.0).save(str(out), "WAV")
+        return ""
+    finally:
+        tmp.unlink(missing_ok=True)
 
 
 def main() -> int:
