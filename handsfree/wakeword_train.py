@@ -120,8 +120,10 @@ def main() -> int:
     # The user's ordinary speech (asr_collect.py's sentences, minus any that say the word): "feather" fooled
     # a detector that had heard 10 s of it (2026-11-15)
     asr = [str(index.parent / take) for index in sorted((WAKE_SAMPLES.parent / "asr-set").glob("**/set.json"))
-           for take, text in sorted(json.loads(index.read_text()).items())
-           if word not in text.lower() and (index.parent / take).exists()]  # both rounds: loose and --strict
+           for take, asked in sorted(json.loads(index.read_text()).items())
+           # a sentence, or (tone_collect.py) what was asked for it, with the sentence under "text"
+           if word not in (asked if isinstance(asked, str) else asked.get("text", "")).lower()
+           and (index.parent / take).exists()]  # every round: loose, --strict, tone
     print(f"{len(asr)} takes of ordinary speech as negatives", flush=True)
     others += asr
 

@@ -1,7 +1,10 @@
 #!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/copilot-ptt/venv/bin/python3" -E -s "$0" "$@"'
 """Score Whisper models on the user's own voice (asr_collect.py's test set).
 
-    asr_bench.py [--strict] [MODEL ...]      (default: small medium distil-large-v3 large-v3-turbo)
+    asr_bench.py [--strict] [--names] [MODEL ...]      (default: small medium distil-large-v3 large-v3-turbo)
+
+Hints are the settings' hotwords (~/.config/ptt/config.json), as a turn
+uses them; --names: the agent names only.
 
 Each model runs on the GPU (float16) and on the CPU (int8, hands-free's
 thread count), with the settings a hands-free turn uses (voice activity
@@ -29,9 +32,10 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))  # the repository, for voice/
 from voice.state import HANDSFREE_DATA  # noqa: E402
-from voice.whisper import CPU_THREADS, DEFAULT_HOTWORDS  # noqa: E402
+from voice.whisper import CPU_THREADS, DEFAULT_HOTWORDS, Config  # noqa: E402
 
 SET = HANDSFREE_DATA / "asr-set"
+MODELS = ["small", "medium", "distil-large-v3", "large-v3-turbo"]
 RAPL = Path("/sys/class/powercap/intel-rapl:0/energy_uj")  # the CPU package, in microjoules
 
 
@@ -42,12 +46,23 @@ def package_joules() -> float | None:
         return None
 
 
+def joules_between(start: float | None, end: float | None) -> float | None:
+    """The counter wraps at max_energy_range_uj: a smaller end means it went round once."""
+    if start is None or end is None:
+        return None
+    if end < start:
+        try:
+            end += int((RAPL.parent / "max_energy_range_uj").read_text()) / 1e6
+        except (OSError, ValueError):
+            return None
+    return end - start
+
+
 def package_idle_watts(seconds: float = 3.0) -> float | None:
     start = package_joules()
     time.sleep(seconds)
-    end = package_joules()
-    return None if start is None or end is None else (end - start) / seconds
-MODELS = ["small", "medium", "distil-large-v3", "large-v3-turbo"]
+    joules = joules_between(start, package_joules())
+    return None if joules is None else joules / seconds
 
 
 def words(text: str) -> list[str]:
@@ -83,7 +98,7 @@ class PowerMeter(threading.Thread):
             self.joules += max(0.0, gpu("power.draw") - self.idle) * 0.1
 
 
-def bench(name: str, device: str, takes: dict[str, str], idle_w: float | None) -> dict:
+def bench(name: str, device: str, takes: dict[str, str], idle_w: float | None, hints: list[str]) -> dict:
     from faster_whisper import WhisperModel
 
     before = gpu("memory.used")
@@ -103,7 +118,7 @@ def bench(name: str, device: str, takes: dict[str, str], idle_w: float | None) -
     for take, reference in takes.items():
         start = time.monotonic()
         segments, _ = model.transcribe(str(SET / take), language="en", vad_filter=True, beam_size=1,
-                                       hotwords=", ".join(DEFAULT_HOTWORDS))
+                                       hotwords=", ".join(hints) or None)
         heard = " ".join(s.text for s in segments)
         seconds.append(time.monotonic() - start)
         e, n = wer(reference, heard)
@@ -112,8 +127,8 @@ def bench(name: str, device: str, takes: dict[str, str], idle_w: float | None) -
             misheard.append((take, heard.strip()))
     cpu1 = resource.getrusage(resource.RUSAGE_SELF)
     pkg1, wall = package_joules(), time.monotonic() - wall0
-    pkg_j = None if pkg0 is None or pkg1 is None or idle_w is None else \
-        max(0.0, pkg1 - pkg0 - idle_w * wall) / len(takes)
+    spent = joules_between(pkg0, pkg1)
+    pkg_j = None if spent is None or idle_w is None else max(0.0, spent - idle_w * wall) / len(takes)
     meter.stop.set()
     meter.join()
     del model
@@ -130,6 +145,16 @@ def main() -> int:
     if "--strict" in sys.argv:  # the word-for-word round
         sys.argv.remove("--strict")
         SET = SET / "strict"
+    if not (SET / "set.json").exists():
+        print(f"no test set in {SET}: record one with asr_collect.py{' --strict' if SET.name == 'strict' else ''}",
+              file=sys.stderr)
+        return 1
+    # The hints a turn uses: the settings' hotwords (the user's vocabulary), or --names for the agent names only
+    names_only = "--names" in sys.argv
+    if names_only:
+        sys.argv.remove("--names")
+    hints = list(DEFAULT_HOTWORDS) if names_only else Config.load(Path("/dev/null")).hotwords
+    print(f"hints: {', '.join(hints)}")
     takes = json.loads((SET / "set.json").read_text())
     takes = {take: text for take, text in takes.items() if (SET / take).exists()}
     results = []
@@ -137,7 +162,7 @@ def main() -> int:
     print(f"CPU package idle: {idle_w:.1f} W" if idle_w is not None else "CPU energy counter not readable: no CPU joules")
     for name in sys.argv[1:] or MODELS:
         for device in ("cuda", "cpu"):
-            result = bench(name, device, takes, idle_w)
+            result = bench(name, device, takes, idle_w, hints)
             results.append(result)
             print(f"{name:16s} {device:4s}  WER {result['wer']:6.1%}  median {result['median_s']:.2f} s  "
                   f"worst {result['worst_s']:.2f} s  CPU {result['cpu_s_per_take']:.2f} s/take  "
