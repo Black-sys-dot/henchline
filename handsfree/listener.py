@@ -24,8 +24,8 @@ from turn import Mode, Turn
 from voicegate import VoiceGate
 from voice import whisper
 from voice.spool import queued
-from voice.state import (BY_HANDSFREE, CALL_BUTTON_ONLY, CALL_PUSH, CLOSE, HANDSFREE_LOG, HANDSFREE_MODE, LISTEN, PAUSE, PLAYING,
-                         WORKER_PID, in_call, log, mic_source, ptt_busy, release_phase)
+from voice.state import (BY_HANDSFREE, CALL_BUTTON_ONLY, CALL_PUSH, CLOSE, HANDSFREE_LOG, HANDSFREE_MODE, LISTEN,
+                         PAUSE, PLAYING, WORKER_PID, in_call, log, mic_source, ptt_busy, release_phase)
 
 WINDOW = 8.0  # seconds to answer after a clip
 FOLLOW = 6.0  # seconds to carry on after their own message (once, never chained)

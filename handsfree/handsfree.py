@@ -29,10 +29,9 @@ import tray  # noqa: E402
 from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import whisper  # noqa: E402
-from voice.state import (ANNOUNCE, BY_HANDSFREE, CLOSE, HANDSFREE_LOG, HANDSFREE_ON, LISTEN, STATE,  # noqa: E402
-                         TALKBACK_ON, log, release_phase)
-
-UNIT = "handsfree.service"
+from voice.state import (ANNOUNCE, BY_HANDSFREE, CLOSE, HANDSFREE_LOG, HANDSFREE_ON, LISTEN,  # noqa: E402
+                         log, release_phase, turn_on_handsfree)
+from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
 
 
 def run() -> int:
@@ -77,11 +76,7 @@ def main() -> int:
     if command == "run":
         return run()
     if command == "on":
-        STATE.mkdir(parents=True, exist_ok=True)
-        HANDSFREE_ON.touch()
-        ANNOUNCE.touch()
-        TALKBACK_ON.touch()  # hands-free needs the agents to talk
-        return subprocess.call(["systemctl", "--user", "start", UNIT])
+        return turn_on_handsfree()
     if command == "off":
         HANDSFREE_ON.unlink(missing_ok=True)
         return subprocess.call(["systemctl", "--user", "stop", UNIT, EC_UNIT])

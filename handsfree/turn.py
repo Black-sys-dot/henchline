@@ -23,8 +23,8 @@ from sensing import PER_SECOND, RATE, SPEECH, level
 from talkover import TalkOver, our_own_words
 from voicegate import START_DB
 from voice import whisper
-from voice.state import (BY_HANDSFREE, CALL_PUSH, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call, log, ptt_busy, release_phase,
-                         set_phase, set_target)
+from voice.state import (BY_HANDSFREE, CALL_PUSH, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call, log, ptt_busy,
+                         release_phase, set_phase, set_target)
 
 THINK_WINDOW = 180  # seconds after "give me a minute"
 WAIT_FOR_WORDS = 5.0  # after the wake word, seconds to start talking before it gives up
@@ -53,7 +53,7 @@ def only_hint_words(text: str, hotwords: list[str]) -> bool:
     """Whisper given noise writes out the names it was told to expect ("Cursor, Codex, Kokoro",
     2026-11-15): a transcript of nothing but those is not the user talking."""
     words = re.findall(r"[a-z']+", text.lower())
-    return bool(words) and set(words) <= {w.lower() for w in hotwords}
+    return bool(words) and set(words) <= set(re.findall(r"[a-z']+", " ".join(hotwords).lower()))
 
 
 class Turn:
@@ -116,8 +116,8 @@ class Turn:
             quiet = quiet + 1 if db < max(floor + END_DB, peak - BELOW_PEAK) else 0
             if quiet == OVER_FRAMES and self.ends_with_over(frames):
                 break
-        reason = ("the button" if held else "over" if quiet == OVER_FRAMES else "pause" if quiet >= end
-                  else "limit")
+        reason = ("the button" if held and not CALL_PUSH.exists() else "over" if quiet == OVER_FRAMES
+                  else "pause" if quiet >= end else "limit")
         log(HANDSFREE_LOG, f"recorded {time.monotonic() - since:.1f}s, ended by {reason} (floor {floor:.0f} dB)")
         return frames
 

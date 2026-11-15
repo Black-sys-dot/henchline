@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 import time
 from dataclasses import asdict, dataclass, field
 from enum import Enum
@@ -54,20 +55,62 @@ CALL_PORT = 8790
 HANDSFREE_MODE = STATE / "handsfree.mode"  # waiting / listening / recording / transcribing: the tray's colours
 PHONE_MIC = "phone_mic"  # a virtual sink the call page writes the phone's mic into; listened to as its monitor
 PHONE_SPEAKER = "phone_speaker"  # a virtual sink talkback plays into during a call; streamed to the phone
+PHONE_MIC_MONITOR, PHONE_SPEAKER_MONITOR = f"{PHONE_MIC}.monitor", f"{PHONE_SPEAKER}.monitor"  # PipeWire's names
+DEFAULT_SINK, DEFAULT_MONITOR = "@DEFAULT_SINK@", "@DEFAULT_MONITOR@"
+
+
+SENT = STATE / "handsfree.sent"  # the last message hands-free delivered: to whom and how heard, never the words
+
+
+@dataclass
+class Sent:
+    """A message hands-free delivered (the call page's chat and status read it)."""
+
+    agent: str
+    heard: str  # routing.Heard's value: "reply", "call, typed", …
+    at: float = field(default_factory=time.time)
+
+    @classmethod
+    def last(cls) -> Sent | None:
+        data = read_json(SENT)
+        return cls(**data) if data.keys() >= {"agent", "heard", "at"} else None
+
+    def save(self) -> None:
+        write_json(SENT, asdict(self))
+
+
+HANDSFREE_UNIT = "handsfree.service"
+
+
+def turn_on_handsfree(announce: bool = True) -> int:
+    """Hands-free on, and talkback with it (hands-free needs the agents to talk); `handsfree on` and a call."""
+    STATE.mkdir(parents=True, exist_ok=True)
+    HANDSFREE_ON.touch()
+    TALKBACK_ON.touch()
+    if announce:
+        ANNOUNCE.touch()  # "Hands-free is on", once
+    return subprocess.call(["systemctl", "--user", "start", HANDSFREE_UNIT])
 
 
 def in_call() -> bool:
-    return CALL.exists()
+    """A call is up: its marker exists and the server that wrote it still runs (a killed one leaves it)."""
+    pid = read_json(CALL).get("pid", 0)
+    return bool(pid) and Path(f"/proc/{pid}").exists()
 
 
 def mic_source() -> str:
     """Where hands-free listens: the phone during a call, the echo-cancelled laptop mic otherwise."""
-    return f"{PHONE_MIC}.monitor" if in_call() else EC_SOURCE
+    return PHONE_MIC_MONITOR if in_call() else EC_SOURCE
 
 
 def speaker_sink() -> str:
     """Where talkback plays: the phone during a call, the default output otherwise."""
-    return PHONE_SPEAKER if in_call() else "@DEFAULT_SINK@"
+    return PHONE_SPEAKER if in_call() else DEFAULT_SINK
+
+
+def speaker_monitor() -> str:
+    """Where our voice can be heard: the phone's sink during a call, the default output's monitor otherwise."""
+    return PHONE_SPEAKER_MONITOR if in_call() else DEFAULT_MONITOR
 
 # Data, not state: models, settings and recordings
 SHARE = Path.home() / ".local/share"

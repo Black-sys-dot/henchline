@@ -108,7 +108,8 @@ class Voice:
                 ready.put(None)
 
         threading.Thread(target=make, daemon=True).start()
-        player = subprocess.Popen([*PLAYER, f"--device={speaker_sink()}"], stdin=subprocess.PIPE)  # the phone, in a call
+        # On a phone call, into the phone's sink
+        player = subprocess.Popen([*PLAYER, f"--device={speaker_sink()}"], stdin=subprocess.PIPE)
         piece = int(RATE * PIECE)
         spoken, cut, self.skip = 0, False, False
         try:

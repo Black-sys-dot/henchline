@@ -72,14 +72,16 @@ class Mic extends AudioWorkletProcessor {
         this.acc = 0; this.n = 0; this.left += this.step;
       }
     }
-    if (this.buf.length >= 320) { this.port.postMessage(Int16Array.from(this.buf).buffer); this.buf = []; }
+    if (this.buf.length >= 320) {  // 20 ms at 16 kHz per message
+      this.port.postMessage(Int16Array.from(this.buf).buffer); this.buf = [];
+    }
     return true;
   }
 }
 class Speaker extends AudioWorkletProcessor {
   constructor() {
     super(); this.step = 24000 / sampleRate; this.queue = []; this.cur = null; this.pos = 0;
-    this.port.onmessage = (e) => { this.queue.push(new Int16Array(e.data)); if (this.queue.length > 50) this.queue.splice(0, 25); };
+    this.port.onmessage = (e) => { this.queue.push(new Int16Array(e.data)); if (this.queue.length > 50) this.queue.splice(0, 25); };  // over 1 s behind: drop half a second
   }
   process(_, [output]) {
     const out = output[0];

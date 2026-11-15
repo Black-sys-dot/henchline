@@ -17,7 +17,8 @@ from pathlib import Path
 
 from voice.agents import SPOKEN_TO
 from voice.desktop import current as desktop
-from voice.state import BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, Speaker, last_speaker, log, recent_speakers
+from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, Sent, Speaker, last_speaker, log,
+                         recent_speakers)
 
 SAY = Path(__file__).resolve().parent.parent / "talkback/scripts/say.py"
 AFTER_SWITCH = 30.0  # seconds to start talking after "Now talking to …"
@@ -45,14 +46,16 @@ SWITCH = re.compile(
     rf"(?:switch(?:\s+me)?(?:\s+back)?|(?:hand|pass)(?:\s+(?:me|it|this))?(?:\s+(?:over|back))?|"
     rf"(?:give|send)(?:\s+(?:me|it|this))?\s+(?:over|back)|go\s+back|(?:let\s+me\s+)?talk|connect\s+me|"
     rf"put\s+me\s+through|i\s+want\s+to\s+talk|back)\s+(?:over\s+)?to\s+{AGENT}{WHERE}(?:\s+please)?\W*$", re.I)
-SEND_THAT = re.compile(rf"^\W*(?:please\s+)?(?:send|forward|give)\s+(?:that|this|it)(?:\s+message)?\s+to\s+{AGENT}{WHERE}\W*$", re.I)
+SEND_THAT = re.compile(rf"^\W*(?:please\s+)?(?:send|forward|give)\s+(?:that|this|it)(?:\s+message)?"
+                       rf"\s+to\s+{AGENT}{WHERE}\W*$", re.I)
 # "…actually, scratch that, hand this to Cursor": drop what came before, then switch
-DISCARD = re.compile(r".*\b(?:never\s*mind|scratch\s+that|forget\s+(?:it|that|all\s+that|what\s+i\s+(?:just\s+)?said))\W+(.+)$",
-                     re.I | re.S)
+DISCARD = re.compile(r".*\b(?:never\s*mind|scratch\s+that|forget\s+(?:it|that|all\s+that|what\s+i\s+(?:just\s+)?said))"
+                     r"\W+(.+)$", re.I | re.S)
 # A short lead-in sentence before the request: a long message that merely ends that way is a message
 LAST_SENTENCE = re.compile(r"^(.*[.!?])\s+([^.!?]+[.!?]?)\s*$", re.S)
 LEAD_IN_WORDS = 8
-WHO = re.compile(r"^\W*who\s+(?:am\s+i|are\s+you)\s+(?:talking\s+to|speaking\s+to)?\W*$|^\W*who\s+is\s+(?:this|listening)\W*$", re.I)
+WHO = re.compile(r"^\W*who\s+(?:am\s+i|are\s+you)\s+(?:talking\s+to|speaking\s+to)?\W*$"
+                 r"|^\W*who\s+is\s+(?:this|listening)\W*$", re.I)
 THINK = re.compile(r"\b(give me a (minute|moment|second|sec)|let me think|hold on|hang on"
                    r"|one (sec|second|moment)|let me (get|come) back)\b", re.I)
 JUST_TIME = 12  # words: "hold on, let me think about that" asks for time and says nothing else
@@ -199,8 +202,11 @@ def deliver(text: str, heard: Heard) -> bool:
         ok = subprocess.run([sys.executable, str(Path(__file__).resolve().parent / "handsfree.py"),
                              "type-into-cursor", wid, message], timeout=20).returncode == 0
         log(HANDSFREE_LOG, f"sent to cursor window {speaker.where}" if ok else "Cursor delivery failed")
+        if ok:
+            Sent(speaker.agent, heard.value).save()
         if not ok and desktop().locked():
-            say("The laptop's screen is locked, so I can't type into Cursor. Agents in a terminal still get your words.")
+            say("The laptop's screen is locked, so I can't type into Cursor. "
+                "Agents in a terminal still get your words.")
         elif not ok:
             say("I couldn't bring Cursor's window to the front, so I didn't type that anywhere. "
                 "Click Cursor's window and say it again.")
@@ -218,5 +224,6 @@ def deliver(text: str, heard: Heard) -> bool:
         say("I heard you, but that terminal is gone.")
         return False
     log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.address}")
+    Sent(speaker.agent, heard.value).save()
     return True
 

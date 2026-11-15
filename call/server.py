@@ -6,16 +6,19 @@
 It listens on this machine's Tailscale address, with its own certificate
 (install.sh call makes one; the phone accepts it once), so only your own
 devices reach it; or on 127.0.0.1 behind `tailscale serve`, once Tailscale
-lets this user configure it. Open the https address on the phone, tap Call. While a call is up, two virtual sinks exist: the
-phone's mic is played into PHONE_MIC, whose monitor hands-free listens to,
-and talkback plays into PHONE_SPEAKER, whose monitor is streamed back to the
-phone. The phone's browser cancels its own echo. One call at a time.
+lets this user configure it. Open the https address on the phone and tap
+Call. While a call is up, two virtual sinks exist: the phone's mic is played
+into PHONE_MIC, whose monitor hands-free listens to, and talkback plays into
+PHONE_SPEAKER, whose monitor is streamed back to the phone. The phone's
+browser cancels its own echo. One call at a time.
 """
 
 from __future__ import annotations
 
 import argparse
 import asyncio
+import os
+import re
 import ssl
 import subprocess
 import sys
@@ -29,10 +32,10 @@ sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree")]  # voice/, and
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
-from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_PORT, CALL_PUSH, CALL_TLS, HANDSFREE_MODE,  # noqa: E402
-                         HANDSFREE_ON, PHONE_MIC, PHONE_SPEAKER, Phase, Playing, last_speaker, log, phase_now,
-                         recent_speakers, write_json)
-from voice.state import HANDSFREE_LOG  # noqa: E402  (calls are logged with hands-free, which they drive)
+from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_PORT, CALL_PUSH, CALL_TLS,  # noqa: E402
+                         HANDSFREE_LOG, HANDSFREE_MODE, PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase,
+                         Playing, Sent, in_call, last_speaker, log, phase_now, recent_speakers, turn_on_handsfree,
+                         write_json)
 
 MIC_RATE = 16000  # what the page sends: what hands-free listens at
 SPEAKER_RATE = 24000  # what the page plays: Kokoro's own rate
@@ -46,23 +49,24 @@ AGENTS_EVERY = 3.0  # seconds between looks at which agents can be switched to
 class Status:
     """What the phone shows: the talk button's colour, a status line, and the chat.
 
-    Read from the shared state (hands-free's mode, the phase, the clip playing)
-    and from the hands-free log's lines since the call began, which say who a
-    message went to, never what it said. The agents' own words become chat.
+    Read from the shared state: hands-free's mode, the phase, the clip
+    playing, and the record of the last message delivered (to whom, how
+    heard, never the words). The agents' own words become chat.
     """
 
     def __init__(self) -> None:
-        self.log = HANDSFREE_LOG.open()
-        self.log.seek(0, 2)
+        self.since = time.time()
         self.waiting_for = ""  # the agent a message went to, until it starts speaking
         self.clip = ""  # the clip last put in the chat
 
     def events(self) -> list[dict]:
         """New chat lines: what an agent started saying, and that a spoken message went out."""
         lines = []
-        for line in self.log.readlines():
-            if " sent to " in line:
-                self.waiting_for = line.split(" sent to ", 1)[1].split()[0].capitalize()
+        sent = Sent.last()
+        if sent and sent.at > self.since:
+            self.since = sent.at
+            self.waiting_for = sent.agent.capitalize()
+            if sent.heard != Heard.TYPED.value:  # a typed one is in the chat already, as the page sent it
                 lines.append({"chat": {"from": "you", "text": f"(spoken, sent to {self.waiting_for})"}})
         playing = Playing.now()
         if playing and playing.clip != self.clip:
@@ -86,9 +90,6 @@ class Status:
         if CALL_BUTTON_ONLY.exists():
             return {"mode": mode, "state": "Open line off: hold the button to talk"}
         return {"mode": mode, "state": "Listening"}
-
-    def close(self) -> None:
-        self.log.close()
 
 
 def pactl(*args: str) -> str:
@@ -114,12 +115,19 @@ class Devices:
                 pactl("unload-module", module)
 
 
+def flag(path: Path, on: bool) -> None:
+    if on:
+        path.touch()
+    else:
+        path.unlink(missing_ok=True)
+
+
 async def from_page(message: dict) -> None:
     """The talk button held or let go, or a typed chat message for the agent that spoke last."""
     if "push" in message:
-        CALL_PUSH.touch() if message["push"] else CALL_PUSH.unlink(missing_ok=True)
+        flag(CALL_PUSH, message["push"])
     elif "button_only" in message:
-        CALL_BUTTON_ONLY.touch() if message["button_only"] else CALL_BUTTON_ONLY.unlink(missing_ok=True)
+        flag(CALL_BUTTON_ONLY, message["button_only"])
     elif "switch" in message:
         await asyncio.get_running_loop().run_in_executor(None, switch, message["switch"])
     elif words := message.get("chat", "").strip():
@@ -129,8 +137,9 @@ async def from_page(message: dict) -> None:
 def agents() -> dict:
     """The agents a call can switch to: heard lately and still running, and the one replies go to now."""
     current, locked = last_speaker(), desktop().locked()
-    return {"agents": [{"session": s.session, "name": s.spoken() + (" (laptop locked)" if s.in_editor and locked else "")}
-                       for s in recent_speakers() if routing.reachable(s)],
+    listed = [{"session": s.session, "name": s.spoken() + (" (laptop locked)" if s.in_editor and locked else "")}
+              for s in recent_speakers() if routing.reachable(s)]
+    return {"agents": listed,
             "current": current.session if current else ""}
 
 
@@ -157,7 +166,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
         raise web.HTTPForbidden(text="only the call page may connect")
     ws = web.WebSocketResponse(heartbeat=15)
     await ws.prepare(request)
-    if CALL.exists():
+    if in_call():
         await ws.close(message=b"busy: another call is up")
         return ws
     with Devices():
@@ -165,11 +174,10 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             "pacat", "--playback", "--raw", f"--device={PHONE_MIC}", "--format=s16le", f"--rate={MIC_RATE}",
             "--channels=1", "--latency-msec=60", "--client-name=phone-call", stdin=asyncio.subprocess.PIPE)
         speaker = await asyncio.create_subprocess_exec(
-            "parec", "--raw", f"--device={PHONE_SPEAKER}.monitor", "--format=s16le", f"--rate={SPEAKER_RATE}",
+            "parec", "--raw", f"--device={PHONE_SPEAKER_MONITOR}", "--format=s16le", f"--rate={SPEAKER_RATE}",
             "--channels=1", "--latency-msec=40", "--client-name=phone-call", stdout=asyncio.subprocess.PIPE)
-        write_json(CALL, {"from": request.remote or ""})
-        HANDSFREE_ON.touch()
-        subprocess.run(["systemctl", "--user", "start", "handsfree.service"], check=False)
+        write_json(CALL, {"from": request.remote or "", "pid": os.getpid()})
+        await asyncio.get_running_loop().run_in_executor(None, turn_on_handsfree, False)  # with talkback
         log(HANDSFREE_LOG, "phone call started")
 
         async def to_phone() -> None:
@@ -181,24 +189,21 @@ async def call(request: web.Request) -> web.WebSocketResponse:
 
         async def show_status() -> None:
             status, shown = Status(), None
-            try:
-                listed, shown_agents = 0.0, None
-                while not ws.closed:
-                    if time.monotonic() - listed > AGENTS_EVERY:  # the menu: who is reachable, who is current
-                        listed = time.monotonic()
-                        now_agents = await asyncio.get_running_loop().run_in_executor(None, agents)
-                        if now_agents != shown_agents:
-                            await ws.send_json(now_agents)
-                            shown_agents = now_agents
-                    for event in status.events():
-                        await ws.send_json(event)
-                    now = status.now()
-                    if now != shown:
-                        await ws.send_json(now)
-                        shown = now
-                    await asyncio.sleep(STATUS_EVERY)
-            finally:
-                status.close()
+            listed, shown_agents = 0.0, None
+            while not ws.closed:
+                if time.monotonic() - listed > AGENTS_EVERY:  # the menu: who is reachable, who is current
+                    listed = time.monotonic()
+                    now_agents = await asyncio.get_running_loop().run_in_executor(None, agents)
+                    if now_agents != shown_agents:
+                        await ws.send_json(now_agents)
+                        shown_agents = now_agents
+                for event in status.events():
+                    await ws.send_json(event)
+                now = status.now()
+                if now != shown:
+                    await ws.send_json(now)
+                    shown = now
+                await asyncio.sleep(STATUS_EVERY)
 
         sender = asyncio.create_task(to_phone())
         shower = asyncio.create_task(show_status())
@@ -236,7 +241,11 @@ def main() -> int:
                         help="tailscale (default): this machine's Tailscale address, so only your own devices "
                              "reach it; 127.0.0.1 behind `tailscale serve`")
     args = parser.parse_args()
-    CALL.unlink(missing_ok=True)  # a leftover from a crash
+    CALL.unlink(missing_ok=True)  # leftovers from a crash: the marker, and the call's sinks
+    for line in pactl("list", "short", "modules").splitlines():
+        found = re.search(r"sink_name=(\S+)", line)
+        if "module-null-sink" in line and found and found.group(1) in (PHONE_MIC, PHONE_SPEAKER):
+            pactl("unload-module", line.split()[0])
     app = web.Application()
     app.router.add_get("/", lambda _: web.FileResponse(HERE / "page.html"))
     app.router.add_get("/call", call)

@@ -162,6 +162,7 @@ install_call() {
   systemctl --user daemon-reload
   systemctl --user enable call.service
   systemctl --user restart call.service
+  # 8790 is voice/state.py's CALL_PORT (a shell script cannot read it)
   say "Call page: https://$(tailscale ip -4 | head -n 1):8790 on your phone (accept the certificate once), then Call."
 }
 
@@ -266,7 +267,7 @@ if [ "${1:-}" = remove ]; then action=remove; shift; fi
 if [ $# -eq 0 ]; then sed -n '2,7p' "$0"; exit 1; fi
 for piece in "$@"; do
   case "$piece" in
-    all) set -- ptt talkback handsfree call agents; break ;;
+    all) set -- ptt talkback handsfree agents; break ;;  # the call needs Tailscale: ./install.sh call
     ptt|talkback|handsfree|call|agents) ;;
     *) say "Unknown piece: $piece"; exit 1 ;;
   esac

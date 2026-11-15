@@ -15,7 +15,7 @@ import time
 import numpy as np
 from faster_whisper.vad import VadOptions
 
-from voice.state import EC_SOURCE, EC_UNIT, HANDSFREE_LOG, WAKE_MODEL, log, speaker_sink
+from voice.state import EC_SOURCE, EC_UNIT, HANDSFREE_LOG, WAKE_MODEL, log, speaker_monitor
 
 RATE = 16000
 FRAME = 480  # 30 ms at 16 kHz
@@ -117,7 +117,8 @@ class EchoWatch:
         if closest is None:
             return False
         drifting = self.near_miss(closest)
-        log(HANDSFREE_LOG, f"clip echo: {abs(closest):.0f} dB {'under' if closest < 0 else 'over'} the playback at the closest"
+        side = "under" if closest < 0 else "over"
+        log(HANDSFREE_LOG, f"clip echo: {abs(closest):.0f} dB {side} the playback at the closest"
                            f"{', canceller drifting: restart when quiet' if drifting else ''}")
         return drifting
 
@@ -236,12 +237,6 @@ class EarbudButton(threading.Thread):
                     log(HANDSFREE_LOG, "earbud button gone")
 
 
-def monitor_of_output() -> str:
-    """What our voice goes out through: the phone during a call, the default output otherwise."""
-    sink = speaker_sink()
-    return "@DEFAULT_MONITOR@" if sink.startswith("@") else f"{sink}.monitor"
-
-
 class Playback(threading.Thread):
     """Loudness of what the speakers are playing (the default output's monitor).
 
@@ -259,9 +254,10 @@ class Playback(threading.Thread):
 
     def run(self) -> None:
         while not self.stop.is_set():
-            device = monitor_of_output()
+            device = speaker_monitor()
             stream = mic_stream(device)
-            while not self.stop.is_set() and (samples := read_frame(stream)) is not None and device == monitor_of_output():
+            while (not self.stop.is_set() and (samples := read_frame(stream)) is not None
+                   and device == speaker_monitor()):  # a call started or ended: follow it
                 self.levels.append(level(samples.astype(np.float32) / 32768))
                 self.at = time.monotonic()
             stream.terminate()
