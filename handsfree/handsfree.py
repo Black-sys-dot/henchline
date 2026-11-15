@@ -68,6 +68,7 @@ def ring(why: str) -> int:
     except (OSError, ValueError) as exc:
         print(f"couldn't ring: {exc}")
         return 1
+    RANG.parent.mkdir(parents=True, exist_ok=True)
     RANG.touch()
     log(HANDSFREE_LOG, f"rang the user ({who})")
     print("rang")
