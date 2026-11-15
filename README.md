@@ -102,9 +102,21 @@ Log: `~/.local/state/ptt/handsfree.log` (events, no words)
 - The round button shows hands-free's state in the tray's colours (green listening, red recording, yellow transcribing, grey only the button gets in). **Hold** it to talk; **tap** it to turn the open line off in a noisy place, so noise cannot cut the agent off, and on again.
 - The chat shows what the agents say and when a spoken message went out; typed messages go to the agent that spoke last, and typed switch commands switch.
 - Nothing is typed while the laptop's screen is locked: agents in a terminal tab still get your words (over Konsole's D-Bus, no keys), the Cursor editor does not. Cursor's command-line agent in a terminal tab works.
-- Keep the page in front: phone browsers may stop the microphone in the background.
+- Keep the page in front: phone browsers may stop the microphone in the background (the Android app does not).
 
 `--host tailscale` keeps the self-signed way even when `tailscale serve` would work.
+
+### The Android app
+
+`call/android/` is the same call as an Android app (Kotlin, OkHttp, Android 10+). The call runs in a foreground service, so it keeps going with the screen off or the app in the background, which a browser tab does not; the phone's own voice-call audio cancels its echo, and the voice goes to earbuds or a headset when there are some, else the loudspeaker. The screen is the page's: who you talk to, the round talk button, the chat. Build and install over USB (needs the Android SDK, platform 35):
+
+```bash
+cd call/android
+echo "sdk.dir=$HOME/Android/Sdk" > local.properties   # where your SDK is
+./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
+On first Call it asks for the page's address (`https://<laptop's Tailscale name>/`); long-press Call to change it.
 
 ## License
 

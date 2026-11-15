@@ -1,0 +1,4 @@
+# Build output and this machine's SDK path
+build/
+.gradle/
+local.properties
