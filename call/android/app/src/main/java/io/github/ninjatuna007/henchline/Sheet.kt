@@ -58,12 +58,14 @@ class Sheet(
         sheet.addView(View(activity).apply { background = rounded(colour(R.color.muted), 2f) },
             LinearLayout.LayoutParams(px(36), px(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = px(16) })
         sheet.addView(TextView(activity).apply {
-            this.text = "Share with your crew"
+            this.text = if (over) "Send to ${crew.firstOrNull { it.first == picked }?.second?.substringBefore(",") ?: "this agent"}"
+                        else "Share with your crew"
             setTextColor(colour(R.color.text)); textSize = 22f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         })
         sheet.addView(preview(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
             .apply { topMargin = px(14) })
-        sheet.addView(TextView(activity).apply {
+        // From a chat's paperclip it goes to that chat's agent: no one to pick (the user's wish, 2026-11-15)
+        if (!over) sheet.addView(TextView(activity).apply {
             this.text = "SEND TO"; setTextColor(colour(R.color.muted)); textSize = 12f; letterSpacing = 0.08f
             typeface = Typeface.DEFAULT_BOLD
         }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = px(20) })
@@ -99,7 +101,7 @@ class Sheet(
                 setOnClickListener { picked = session; draw() }
             }, LinearLayout.LayoutParams(px(104), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = px(10) })
         }
-        sheet.addView(HorizontalScrollView(activity).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
+        if (!over) sheet.addView(HorizontalScrollView(activity).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = px(10) })
         val note = EditText(activity).apply {
             hint = "Add a few words (optional)"; setText(note0); setHintTextColor(colour(R.color.muted)); setTextColor(colour(R.color.text))
