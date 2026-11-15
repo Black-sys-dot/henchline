@@ -26,6 +26,7 @@ import ssl
 import subprocess
 import sys
 import time
+import urllib.parse
 from pathlib import Path
 
 from aiohttp import WSMsgType, web
@@ -48,6 +49,7 @@ CHUNK = SPEAKER_RATE // 50 * 2  # bytes of s16 mono sent to the phone at a time:
 
 STATUS_EVERY = 0.2  # seconds between looks at what hands-free and talkback are doing
 AGENTS_EVERY = 3.0  # seconds between looks at which agents can be switched to
+RING_HOSTS = ("ntfy.sh",)  # where Henchline's UnifiedPush addresses may live: the ntfy app's server
 HANGUP_SAY, HANGUP_MAX = 0.5, 10.0  # a hang-up waits for talkback to finish (its queue empty, nothing playing),
 # at least this long for the goodbye to be queued, and at most this: past it the call ends even mid-sentence
 
@@ -196,8 +198,13 @@ def flag(path: Path, on: bool) -> None:
 async def from_page(message: dict, ear: Ear) -> str:
     """The talk button held or let go, a switch, or a typed chat message; a note for the page, if any."""
     if "ring_endpoint" in message:  # where `handsfree ring` reaches the app: kept private, never logged
-        CALL_RING.write_text(str(message["ring_endpoint"]))
-        CALL_RING.chmod(0o600)
+        url = urllib.parse.urlsplit(str(message["ring_endpoint"]))
+        if url.scheme != "https" or url.hostname not in RING_HOSTS:  # only the phone's distributor, nobody's URL
+            log(HANDSFREE_LOG, f"call: refused a ring address on {url.hostname or 'no host'} "
+                               f"(not {', '.join(RING_HOSTS)})")
+            return ""
+        with os.fdopen(os.open(CALL_RING, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "w") as out:
+            out.write(url.geturl())
     elif "sound" in message:  # the app's sound mode: turns after this line ran in it, for comparing them
         log(HANDSFREE_LOG, f"call: phone sound {message['sound']}")
     elif "stats" in message:

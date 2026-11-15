@@ -335,7 +335,8 @@ class MainActivity : Activity() {
         val shown = if (on) View.VISIBLE else View.GONE
         talk.visibility = shown
         findViewById<View>(R.id.inputRow).visibility = shown
-        findViewById<View>(R.id.idle).visibility = if (on || chat.childCount > 0) View.GONE else View.VISIBLE
+        chatScroll.visibility = shown  // off a call: the henchman and how to call, not the last call's chat
+        findViewById<View>(R.id.idle).visibility = if (on) View.GONE else View.VISIBLE
         showClear(CallService.Bus.service?.clear ?: prefs().getBoolean("clear", true))
         if (!on) {
             state.text = "Not connected"

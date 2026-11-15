@@ -22,11 +22,15 @@ RAW = HERE / "app/src/main/res/raw"
 RATE = 24000
 HENCH_SPEED = 1.5  # how much quicker (and so higher: about seven semitones) a henchman says it
 VOICES = {"claude": "af_heart", "cursor": "af_bella", "codex": "bf_alice", "handsfree": "bm_george"}  # talkback's
-PHRASES = {
-    "claude": ["Bossa! Bossa! Pikka-upa, calla calla!", "Heeya boss! Tinka-tonk, I have newsa!"],
-    "cursor": ["Blip blip, boss-o! Clicka clicka, pick-a-up!", "Ooh la boss! Codey-codey ready-o!"],
-    "codex": ["Bee-doo, bee-doo! Jobba donezo, boss-ah!", "Wahoo! Tasko complito, come see-o!"],
-    "handsfree": ["Ringa-dinga, bossa! Is the crew-ah!", "Pssst, boss! Henchy-henchy calling!"],
+PHRASES = {  # Minion-style: a bouncy jumble of Spanish, Italian, French and English, with giggles
+    "claude": ["Boss-a! Ooh la la, pikka pikka! Para tu, mucho importanto! Hee hee!",
+               "Kanpai, boss-a! Tasko finito, si si si! Hee hee!"],
+    "cursor": ["Ay ay ay, boss-o! Clicka clicka, me so ready-o! Tank yu!",
+               "Ohh, boss-o! Codey codey, la bella codey! Hee hee!"],
+    "codex": ["Wahoo! Boss-ah, jobba donezo, para tu! Hee hee hee!",
+              "Mira mira, boss-ah! Tutti complito, si! Wahoo!"],
+    "handsfree": ["Psst psst, boss-a! La crew-a, calla calla! Hee hee!",
+                  "Ooh! Boss-a, ringa ringa! Pikka upa, si? Hee hee!"],
 }
 
 

@@ -94,16 +94,24 @@ class IncomingActivity : Activity() {
         main.postDelayed({ sayAgain() }, SAY_EVERY)
     }
 
+    /** A sound that won't load just isn't played: the screen, its buttons and the time-out go on. */
     private fun player(id: Int, loop: Boolean, volume: Float): MediaPlayer? {
         if (id == 0) return null
-        return MediaPlayer().apply {
-            setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
-                .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
-            resources.openRawResourceFd(id).use { setDataSource(it.fileDescriptor, it.startOffset, it.length) }
-            isLooping = loop
-            setVolume(volume, volume)
-            prepare()
-            if (loop) start()
+        val sound = MediaPlayer()
+        return try {
+            sound.apply {
+                setAudioAttributes(AudioAttributes.Builder().setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                    .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION).build())
+                resources.openRawResourceFd(id).use { setDataSource(it.fileDescriptor, it.startOffset, it.length) }
+                isLooping = loop
+                setVolume(volume, volume)
+                prepare()
+                if (loop) start()
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("Henchline", "ring sound failed: ${e.message}")
+            sound.release()
+            null
         }
     }
 

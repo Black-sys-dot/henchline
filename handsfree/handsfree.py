@@ -62,9 +62,9 @@ def ring(why: str) -> int:
     speaker = last_speaker()
     who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
     if CALL_RING.exists():  # Henchline's own push address: a full-screen call, the agent's henchman and ringtone
-        ring = json.dumps({"agent": speaker.agent if speaker else "handsfree", "why": why}).encode()
+        body = json.dumps({"agent": speaker.agent if speaker else "handsfree", "why": why}).encode()
         try:
-            urllib.request.urlopen(urllib.request.Request(CALL_RING.read_text().strip(), data=ring,
+            urllib.request.urlopen(urllib.request.Request(CALL_RING.read_text().strip(), data=body,
                                                           headers={"Content-Type": "application/json"}),
                                    timeout=10).close()
             RANG.parent.mkdir(parents=True, exist_ok=True)
