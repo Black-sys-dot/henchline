@@ -3,11 +3,12 @@
 
     call/server.py [--port 8790] [--host serve|tailscale|ADDRESS] [--cert PEM --key PEM]
 
-It sits behind `tailscale serve`, at https://<this machine's Tailscale name>/
-with a real certificate, once Tailscale lets this user configure it (`sudo
-tailscale set --operator=$USER`, once); until then on this machine's Tailscale
-address, with its own certificate (install.sh call makes one; the phone
-accepts it once). Only your own devices reach it. Open the address and tap
+It listens on this machine's Tailscale address, so your own devices (and
+programs on this machine) reach it and nothing else does. In front of it,
+`tailscale serve` gives https://<this machine's Tailscale name>/ with a real
+certificate, once Tailscale lets this user configure it (`sudo tailscale set
+--operator=$USER`, once); until then the page has its own certificate
+(install.sh call makes one; the phone accepts it once). Open the address and tap
 Call. While a call is up, two virtual sinks exist: the phone's mic is played
 into PHONE_MIC, whose monitor hands-free listens to, and talkback plays into
 PHONE_SPEAKER, whose monitor is streamed back to the phone. The phone's
@@ -299,16 +300,25 @@ async def call(request: web.Request) -> web.WebSocketResponse:
     return ws
 
 
-def serve(port: int) -> str:
-    """Put the page behind `tailscale serve` (https on this machine's Tailscale name, a real certificate):
-    the address to listen on, or "tailscale" when Tailscale won't (`sudo tailscale set --operator=$USER`
-    lets this user configure it, once)."""
-    done = subprocess.run(["tailscale", "serve", "--bg", "--https=443", f"http://127.0.0.1:{port}"],
-                          capture_output=True, text=True)
+def serve(address: str, port: int) -> bool:
+    """Put the page behind `tailscale serve` (https on this machine's Tailscale name, a real certificate).
+
+    The proxy points at the Tailscale address, not 127.0.0.1, so the page's own socket stays where it was:
+    reachable from your devices (and, as any address of this machine, from programs on it), and nothing
+    more. False when Tailscale won't (`sudo tailscale set --operator=$USER` lets this user configure it,
+    once) or its https root already serves something else, which is left alone.
+    """
+    target = f"http://{address}:{port}"
+    status = subprocess.run(["tailscale", "serve", "status"], capture_output=True, text=True).stdout
+    root = re.search(r"\|-- / proxy (\S+)", status)
+    if root and root.group(1) != target:
+        log(HANDSFREE_LOG, f"tailscale serve already proxies {root.group(1)}: left alone, own certificate instead")
+        return False
+    done = subprocess.run(["tailscale", "serve", "--bg", "--https=443", target], capture_output=True, text=True)
     if done.returncode != 0:
-        log(HANDSFREE_LOG, f"tailscale serve refused ({done.stderr.strip()[:120]}): the Tailscale address instead")
-        return "tailscale"
-    return "127.0.0.1"
+        log(HANDSFREE_LOG, f"tailscale serve refused ({done.stderr.strip()[:120]}): own certificate instead")
+        return False
+    return True
 
 
 def main() -> int:
@@ -318,25 +328,31 @@ def main() -> int:
                         "works when `tailscale serve` is not available; the phone accepts it once")
     parser.add_argument("--key", type=Path)
     parser.add_argument("--host", default="serve",
-                        help="serve (default): 127.0.0.1 behind `tailscale serve`, at https://<this machine's "
-                             "Tailscale name>/ with a real certificate, falling back to `tailscale` when this user "
-                             "may not configure Tailscale; tailscale: this machine's Tailscale address, with --cert; "
-                             "either way only your own devices reach it")
+                        help="serve (default): behind `tailscale serve`, at https://<this machine's Tailscale name>/ "
+                             "with a real certificate, falling back to `tailscale` when this user may not configure "
+                             "Tailscale; tailscale: this machine's Tailscale address, with its own certificate. "
+                             "Either way the socket is on the Tailscale address: your devices reach it")
     args = parser.parse_args()
-    if args.host == "serve":
-        args.host = serve(args.port)
-    if not in_call():  # leftovers from a crash: the marker, and the call's sinks (never a live call's)
-        CALL.unlink(missing_ok=True)
-        for line in pactl("list", "short", "modules").splitlines():
-            found = re.search(r"sink_name=(\S+)", line)
-            if "module-null-sink" in line and found and found.group(1) in (PHONE_MIC, PHONE_SPEAKER):
-                pactl("unload-module", line.split()[0])
+    if in_call():  # another server has a call up: starting would repoint the proxy away from it
+        print("a call is up on another call server; not starting", file=sys.stderr)
+        return 1
+    CALL.unlink(missing_ok=True)  # leftovers from a crash: the marker, and the call's sinks
+    for line in pactl("list", "short", "modules").splitlines():
+        found = re.search(r"sink_name=(\S+)", line)
+        if "module-null-sink" in line and found and found.group(1) in (PHONE_MIC, PHONE_SPEAKER):
+            pactl("unload-module", line.split()[0])
     app = web.Application()
     app.router.add_get("/", lambda _: web.FileResponse(HERE / "page.html"))
     app.router.add_get("/call", call)
-    if args.host == "tailscale":
-        args.host = subprocess.run(["tailscale", "ip", "-4"], capture_output=True, text=True).stdout.split()[0]
-    if args.cert is None and args.host != "127.0.0.1" and (CALL_TLS / "cert.pem").exists():
+    proxied = False
+    if args.host in ("serve", "tailscale"):
+        mode, args.host = args.host, subprocess.run(["tailscale", "ip", "-4"], capture_output=True,
+                                                    text=True).stdout.split()[0]
+        proxied = mode == "serve" and args.cert is None and serve(args.host, args.port)
+    if args.cert is None and not proxied:
+        if not (CALL_TLS / "cert.pem").exists():  # plain http: the phone's browser would refuse the mic
+            print(f"no certificate in {CALL_TLS} and no tailscale serve: ./install.sh call", file=sys.stderr)
+            return 1
         args.cert, args.key = CALL_TLS / "cert.pem", CALL_TLS / "key.pem"
     tls = None
     if args.cert:

@@ -8,6 +8,8 @@ Type=simple
 ExecStart=%h/.local/bin/voice-call
 Restart=on-failure
 RestartSec=5
+# The https name would otherwise answer 502 while no call page runs; only ours is taken down
+ExecStopPost=-/bin/sh -c 'tailscale serve status 2>/dev/null | grep -q ":8790" && tailscale serve --https=443 off'
 Environment=DISPLAY=:0
 Environment=XAUTHORITY=%h/.Xauthority
 Environment=DBUS_SESSION_BUS_ADDRESS=unix:path=%t/bus
