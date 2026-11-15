@@ -151,6 +151,10 @@ def typed(words: str) -> None:
 
 
 async def call(request: web.Request) -> web.WebSocketResponse:
+    # Browsers let any web page open a WebSocket to any address: only the call page itself may, or a page
+    # on some other site, open on the phone, could type into the agents' terminals
+    if request.headers.get("Origin") != f"https://{request.host}":
+        raise web.HTTPForbidden(text="only the call page may connect")
     ws = web.WebSocketResponse(heartbeat=15)
     await ws.prepare(request)
     if CALL.exists():
