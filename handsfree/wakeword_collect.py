@@ -79,11 +79,12 @@ def save(folder: Path, name: str, audio: np.ndarray) -> None:
 def main() -> int:
     args = sys.argv[1:]
     word = "claude"
-    if args[:1] == ["--word"]:
-        if len(args) < 2 or args[1].lower() not in WORDS:
-            print(f"usage: wakeword_collect.py [--word {'|'.join(WORDS)}] [POSITION ...]", file=sys.stderr)
-            return 2
-        word, args = args[1].lower(), args[2:]
+    if "--word" in args:  # anywhere: the rest are positions
+        at = args.index("--word")
+        word, args = (args[at + 1].lower() if at + 1 < len(args) else ""), args[:at] + args[at + 2:]
+    if word not in WORDS or any(a.startswith("-") for a in args):
+        print(f"usage: wakeword_collect.py [--word {'|'.join(WORDS)}] [POSITION ...]", file=sys.stderr)
+        return 2
     published, folder = WORDS[word]
     wanted = set(args)
     positions = [p for p in POSITIONS if not wanted or p[0] in wanted]
