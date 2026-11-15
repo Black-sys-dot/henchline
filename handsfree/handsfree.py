@@ -42,7 +42,7 @@ from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import whisper  # noqa: E402
 from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_RING, CLOSE, HANDSFREE_LOG,  # noqa: E402
-                         HANDSFREE_ON, LISTEN, SPEAKERS, Speaker, in_call, last_speaker, log, release_phase,
+                         HANDSFREE_ON, LISTEN, SPEAKERS, Speaker, in_call, log, release_phase,
                          turn_on_handsfree)
 from voice.agents import identity  # noqa: E402
 from voice.state import HANDSFREE_UNIT as UNIT  # noqa: E402
@@ -118,8 +118,9 @@ def ring(why: str, now: bool = False, wait: bool = True) -> int:
 def caller() -> Speaker | None:
     """The agent running `handsfree ring`: its henchman, its name, and where the call goes. Not whoever
     spoke last (a Cursor ring was announced and answered as Claude, 2026-11-15)."""
-    _, session = identity()
-    return Speaker.load(SPEAKERS / f"{session}.json") or last_speaker()
+    agent, session = identity()
+    # Never heard through talkback: its name and henchman still, though hands-free can't type to it yet
+    return Speaker.load(SPEAKERS / f"{session}.json") or (Speaker(session, agent) if agent != "agent" else None)
 
 
 def ring_ended(who: str, what: str, code: int, topic: str = "", why: str = "") -> int:
