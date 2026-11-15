@@ -1,15 +1,14 @@
 <h1 align="center"><img src="docs/hero.svg" width="800" alt="Henchline: talk to all your AI henchmen. By voice, by phone, by text."></h1>
 
-You're the boss. Claude Code, Cursor and Codex are your crew, each busy in its own terminal or window. **Henchline is the line to all of them**: talk to them at your desk without touching the keyboard, call them from your phone when you're out, and let them ring or text you when they need a decision. Every henchman has its own voice, its own ringtone, its own chat. And it all runs on your own machine.
+<p align="center"><img src="docs/panels/boss.png" width="900" alt="You're the boss. Claude Code, Cursor and Codex are your crew, and Henchline is your line to all of them."></p>
 
-## Meet the crew
+Talk to them at your desk without touching the keyboard, call them from your phone when you're out, and let them ring or text you when they need a decision. Every henchman has its own voice, its own ringtone, its own chat. And it all runs on your own machine.
 
-| | | |
-|---|---|---|
-| <img src="docs/screens/call.png" width="260" alt="A call with Claude: the chat, the talk button"> | <img src="docs/screens/ring.png" width="260" alt="Claude is calling: full-screen ring"> | <img src="docs/screens/text.png" width="260" alt="A text from Claude, answered from the notification"> |
-| **Call your crew** from anywhere. Talk, or hold the button, or type. | **They ring you** when they need a decision: full screen, their own ringtone, a line of henchman-speak. | **They text you** when it can wait. Reply right from the notification. |
-| <img src="docs/screens/files.png" width="260" alt="A picture sent by Claude in the chat"> | <img src="docs/screens/crew.png" width="260" alt="The crew drawer: every agent with its henchman"> | <img src="docs/screens/share.png" width="260" alt="Sharing a photo to Henchline"> |
-| **Files both ways.** Pictures and audio play right in the chat. | **A chat per henchman**, kept on your phone, readable any time. | **Share anything** from any app, to the agent whose chat is open. |
+<p align="center">
+<img src="docs/panels/ring.png" width="900" alt="They ring you: full screen with the henchman, its ringtone and why it's calling; a banner while you use the phone">
+<img src="docs/panels/talk.png" width="900" alt="Talk or text, any time: a chat per henchman, and texts you answer from the notification">
+<img src="docs/panels/files.png" width="900" alt="Files both ways, your whole crew: share anything to the henchman you pick; the crew menu">
+</p>
 
 ## What it does
 
@@ -22,10 +21,10 @@ You're the boss. Claude Code, Cursor and Codex are your crew, each busy in its o
 
 **Away from it: the Henchline app**
 
-- 📞 **Call your crew** over your own Tailscale network. The laptop stays quiet; your phone is its mic and speaker. Open line, hold-to-talk, or typed; your words show in the chat exactly as they were heard.
-- 🔔 **They ring you.** `handsfree ring "the build finished, want me to deploy?"` rings your phone: full screen when it's locked, a ringing banner while you use it, with the henchman's own tone and phrase (**[hear Claude](call/android/app/src/main/res/raw/banner_claude.wav)**, [Cursor](call/android/app/src/main/res/raw/banner_cursor.wav), [Codex](call/android/app/src/main/res/raw/banner_codex.wav)). Answer, and you're talking to the one who rang. The agent learns whether you answered, declined, missed it, or were out of reach. Your own agents get through Do Not Disturb; nobody else does.
+- 📞 **Call your crew** over your own Tailscale network. Your computer stays quiet; your phone is its mic and speaker. Open line, hold-to-talk, or typed; your words show in the chat exactly as they were heard.
+- 🔔 **They ring you.** `handsfree ring "the build finished, want me to deploy?"` rings your phone: full screen when it's locked, a ringing banner while you use it, with the henchman's own tone and phrase (hear [Claude](call/android/app/src/main/res/raw/banner_claude.wav), [Cursor](call/android/app/src/main/res/raw/banner_cursor.wav) and [Codex](call/android/app/src/main/res/raw/banner_codex.wav): the sound files open on GitHub with a play button). Answer, and you're talking to the one who rang. The agent learns whether you answered, declined, missed it, or were out of reach. Your own agents get through Do Not Disturb; nobody else does.
 - 💬 **They text you.** `handsfree text "tests are green"`: a message with a reply box. Your reply is typed into that agent's terminal, and only that one's. Start a text from any agent's chat in the app, too.
-- 📎 **Files both ways.** Share a photo, a voice memo, a zip, a video from any app, or tap the paperclip: it lands on the laptop and the agent is told where. An agent runs `handsfree send report.pdf "here you go"` and it shows in its chat.
+- 📎 **Files both ways.** Share a photo, a voice memo, a zip, a video from any app, or tap the paperclip: it lands on your computer and the agent is told where. An agent runs `handsfree send report.pdf "here you go"` and it shows in its chat.
 - 🗂 **A chat per henchman**, kept on the phone, your terminal conversation mirrored into it during a call.
 - 🎧 **Earbuds as push-to-talk**: tap to talk, tap to send, the phone stays in your pocket. Talk/Send and Hang up on the lock screen, and a Quick Settings tile if you want one.
 
@@ -36,16 +35,10 @@ One snippet (`agents/AGENTS-snippet.md`) teaches every agent (Claude Code, Curso
 ## Yours, and only yours
 
 - **Local.** Whisper hears you and Kokoro speaks, on your machine. No cloud speech, no relay, no account.
-- **Your network.** The phone reaches the laptop over your own Tailscale; only your devices can.
+- **Your network.** The phone reaches your computer over your own Tailscale; only your devices can.
 - **Any agent.** Not tied to one vendor: if it runs in a terminal or in Cursor, it's on the crew.
 - **Your voice stays yours.** Record the henchman phrases in your own voice; they stay on your phone, never in the repository.
 - **Careful by default.** Rings and replies use one-time secret addresses; secrets in what you type are masked before they reach the phone; a text goes to exactly the agent you texted.
-
-## How it compares
-
-Pieces of this exist elsewhere: each vendor's own remote control (Claude Code's Remote Control and Channels, Codex in the ChatGPT app, Cursor's iOS app) works with its own agent through its cloud; [Happy](https://github.com/slopus/happy) and Omnara are phone apps for Claude Code and Codex with cloud voice; [CallMe](https://github.com/ZeframLou/call-me) and [Better Call Claude](https://github.com/sns45/better-call-claude) let Claude Code phone you through Twilio; [TalkiTo](https://github.com/robdmac/talkito) gives Claude Code and Codex a voice and Slack/WhatsApp chat; [VoiceMode](https://github.com/mbailey/voicemode) gives one agent local two-way voice. As far as a search in November 2026 found, none puts several agents at once, hands-free conversation with spoken handoff, and your own calling, ringing and texting app together, locally. If you know one that does, please open an issue.
-
-It began as **copilot-ptt**, a push-to-talk key, which it still is: see [Push-to-talk](#push-to-talk). Linux on X11 today (KDE Plasma, or any X11 desktop); Wayland is welcome.
 
 ## What is in here
 
@@ -60,14 +53,7 @@ It began as **copilot-ptt**, a push-to-talk key, which it still is: see [Push-to
 
 ## Desktops
 
-Everything the tools need from the desktop (the focused window, raising a window, keys, the clipboard, typing into a terminal tab) goes through one interface, `voice/desktop.py`. Two implementations exist:
-
-- **KDE Plasma on X11** (`voice/kde_x11.py`): Klipper for the clipboard, Konsole's D-Bus interface for terminal tabs.
-- **Any other X11 desktop** (`voice/generic_x11.py`): `xclip` for the clipboard; any terminal that sets `WINDOWID` and pastes with Ctrl+Shift+V (most do; plain xterm needs `XTerm*VT100.translations: #override Shift Ctrl <Key>V: insert-selection(CLIPBOARD)`, as the test sets). Hands-free raises the terminal, checks it really is in front, pastes and presses Enter.
-
-`tests/generic_x11/run.sh` proves the second one without touching your system: a throwaway Fedora container with a virtual screen, the Openbox window manager and two xterms, one running a pretend agent; it checks window lookup, focus, the clipboard, finding an agent's tab and typing a line into it (10 checks). It found two bugs that this laptop's KDE setup hid.
-
-Wayland is not implemented: a new module filling in the same interface is the way in, and pull requests are welcome.
+KDE Plasma on X11, or any other X11 desktop; everything the tools need from the desktop goes through one small interface, so Wayland is a module away (pull requests welcome). More: [voice/README.md](voice/README.md).
 
 ## Requirements
 
@@ -92,90 +78,45 @@ Each piece installs on its own and only what it needs. Python packages go into o
 
 ## Push-to-talk
 
-On Linux the Copilot key is a chord, Left Meta + Left Shift + F23. The desktop does not bind it to anything. Hold that key, or another key you choose. The microphone opens only while the key is down. Whisper runs on this machine, the text is pasted into the focused window, and Enter is pressed.
-
-People already remap that chord with [keyd](https://github.com/rvaiya/keyd) and with [remap-copilot](https://github.com/m-bartlett/remap-copilot). A few tools open a launcher from F23. Hold-to-talk with Whisper already exists as well. This program is those two ideas together.
-
-On some laptops the Copilot key sends the chord down and up immediately, so it cannot be held. This program needs a key that stays down while you speak. If yours does not, push-to-talk on that key will not work. Set another hotkey from the status icon.
-
-Hold the Copilot key, speak, release. A two-key hold stays one recording until both keys are up. The words are typed into the focused window. Okular and a Thunderbird mail window are left alone; a Thunderbird compose window still receives the paste and Enter. Holding the key also stops desktop speech from speech-dispatcher, if that is playing. Right-click the speech bubble for language, power, another hotkey, or to turn the chime off. The chime is the freedesktop sound `complete.oga` if that file is installed. A missing sound is skipped. `"chime_sound"` in the config can point at another file. The Copilot key stays on when another hotkey is set.
-
-Log: `~/.local/state/ptt/ptt.log`
-
-When the words go to a terminal, Cursor or Code window, a word said louder, higher or longer than the rest comes out as `*word*`, and an utterance that stands out from your usual voice ends with a note such as `[tone: loud, fast]` (`voice/tone.py`). Other windows get the plain text. Only numbers about the voice are kept, in `~/.local/state/ptt/voice.json`. `"hotwords"` in the config lists names Whisper should expect; keep it short.
-
-The listener writes `~/.local/state/ptt/phase` and `~/.local/state/ptt/target` (whether the paste went to an agent window, never the words) for a speech helper that should go quiet while you talk.
+Hold the Copilot key (or any key you choose), speak, let go: Whisper writes it down on your machine and it is typed into the window in front, with Enter. A stressed word arrives as `*word*`, an unusual tone as `[tone: loud, fast]`. Right-click the tray icon for language, power and the hotkey. More: [ptt/README.md](ptt/README.md).
 
 ## Talkback
 
-<img src="docs/peek_claude.svg" align="right" width="150" alt="">
+<img src="docs/peek_claude.svg" align="right" width="300" alt="">
 
-`talkback/` lets AI agents (Claude Code, Cursor, others that read a skill or rule) speak back through a local [Kokoro](https://github.com/thewh1teagle/kokoro-onnx) voice on the CPU. Each call to `talkback/scripts/say.py` joins one queue (`voice/spool.py`), played by one worker (`talkback/scripts/worker.py`), so agents never talk over each other; each agent has its own voice and introduces itself when the speaker changes. When push-to-talk or hands-free hears you, it goes quiet, holds what it had not said, and the agent decides whether to carry on, acknowledge, or answer you instead.
+Your agents speak their replies aloud, each in its own voice, one at a time, through Kokoro on your machine. They go quiet the moment you start talking. One snippet teaches every agent when and how to speak. More: [talkback/README.md](talkback/README.md).
 
-```bash
-./install.sh talkback agents   # the voice (downloads Kokoro, ~330 MB) + instructions for Claude Code, Cursor, Codex
-```
-
-`agents/` holds what the agents need to know, in one text for all of them (`AGENTS-snippet.md`); `./install.sh agents` wires it into Claude Code, Cursor and Codex if they are installed, and `agents/README.md` shows where other agents look. Say "talk back" to an agent to turn it on.
+<br clear="right">
 
 ## Hands-free
 
-<img src="docs/peek_handsfree.svg" align="right" width="150" alt="">
+<img src="docs/peek_handsfree.svg" align="left" width="300" alt="">
 
-`handsfree on` talks to the same agents without a key (`handsfree/handsfree.py` is the command; `listener.py` decides when to listen, `sensing.py` hears the mic, wake word, earbuds and speakers, `routing.py` picks the agent and types to it, `tray.py` is the icon; user unit `handsfree/handsfree.service`; `./install.sh handsfree` installs it with talkback, and `handsfree on` also starts it at every login). Its echo canceller (`handsfree/talkback-echo-cancel.conf`, its own user unit) captures the mic on the same sound card as the speakers, which shares their clock; the installer picks that mic. It listens for a few seconds after an agent speaks, while an agent speaks (talking over it stops it), and for a wake word the rest of the time. The words are typed into the Konsole tab of the agent that spoke last, prefixed `[hands-free · how it was heard]`. "Over" sends at once, "give me a minute" keeps listening, "never mind" drops it, "hands-free off" ends it. A tap on Bluetooth earbuds works like the wake word, silently: hands-free grabs the earbuds' media-key device ("… (AVRCP)") while it runs, so the tap does not also pause music, and lets go when it stops. Earbuds send those keys in their music profile (A2DP); in the headset profile a tap becomes a call command that never reaches hands-free. Hands-free listens through the laptop mic anyway, so music mode loses nothing.
+Talk to your agents without touching a key. Answer right after they speak; say *"hey Claude"* (your own trained wake word) or tap your earbuds the rest of the time. Talk over a reply to cut it off; *"over"* sends at once, *"give me a minute"* keeps listening, *"switch me to Cursor"* hands you over, announced out loud. An echo canceller keeps it from hearing itself. More: [handsfree/README.md](handsfree/README.md).
 
-**Keep laptop speakers moderate.** Near full volume, laptop speakers distort enough that no echo canceller can follow, and hands-free starts hearing its own voice as yours: it cuts itself off, and its own words can come back to the agent as your message. Measured on a Dell Precision 5690: at 80% the canceller left the agent's voice about 60 dB below the playback and nothing went wrong; at 100% only 6 to 13 dB, and it heard itself over and over. WebRTC's newer canceller (AEC3), tried on the same recordings, failed at the same moments, so this is not one canceller's bug. Up to 80% worked in our tests; with earbuds or headphones there is no echo to worry about. Talking over a clip stops it once about half a second of your voice has come through; a brief echo slip is shorter than that.
-
-Replies go to the agent that spoke last; switching is by voice.
-
-### Switching agents: fixed phrases, on purpose
-
-Switching recognises a handful of phrase shapes, not free-form language: there is no language model in the loop, by choice, to keep the dependencies small. Say the whole utterance as one of these (an agent name is Claude, Cursor or Codex; "in <workspace>" picks one of several):
-
-| Say | Does |
-|---|---|
-| "switch to Cursor", "hand it back to Claude", "pass me over to Cursor", "back to Claude", "let me talk to Cursor in copilot ptt", "put me through to Claude", "can you switch me to Cursor?" | your replies go to that agent from now on |
-| "send that to Claude" | forwards your last message there, and switches |
-| "…never mind / scratch that / forget what I said, hand this to Cursor" | drops what came before, then switches |
-| "who am I talking to?" | says who your replies go to |
-
-An agent asked to hand you over runs `handsfree switch claude|cursor|codex [workspace]`, which does the same and announces it (the agent snippet tells them to).
-
-A leading "okay", "no" or "actually" is fine. Anything negated ("don't switch me to Claude") or longer is an ordinary message to the current agent. A switch never sends your words anywhere by itself and is announced out loud, so a misheard one is undone with "back to …". `handsfree listen N` and `handsfree close` widen or close the window.
-
-The wake word is a personal detector: `handsfree/wakeword_collect.py` records you at a few spots around the house, `handsfree/wakeword_train.py` fits it on openWakeWord embeddings (`pip install --user --no-deps openwakeword`; its TFLite dependency has no Python 3.12 build), and Whisper confirms each candidate on just those two seconds.
-
-Log: `~/.local/state/ptt/handsfree.log` (events, no words)
+<br clear="left">
 
 ## Phone call
 
-<img src="docs/peek_cursor.svg" align="right" width="150" alt="">
+<img src="docs/peek_cursor.svg" align="right" width="300" alt="">
 
-`./install.sh call` runs a small web server (`call/server.py`, user unit `call.service`) on the laptop's Tailscale address, so only your own devices (and programs on the laptop) reach it, behind `tailscale serve` at `https://<laptop's Tailscale name>/` with a real certificate. Tailscale must let your user configure it, once: `sudo tailscale set --operator=$USER` (and HTTPS enabled for the tailnet). Until then it listens on the laptop's Tailscale address with a certificate of its own (`https://<laptop's Tailscale IP>:8790`; the phone accepts it once). Open the address on the phone and tap **Call**: your mic goes into a virtual sink that hands-free listens to instead of the laptop mic, and talkback plays into another one that is streamed to the phone, so the laptop stays quiet. The phone's browser cancels its own echo. A call turns hands-free and talkback on, and leaves them on when it ends.
+The same conversation from your phone, over your own Tailscale network: `./install.sh call` runs a small server only your devices can reach. Your phone becomes the mic and speaker; the computer stays quiet. Open line, hold-to-talk or typed, a chat per agent, and switching by voice as at your desk. More: [call/README.md](call/README.md).
 
-- On a call the line is open: just talk, no wake word needed; talking over the agent and switching agents work as at home.
-- The round button shows hands-free's state in the tray's colours (green listening, red recording, yellow transcribing, grey only the button gets in). **Hold** it to talk; **tap** it to turn the open line off in a noisy place, so noise cannot cut the agent off, and on again.
-- The chat shows what the agents say and when a spoken message went out; typed messages go to the agent that spoke last, and typed switch commands switch.
-- Nothing is typed while the laptop's screen is locked: agents in a terminal tab still get your words (over Konsole's D-Bus, no keys), the Cursor editor does not. Cursor's command-line agent in a terminal tab works.
-- Keep the page in front: phone browsers may stop the microphone in the background (the Android app does not).
+<br clear="right">
 
-`--host tailscale` keeps the self-signed way even when `tailscale serve` would work.
+### Henchline, the Android app
 
-### The Android app
+<img src="docs/peek_codex.svg" align="left" width="300" alt="">
 
-<img src="docs/peek_codex.svg" align="right" width="150" alt="">
+The call as a real app (Android 10+): it keeps going with the screen off, rings full screen with each henchman's own tone, takes texts you reply to from the notification, carries files both ways, keeps a chat per agent, and turns your earbuds into push-to-talk. Build it with `./gradlew assembleDebug` in `call/android/` and install over USB. More: [call/android/README.md](call/android/README.md).
 
-`call/android/` is **Henchline**, the same call as an Android app (Kotlin, OkHttp, Android 10+): you, calling your crew of agents. The call runs in a foreground service, so it keeps going with the screen off or the app in the background, which a browser tab does not; the phone's own voice-call audio cancels its echo, and the voice goes to earbuds or a headset when there are some, else the loudspeaker. The screen is the page's: who you talk to, the round talk button, the chat. Build and install over USB (needs the Android SDK, platform 35):
+<br clear="left">
 
-```bash
-cd call/android
-echo "sdk.dir=$HOME/Android/Sdk" > local.properties   # where your SDK is
-./gradlew assembleDebug && adb install -r app/build/outputs/apk/debug/app-debug.apk
-```
+## Alternatives
 
-Its seven interface icons are Google's Material Design icons, under the Apache License 2.0 (`call/android/LICENSE-MATERIAL-ICONS`); the henchmen, and you as their boss next to your own messages, are drawn by `call/android/avatars.py`. On first Call it asks for the page's address (`https://<laptop's Tailscale name>/`); the ⚙ button changes it, and "Clear voice" for the next call (on by default: media sound, with the phone's own echo canceller where it has one; off: the phone-call path, muffled but with the phone's call processing). The Sound button under the talk button switches the current call between the two. Saying "hang up" or "end the call" ends the call from the laptop (an agent can run `handsfree hangup`); a typed "hang up" goes to the agent as a message, the app's Hang up button is for that. `handsfree ring "why"` asks you to call: an ntfy notification (topic read from `~/.config/ptt/ntfy-topic`) whose Answer opens Henchline on an incoming-call screen (Answer connects; the henchline://call link alone never turns the mic on, since any app could open it), at most once every two minutes (`--now` when you asked for the ring). Henchline reports back how the ring went (rang, declined, missed, couldn't reach the laptop) on a one-time ntfy address the ring carries; like the push address it is a secret, never shown, used once. Going back out of the ring screen counts as declining it. It waits for the answer and tells the agent: exit 0 answered, 2 no answer, in which case a "Missed call from <agent>" notification with the reason is left in ntfy. The wait is up to a minute (a locked phone connects only once unlocked), so an agent should run it in the background and read the exit code, or pass `--no-wait`. Once Henchline has registered with the phone's UnifiedPush distributor (the ntfy app) and made a call, `handsfree ring` makes it ring full-screen instead: the calling agent's henchman, its own ringtone and a henchman-speak phrase (`call/android/ringtones.py`). The push address is kept in `~/.local/state/ptt/call.ring-endpoint` (private; only ntfy.sh addresses are accepted, so a self-hosted ntfy distributor needs its host added to `RING_HOSTS` in `call/server.py`) and works like an ntfy topic: whoever has it can make the phone ring. On a locked phone, Answer connects once the phone is unlocked. To ring in your own voice: `call/android/record_phrases.py` (each phrase on screen, recorded from your mic) and `call/android/henchify_takes.py` (cleaned and made henchman-sized) put your phrases into `app/src/debug/res/raw/`, which only your own build uses; it is git-ignored, and a pre-commit hook in your clone (`.git/hooks/pre-commit`, refusing that folder) keeps your voice out of the repository. The app trusts only real certificates, so it needs the `tailscale serve` address, not the self-signed fallback (`--host tailscale`). While you are using the phone, Android shows a ring as a banner instead of full screen; the banner then rings with the agent's tone and has Answer and Decline. The banner rings with the agent's tone and phrases mixed into one sound (`call/android/banner_mix.py`, run by `ringtones.py` and `henchify_takes.py`). Leaving the ring screen without a button keeps the call ringing as a banner until it times out; opening the app while it rings shows it with Answer and Decline; a call made by hand during a ring answers it. With Do Not Disturb access (the app asks once; or `adb shell cmd notification allow_dnd io.github.ninjatuna007.henchline`), rings get through Do Not Disturb, playing as an alarm while it is on. On a call, a Claude Code hook (`call/mirror.sh`, added to `~/.claude/settings.json` by `./install.sh call`; off a call it only tests a file) also puts what you type in the terminal and Claude's written replies (not its tool calls) into that agent's chat. The phone keeps them with the rest of the chat (90 days, app-private, not backed up); key blocks, tokens and passwords in common shapes are replaced by [hidden] first, but not everything secret has a recognisable shape. `call/claude_hooks.py remove` takes the hook out. A ring left as a banner and declined after the laptop stopped waiting leaves both a missed call in ntfy and the decline. Agents can text instead of ringing: `handsfree text "words"` shows a message notification on the phone with a reply box; the reply comes back to that agent tagged `[hands-free · texted from the phone]` (on a call the message goes to the chat instead). On a call, the earbuds' button (play/pause) is push-to-talk: a tap starts talking with a rising beep, the next tap sends with a falling one; the call's notification has the same Talk/Send button, on the lock screen too. A Quick Settings tile (call, or hang up) is there to add from the Quick Settings editor; Android never adds it by itself.
+Pieces of this exist elsewhere: each vendor's own remote control (Claude Code's Remote Control and Channels, Codex in the ChatGPT app, Cursor's iOS app) works with its own agent through its cloud; [Happy](https://github.com/slopus/happy) and Omnara are phone apps for Claude Code and Codex with cloud voice; [CallMe](https://github.com/ZeframLou/call-me) and [Better Call Claude](https://github.com/sns45/better-call-claude) let Claude Code phone you through Twilio; [TalkiTo](https://github.com/robdmac/talkito) gives Claude Code and Codex a voice and Slack/WhatsApp chat; [VoiceMode](https://github.com/mbailey/voicemode) gives one agent local two-way voice. As far as a search in November 2026 found, none puts several agents at once, hands-free conversation with spoken handoff, and your own calling, ringing and texting app together, locally. If you know one that does, please open an issue.
 
-Files go both ways. The paperclip beside the chat's message box attaches pictures or files for the agent whose chat is showing (with anything typed in the box). Share anything (pictures, video, audio, zips, documents, links) from any app's Share menu to Henchline: it uploads to the laptop over Tailscale into `~/Downloads/Henchline/<date>/` (nothing overwritten, refused if it would leave the laptop's disk under 2 GB free), and the agent you are talking to gets one message, tagged `[hands-free · shared from the phone]`, with each file's path, type and size and any words you added. An agent runs `handsfree send FILE [FILE ...] [WORDS]`: on a call the file appears in the chat (pictures shown, audio with a play button, anything else a card), otherwise as a notification (if that can't reach the phone, it waits for the next call's chat; ntfy only says a file is waiting, never its link). Keys and credentials (`~/.ssh`, `~/.gnupg`, `*.pem`, `id_*` and the like) are refused, but any other file an agent can read it can send: the agent is trusted with your files already. Opening one saves it to the phone's Downloads/Henchline and opens it there or in the app for its type. The laptop keeps an agent's file for a week at `/files/<secret>/<name>`; only the secret finds it, and only your own devices reach the server. Only pictures, audio and video are shown in a browser (sandboxed); anything else, HTML and SVG included, is served as a download, so a file can't run script on the call page's address. One upload is at most 16 GB. The call page shows them too. Henchline keeps each agent's chat on the phone (the newest 400 messages per agent session), readable off a call; files sent while no call was up land in that agent's chat as well.
+It began as **copilot-ptt**, a push-to-talk key, which it still is: see [Push-to-talk](#push-to-talk). Linux on X11 today (KDE Plasma, or any X11 desktop); Wayland is welcome.
 
 ## License
 

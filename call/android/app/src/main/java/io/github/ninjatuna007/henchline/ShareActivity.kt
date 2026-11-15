@@ -31,25 +31,25 @@ class ShareActivity : Activity() {
             return
         }
         val names = uris.map { Files.nameOf(this, it) }
-        val (session, agent) = current()
-        if (session.isEmpty() && CallService.Bus.service == null) {  // asked now, not after the files have gone up
+        val crew = crew()
+        if (crew.isEmpty()) {  // never on a call yet: nobody to pick from
             AlertDialog.Builder(this).setTitle("Henchline")
-                .setMessage("Open an agent's chat in Henchline first (the menu, top left), then share again.")
+                .setMessage("Call your crew once from Henchline, so it knows who's in it, then share again.")
                 .setPositiveButton("OK", null).setOnDismissListener { finish() }.show()
             return
         }
-        val note = EditText(this).apply { hint = "Add a few words (optional)" }
-        AlertDialog.Builder(this)
-            .setIcon(R.mipmap.ic_launcher)
-            .setTitle("Share with $agent")
-            .setMessage(if (uris.isEmpty()) text.take(300) else names.joinToString("\n").take(600))
-            .setView(LinearLayout(this).apply { setPadding(48, 8, 48, 0); addView(note) })
-            .setPositiveButton("Send") { _, _ ->
-                startForegroundService(UploadService.intent(this, uris, names, text, note.text.toString(), session))
-            }
-            .setNegativeButton("Cancel", null)
-            .setOnDismissListener { finish() }
+        Sheet(this, uris, names, text, crew, current().first.takeIf { s -> crew.any { it.first == s } } ?: crew[0].first)
             .show()
+    }
+
+    /** The crew to pick from: on a call, as the laptop lists it now; otherwise as it was on the last call. */
+    private fun crew(): List<Pair<String, String>> {
+        val raw = CallService.Bus.lastAgents?.let { org.json.JSONObject(it).optJSONArray("agents")?.toString() }
+            ?: getSharedPreferences("call", MODE_PRIVATE).getString("crew", "[]")
+        return try {
+            val list = org.json.JSONArray(raw)
+            (0 until list.length()).map { list.getJSONObject(it).getString("session") to list.getJSONObject(it).getString("name") }
+        } catch (_: Exception) { emptyList() }
     }
 
     /** The agent whose chat Henchline shows (kept across restarts): a share goes to that one, never elsewhere. */

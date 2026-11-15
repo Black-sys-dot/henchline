@@ -1,0 +1,163 @@
+package io.github.ninjatuna007.henchline
+
+import android.app.Activity
+import android.graphics.Color
+import android.graphics.Typeface
+import android.graphics.drawable.GradientDrawable
+import android.net.Uri
+import android.text.TextUtils
+import android.util.Size
+import android.view.Gravity
+import android.view.View
+import android.view.ViewGroup
+import android.view.animation.DecelerateInterpolator
+import android.view.inputmethod.EditorInfo
+import android.widget.Button
+import android.widget.EditText
+import android.widget.FrameLayout
+import android.widget.HorizontalScrollView
+import android.widget.ImageView
+import android.widget.LinearLayout
+import android.widget.TextView
+
+/**
+ * The share screen as a bottom sheet, in Material's way (the user's wish, 2026-11-15: the old dialog looked
+ * dated, and couldn't pick the agent): it slides up over the app that shared, shows what is being shared, the
+ * crew as a row of henchmen to tap (the one whose chat is open picked first), a note, and Send to the one picked.
+ */
+class Sheet(
+    private val activity: Activity,
+    private val uris: List<Uri>,
+    private val names: List<String>,
+    private val text: String,
+    private val crew: List<Pair<String, String>>,  // session, name
+    private var picked: String,
+) {
+    private val dp = activity.resources.displayMetrics.density
+    private fun px(v: Int) = (v * dp).toInt()
+    private fun colour(id: Int) = activity.getColor(id)
+    private fun rounded(fill: Int, radius: Float, stroke: Int = 0, strokeColour: Int = 0) = GradientDrawable().apply {
+        setColor(fill); cornerRadius = radius * dp
+        if (stroke > 0) setStroke(px(stroke), strokeColour)
+    }
+
+    fun show() {
+        val root = FrameLayout(activity).apply { setBackgroundColor(Color.parseColor("#99000000")) }
+        val sheet = LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            background = GradientDrawable().apply {
+                setColor(colour(R.color.surface))
+                cornerRadii = floatArrayOf(28 * dp, 28 * dp, 28 * dp, 28 * dp, 0f, 0f, 0f, 0f)
+            }
+            setPadding(px(24), px(12), px(24), px(24))
+            isClickable = true  // a tap on the sheet isn't a tap outside it
+        }
+        sheet.addView(View(activity).apply { background = rounded(colour(R.color.muted), 2f) },
+            LinearLayout.LayoutParams(px(36), px(4)).apply { gravity = Gravity.CENTER_HORIZONTAL; bottomMargin = px(16) })
+        sheet.addView(TextView(activity).apply {
+            this.text = "Share with your crew"
+            setTextColor(colour(R.color.text)); textSize = 22f; typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+        })
+        sheet.addView(preview(), LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = px(14) })
+        sheet.addView(TextView(activity).apply {
+            this.text = "SEND TO"; setTextColor(colour(R.color.muted)); textSize = 12f; letterSpacing = 0.08f
+            typeface = Typeface.DEFAULT_BOLD
+        }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = px(20) })
+        val send = Button(activity).apply {
+            isAllCaps = false; textSize = 16f; setTextColor(colour(R.color.navy))
+            typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+            background = rounded(colour(R.color.cyan), 24f); stateListAnimator = null
+        }
+        val chips = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        fun draw() {
+            for (i in 0 until chips.childCount) {
+                val chip = chips.getChildAt(i)
+                val on = chip.tag == picked
+                chip.background = rounded(if (on) colour(R.color.surface_high) else Color.TRANSPARENT, 20f, if (on) 2 else 1,
+                    if (on) colour(R.color.cyan) else colour(R.color.surface_high))
+            }
+            send.text = "Send to " + (crew.firstOrNull { it.first == picked }?.second?.substringBefore(",") ?: "your crew")
+        }
+        for ((session, name) in crew) {
+            chips.addView(LinearLayout(activity).apply {
+                tag = session
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER_HORIZONTAL
+                setPadding(px(10), px(10), px(10), px(8))
+                addView(ImageView(activity).apply { setImageResource(MainActivity.avatarOf(session)) }, LinearLayout.LayoutParams(px(52), px(52)))
+                addView(TextView(activity).apply {
+                    this.text = name.substringBefore(","); setTextColor(colour(R.color.text)); textSize = 13f; gravity = Gravity.CENTER
+                    setPadding(0, px(6), 0, 0)
+                })
+                addView(TextView(activity).apply {
+                    this.text = name.substringAfter(", ", ""); setTextColor(colour(R.color.muted)); textSize = 11f
+                    gravity = Gravity.CENTER; maxLines = 1; ellipsize = TextUtils.TruncateAt.END; maxWidth = px(96)
+                })
+                setOnClickListener { picked = session; draw() }
+            }, LinearLayout.LayoutParams(px(104), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = px(10) })
+        }
+        sheet.addView(HorizontalScrollView(activity).apply { isHorizontalScrollBarEnabled = false; addView(chips) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { topMargin = px(10) })
+        val note = EditText(activity).apply {
+            hint = "Add a few words (optional)"; setHintTextColor(colour(R.color.muted)); setTextColor(colour(R.color.text))
+            background = rounded(colour(R.color.navy), 16f, 1, colour(R.color.surface_high))
+            setPadding(px(16), px(14), px(16), px(14)); textSize = 15f
+            imeOptions = EditorInfo.IME_ACTION_DONE; inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+        }
+        sheet.addView(note, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = px(18) })
+        val buttons = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL or Gravity.END }
+        buttons.addView(Button(activity).apply {
+            this.text = "Cancel"; isAllCaps = false; textSize = 16f; setTextColor(colour(R.color.cyan))
+            setBackgroundColor(Color.TRANSPARENT); stateListAnimator = null
+            setOnClickListener { close() }
+        })
+        buttons.addView(send, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, px(48)).apply { marginStart = px(8) })
+        send.setPadding(px(24), 0, px(24), 0)
+        send.setOnClickListener {
+            activity.startForegroundService(UploadService.intent(activity, uris, names, text, note.text.toString(), picked))
+            close()
+        }
+        sheet.addView(buttons, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = px(20) })
+        draw()
+        root.addView(sheet, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        root.setOnClickListener { close() }
+        activity.setContentView(root)
+        sheet.translationY = 800 * dp
+        sheet.animate().translationY(0f).setDuration(280).setInterpolator(DecelerateInterpolator()).start()
+        this.sheet = sheet
+    }
+
+    private var sheet: View? = null
+
+    private fun close() {
+        val s = sheet ?: return activity.finish()
+        s.animate().translationY(s.height.toFloat()).setDuration(200).withEndAction { activity.finish() }.start()
+    }
+
+    /** What is being shared: a picture's thumbnail, else the names (or the text). */
+    private fun preview(): View {
+        val row = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = rounded(colour(R.color.navy), 16f); setPadding(px(12), px(12), px(12), px(12))
+        }
+        val first = uris.firstOrNull()
+        if (first != null && activity.contentResolver.getType(first)?.startsWith("image/") == true) {
+            val picture = try { activity.contentResolver.loadThumbnail(first, Size(px(64), px(64)), null) } catch (_: Exception) { null }
+            if (picture != null) row.addView(ImageView(activity).apply {
+                setImageBitmap(picture); scaleType = ImageView.ScaleType.CENTER_CROP; clipToOutline = true
+                background = rounded(Color.TRANSPARENT, 12f)
+            }, LinearLayout.LayoutParams(px(64), px(64)).apply { marginEnd = px(14) })
+        }
+        row.addView(TextView(activity).apply {
+            this.text = when {
+                uris.isEmpty() -> text.take(200)
+                uris.size == 1 -> names[0]
+                else -> "${uris.size} files: " + names.joinToString(", ")
+            }
+            setTextColor(colour(R.color.text)); textSize = 14f; maxLines = 3; ellipsize = TextUtils.TruncateAt.END
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        return row
+    }
+}
