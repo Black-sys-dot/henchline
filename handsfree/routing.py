@@ -123,7 +123,8 @@ def switch_to(speaker: Speaker) -> None:
 
 
 def hangup_request(text: str) -> bool:
-    """The turn asks to end the call: all of it, or its last clause after a short lead-in ("I'm in, hang up")."""
+    """The turn asks to end the call: all of it, or its last clause after a short lead-in ("I'm in, hang up").
+    The lead-in is everything before that clause, at most LEAD_IN_WORDS words, an agent's name included."""
     if HANGUP.match(text):
         return True
     last = CLAUSE.match(text)
