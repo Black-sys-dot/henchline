@@ -89,7 +89,7 @@ def ring(why: str, now: bool = False, wait: bool = True, done: bool = False) -> 
         topic = RING_TOPIC.read_text().strip()
     except OSError:
         topic = ""
-    speaker = caller()
+    speaker = caller(register=True)
     who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
     reply = f"henchline-{secrets.token_urlsafe(16)}"  # this ring's own, used once
     since = int(time.time()) - 1  # before the push: the phone may say "rang" before the push call returns
@@ -128,13 +128,15 @@ def ring(why: str, now: bool = False, wait: bool = True, done: bool = False) -> 
     return ring_ended(who, "rang, not answered", 2, topic, why)
 
 
-def caller() -> Speaker | None:
+def caller(register: bool = False) -> Speaker | None:
     """The agent running `handsfree ring`: its henchman, its name, and where the call goes. Not whoever
     spoke last (a Cursor ring was announced and answered as Claude, 2026-11-15)."""
     agent, session = identity()
     known = Speaker.load(SPEAKERS / f"{session}.json")
     if known or agent == "agent":
         return known
+    if not register:  # only a ring makes its caller known; a text or a file doesn't put it in the crew
+        return Speaker(session, agent)
     # Never heard through talkback: found now, as talkback would (its workspace, its terminal tab), and kept, so an
     # answered ring can be put through to it (a Cursor ring was routed to Claude, 2026-11-15). Not made the one
     # spoken words go to: that is still whoever spoke last, until the ring is answered

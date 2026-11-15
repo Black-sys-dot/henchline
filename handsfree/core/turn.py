@@ -194,7 +194,7 @@ class Turn:
             if heard is Heard.OVER_YOU:  # nothing said over a clip: our echo cut it; no cut-resume-cut loop
                 self.echo_slipped("echo cut a clip")
             return None
-        elif routing.deliver(rich, heard):
+        elif routing.deliver(rich, heard, to=to):  # the one noted as the target above: never a second choice
             whisper.ding(self.cfg)
             self.last_message = (rich, heard)
         return THINK_WINDOW if routing.THINK.search(text) else 0.0
