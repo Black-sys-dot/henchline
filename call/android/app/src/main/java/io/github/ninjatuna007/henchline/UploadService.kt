@@ -61,18 +61,26 @@ class UploadService : Service() {
     private fun share(uris: List<Uri>, names: List<String>, text: String, note: String, session: String): String {
         val origin = Files.origin(this) ?: return "Set the laptop's address in Henchline first."
         val saved = JSONArray()
+        val failed = mutableListOf<String>()  // the others still go, and the agent hears about those that arrived
         uris.forEachIndexed { i, uri ->
             val name = names.getOrNull(i) ?: "file"
-            val answer = post("$origin/share/file?name=${URLEncoder.encode(name, "UTF-8")}", origin,
-                Streamed(uri, name, i + 1, uris.size))
-            saved.put(answer.optString("saved").ifEmpty { return answer.optString("note", "The laptop didn't keep $name.") })
+            val answer = try {
+                post("$origin/share/file?name=${URLEncoder.encode(name, "UTF-8")}", origin, Streamed(uri, name, i + 1, uris.size))
+            } catch (e: Exception) {
+                JSONObject().put("note", e.message ?: "no connection")
+            }
+            answer.optString("saved").ifEmpty { null }?.let { saved.put(it) }
+                ?: failed.add("$name (${answer.optString("note", "not kept")})")
         }
+        if (uris.isNotEmpty() && saved.length() == 0) return "Not shared: ${failed.joinToString("; ")}"
         manager.notify(PROGRESS, progress("Telling your crew…", 0, 0))
         val told = post("$origin/share/tell", origin, JSONObject().put("files", saved).put("text", text).put("note", note)
             .put("session", session).toString().toRequestBody("application/json".toMediaTypeOrNull()))
-        val what = if (uris.isEmpty()) "that" else if (uris.size == 1) names.firstOrNull() ?: "the file" else "${uris.size} files"
-        return if (told.has("to")) "Shared $what with ${told.getString("to").substringBefore(",")}."
-        else "Saved $what on the laptop (Downloads/Henchline), but: ${told.optString("note")}"
+        val what = if (uris.isEmpty()) "that" else if (saved.length() == 1 && uris.size == 1) names.firstOrNull() ?: "the file"
+            else "${saved.length()} files"
+        val missing = if (failed.isEmpty()) "" else " Not sent: ${failed.joinToString("; ")}."
+        return (if (told.has("to")) "Shared $what with ${told.getString("to").substringBefore(",")}."
+        else "Saved $what on the laptop (Downloads/Henchline), but: ${told.optString("note")}") + missing
     }
 
     private fun post(url: String, origin: String, body: RequestBody): JSONObject =

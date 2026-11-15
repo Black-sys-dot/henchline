@@ -479,8 +479,8 @@ class MainActivity : Activity() {
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
-    /** Play and pause, streamed from the laptop: one sound at a time, and not over the call's own voices'
-     *  loudness (the call ducks it as it would music). */
+    /** Play and pause, streamed from the laptop: one sound at a time. On a call it plays alongside the agents'
+     *  voices (it asks for no audio focus of its own, so the call isn't paused for it). */
     private fun audioRow(url: String, name: String, size: Long): View {
         val row = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         val button = ImageButton(this).apply {

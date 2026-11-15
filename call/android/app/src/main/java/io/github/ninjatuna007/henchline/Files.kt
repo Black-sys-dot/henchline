@@ -107,7 +107,7 @@ object Files {
                 cached.parentFile?.mkdirs()
                 client.newCall(Request.Builder().url(address).build()).execute().use { answer ->
                     if (!answer.isSuccessful) return null
-                    val part = File(cached.path + ".part")
+                    val part = File(cached.path + "." + java.util.UUID.randomUUID() + ".part")  // two fetches never share one
                     part.outputStream().use { out -> answer.body!!.byteStream().copyTo(out) }
                     part.renameTo(cached)
                 }
