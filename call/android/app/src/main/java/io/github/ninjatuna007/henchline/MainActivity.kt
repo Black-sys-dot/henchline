@@ -129,18 +129,21 @@ class MainActivity : Activity() {
 
     /** What you attached, on your side of the chat: a picture small, anything else its name. */
     private fun attachedCard(uri: android.net.Uri, name: String) {
-        val bubble = say("you", "📎 $name", mine = true, session = current)
-        if (contentResolver.getType(uri)?.startsWith("image/") != true) return
-        Thread {
-            val picture = try { contentResolver.loadThumbnail(uri, android.util.Size(dp(220), dp(220)), null) } catch (_: Exception) { null }
-            main.post {
-                if (picture != null) {
-                    bubble.text = ""
-                    bubble.setCompoundDrawablesWithIntrinsicBounds(null,
-                        android.graphics.drawable.BitmapDrawable(resources, picture), null, null)
-                }
-            }
-        }.start()
+        val thumb = Files.keepThumb(this, uri)
+        val line = JSONObject().put("from", "you").put("mine", true).put("text", "📎 $name")
+        thumb?.let { line.put("thumb", it) }
+        Chats.add(this, current, line)
+        if (thumb != null) picture(thumb, "📎 $name", current) else say("you", "📎 $name", mine = true, session = current, keep = false)
+    }
+
+    /** A picture you sent, from its small copy: shown on your side of the chat, its name under it. */
+    private fun picture(thumb: String, caption: String, session: String) {
+        val bubble = say("you", caption, mine = true, session = session, keep = false)
+        val bitmap = android.graphics.BitmapFactory.decodeFile(thumb) ?: return
+        val width = dp(220)
+        val shown = android.graphics.Bitmap.createScaledBitmap(bitmap, width, bitmap.height * width / bitmap.width, true)
+        bubble.setCompoundDrawablesWithIntrinsicBounds(null, android.graphics.drawable.BitmapDrawable(resources, shown), null, null)
+        bubble.compoundDrawablePadding = dp(8)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -543,6 +546,7 @@ class MainActivity : Activity() {
         for (line in Chats.load(this, current)) {
             val file = line.optJSONObject("file")
             if (file != null) fileCard(line.optString("from"), file, current, keep = false)
+            else if (line.has("thumb")) picture(line.getString("thumb"), line.optString("text"), current)
             else say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"), session = current, keep = false)
         }
         if (!CallService.Bus.connected) showConnected(false)  // off a call: the chat if there is one, else the henchman

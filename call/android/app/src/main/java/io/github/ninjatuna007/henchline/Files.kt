@@ -141,6 +141,21 @@ object Files {
             .build())
     }
 
+    /** A small copy of a picture you send (shared or attached), kept with the chats: the chat shows it later, when
+     *  the app that lent the picture may have taken it back. The path, or null for anything but a picture. */
+    fun keepThumb(context: Context, uri: Uri): String? {
+        if (context.contentResolver.getType(uri)?.startsWith("image/") != true) return null
+        return try {
+            val picture = context.contentResolver.loadThumbnail(uri, android.util.Size(640, 640), null)
+            val out = File(context.filesDir, "chats/thumbs/" + java.util.UUID.randomUUID() + ".jpg")
+            out.parentFile?.mkdirs()
+            out.outputStream().use { picture.compress(Bitmap.CompressFormat.JPEG, 85, it) }
+            out.path
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     /** A shared or picked file's name, as the app it came from gives it. */
     fun nameOf(context: Context, uri: Uri): String = try {
         context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)?.use {

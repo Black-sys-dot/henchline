@@ -82,11 +82,12 @@ class Status:
             self.since = sent.at
             self.waiting_for = sent.agent.capitalize()
             if sent.heard != Heard.TYPED.value:  # a typed one is in the chat already, as the page sent it
-                if sent.heard == Heard.SHARED.value:
-                    said = f"(shared from your phone, sent to {self.waiting_for})"
+                if sent.heard == Heard.SHARED.value:  # the phone put the share in the chat itself
+                    said = ""
                 else:  # what it heard you say, so a mishearing shows
                     said = f"🎙 {sent.words}" if sent.words else f"(spoken, sent to {self.waiting_for})"
-                lines.append({"chat": {"from": "you", "text": said, "session": sent.session}})
+                if said:
+                    lines.append({"chat": {"from": "you", "text": said, "session": sent.session}})
         playing = Playing.now()
         if playing and playing.clip != self.clip:
             self.clip = playing.clip

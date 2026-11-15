@@ -118,10 +118,18 @@ class Sheet(
             activity.startForegroundService(UploadService.intent(activity, uris, names, text, note.text.toString(), picked))
             // In that agent's chat too, as the paperclip's are (2026-11-15: a share reached the agent but never
             // showed in the app's chat)
-            val what = if (uris.isEmpty()) text.take(300) else names.joinToString("\n") { "📎 $it" }
-            val said = note.text.toString().trim()
-            Chats.add(activity, picked, org.json.JSONObject().put("from", "you").put("mine", true)
-                .put("text", if (said.isEmpty()) what else "$what\n$said"))
+            // The share's line in the chat comes from here only (the laptop no longer adds its own): once, not twice
+            run {
+                val said = note.text.toString().trim()
+                if (uris.isEmpty()) Chats.add(activity, picked, org.json.JSONObject().put("from", "you").put("mine", true)
+                    .put("text", if (said.isEmpty()) text.take(300) else "${text.take(300)}\n$said"))
+                uris.zip(names).forEachIndexed { i, (uri, name) ->  // a line each, a picture with its small copy
+                    val line = org.json.JSONObject().put("from", "you").put("mine", true)
+                        .put("text", "📎 $name" + if (i == uris.size - 1 && said.isNotEmpty()) "\n$said" else "")
+                    Files.keepThumb(activity, uri)?.let { line.put("thumb", it) }
+                    Chats.add(activity, picked, line)
+                }
+            }
             close()
         }
         sheet.addView(buttons, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT)

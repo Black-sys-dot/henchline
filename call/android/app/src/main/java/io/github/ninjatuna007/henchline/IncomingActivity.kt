@@ -135,7 +135,11 @@ class IncomingActivity : Activity() {
                 prepare()
                 val place = from().coerceAtLeast(0) % duration.coerceAtLeast(1)
                 if (place > 0) {  // a seek is asynchronous: start once it has landed, never heard jumping
-                    setOnSeekCompleteListener { it.start() }
+                    setOnSeekCompleteListener { p -> if (p === ring) try { p.start() } catch (_: IllegalStateException) {} }
+                    setOnErrorListener { p, _, _ ->  // a failed seek: ring from the top rather than not at all
+                        if (p === ring) try { p.seekTo(0); p.start() } catch (_: IllegalStateException) {}
+                        true
+                    }
                     seekTo(place)
                 } else start()
             }
