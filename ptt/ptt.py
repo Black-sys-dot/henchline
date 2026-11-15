@@ -21,7 +21,7 @@ from evdev import ecodes
 
 HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE / "core"), str(HERE.parent)]  # push-to-talk's own modules (core/), and the repository for voice/
-import tray  # noqa: E402
+import ptt_tray as tray  # noqa: E402  (named apart from hands-free's tray: never two in one process)
 from keys import HotkeyCapture, Hold, Keyboards  # noqa: E402
 from voice import state as shared  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
