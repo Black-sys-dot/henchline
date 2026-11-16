@@ -1869,7 +1869,7 @@ class MainActivity : Activity() {
                     adjustViewBounds = true
                     maxHeight = dp(280)
                     scaleType = ImageView.ScaleType.FIT_START
-                    setOnClickListener { showPicture(url, name, type) }
+                    setOnClickListener { showPicture(url, name, type, this) }
                 }
                 card.addView(picture, LinearLayout.LayoutParams(dp(240), LinearLayout.LayoutParams.WRAP_CONTENT))
                 Thread {
@@ -1974,27 +1974,45 @@ class MainActivity : Activity() {
     /** A picture whole, as a messaging app's viewer (the user's wish, 2026-11-16: it was a grey box): black, the
      *  whole screen, pinch and drag to look into it, double tap to zoom; a slim bar on top with back, its name and
      *  Save (saves it and opens it in another app), a tap hiding or showing the bar. */
-    private fun showPicture(url: String, name: String, type: String) = showPictures(listOf(Pic(name, url, type, null)), 0)
+    private fun showPicture(url: String, name: String, type: String, from: View? = null) =
+        showPictures(listOf(Pic(name, url, type, null)), 0, from)
 
-    /** Several, as an album opens them: at the one tapped, a flick sideways to the next ("2 / 5" in the bar). */
-    private fun showPictures(pics: List<Pic>, start: Int) {
-        var at = start.coerceIn(0, pics.size - 1)
-        val dialog = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
-        val screen = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
-        val picture = ZoomImage(this)
-        screen.addView(picture, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
-        val waiting = android.widget.ProgressBar(this)
-        screen.addView(waiting, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER))
+    /** Several, as an album opens them: it grows out of the picture tapped (from) over a darkening screen, slides
+     *  with your finger to the next ("2 / 5" in the bar), and shrinks back into it when closed (back, or a drag
+     *  down). Smooth, not a black box over the app (the user's catch, 2026-11-16). */
+    private fun showPictures(pics: List<Pic>, start: Int, from: View? = null) {
+        val dialog = object : android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen) {
+            var closing: (() -> Unit)? = null
+            @Deprecated("Back closes it with its animation") override fun onBackPressed() { closing?.invoke() ?: dismiss() }
+        }
+        dialog.window?.setBackgroundDrawable(android.graphics.drawable.ColorDrawable(android.graphics.Color.TRANSPARENT))
+        val screen = FrameLayout(this)
+        val dark = View(this).apply { setBackgroundColor(0xFF000000.toInt()); alpha = 0f }
+        screen.addView(dark, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        val cache = HashMap<Int, android.graphics.Bitmap>()
+        val pager = PicturePager(this, pics.size) { i, done ->
+            cache[i]?.let { done(it); return@PicturePager }
+            Thread {  // twice the screen's width: room to zoom before it blurs
+                val pic = pics[i]
+                val bitmap = if (pic.url != null) Files.preview(this, pic.url, resources.displayMetrics.widthPixels * 2)
+                             else pic.thumb?.let { decodeSmall(it, resources.displayMetrics.widthPixels * 2) }
+                main.post {
+                    if (bitmap != null) { cache[i] = bitmap; if (cache.size > 5) cache.keys.firstOrNull { k -> k != i }?.let { cache.remove(it) } }
+                    done(bitmap)
+                }
+            }.start()
+        }
+        screen.addView(pager, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-            setPadding(dp(4), dp(28), dp(12), dp(8))
+            setPadding(dp(4), dp(28), dp(12), dp(8)); alpha = 0f
             background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xCC000000.toInt(), 0x00000000))
         }
-        bar.addView(ImageView(this).apply {
+        val back = ImageView(this).apply {
             setImageResource(R.drawable.ic_back); setColorFilter(0xFFFFFFFF.toInt())
             setPadding(dp(12), dp(12), dp(12), dp(12)); contentDescription = "Back"
-            setOnClickListener { dialog.dismiss() }
-        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        }
+        bar.addView(back, LinearLayout.LayoutParams(dp(48), dp(48)))
         val title = TextView(this).apply {
             setTextColor(0xFFFFFFFF.toInt()); textSize = 16f; maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
@@ -2005,30 +2023,65 @@ class MainActivity : Activity() {
         }
         bar.addView(save)
         screen.addView(bar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP))
-        picture.onTap = { bar.visibility = if (bar.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
-        var asked = 0  // the newest load: an older one finishing late is not shown over it
-        fun load() {
+        pager.onIndex = { at ->
             val pic = pics[at]
             title.text = if (pics.size > 1) "${at + 1} / ${pics.size} · ${pic.name}" else pic.name
             save.visibility = if (pic.url != null) View.VISIBLE else View.GONE  // yours is on your phone already
             save.setOnClickListener { pic.url?.let { u -> Files.open(this@MainActivity, u, pic.name, pic.type) { say("", it, note = true) } } }
-            picture.setImageDrawable(null)
-            waiting.visibility = View.VISIBLE
-            val ask = ++asked
-            Thread {  // twice the screen's width: room to zoom before it blurs
-                val bitmap = if (pic.url != null) Files.preview(this, pic.url, resources.displayMetrics.widthPixels * 2)
-                             else pic.thumb?.let { decodeSmall(it, resources.displayMetrics.widthPixels * 2) }
-                main.post {
-                    if (!dialog.isShowing || ask != asked) return@post
-                    waiting.visibility = View.GONE
-                    if (bitmap != null) picture.setImageBitmap(bitmap) else say("", "Couldn't load ${pic.name}.", note = true)
-                }
-            }.start()
         }
-        picture.onSwipe = { step -> val to = at + step; if (to in pics.indices) { at = to; load() } }
+        pager.onTap = {  // hidden, it takes no taps either (Back and Save were reachable unseen)
+            if (bar.alpha > 0.5f) bar.animate().alpha(0f).setDuration(150).withEndAction { bar.visibility = View.INVISIBLE }.start()
+            else { bar.visibility = View.VISIBLE; bar.animate().alpha(1f).setDuration(150).start() }
+        }
+        pager.onDown = { part -> dark.alpha = 1f - part * 0.7f; bar.alpha = minOf(bar.alpha, 1f - part) }
+
+        // Where the tapped picture is on the screen: the viewer grows out of it and shrinks back into it
+        fun origin(): android.graphics.RectF? {
+            val view = from ?: return null
+            if (!view.isAttachedToWindow) return null
+            val at = IntArray(2); view.getLocationOnScreen(at)
+            return android.graphics.RectF(at[0].toFloat(), at[1].toFloat(), (at[0] + view.width).toFloat(), (at[1] + view.height).toFloat())
+        }
+        fun toward(target: View, box: android.graphics.RectF?) {  // as if it sat where box is (else a little smaller)
+            val w = resources.displayMetrics.widthPixels.toFloat()
+            val h = resources.displayMetrics.heightPixels.toFloat()
+            if (box == null) { target.scaleX = 0.9f; target.scaleY = 0.9f; target.translationX = 0f; target.translationY = 0f; return }
+            val scale = maxOf(box.width() / w, box.height() / h).coerceIn(0.1f, 1f)
+            target.scaleX = scale; target.scaleY = scale
+            target.translationX = box.centerX() - w / 2; target.translationY = box.centerY() - h / 2
+        }
+        var shut = false
+        val close = {
+            if (!shut) {
+                shut = true
+                val current = pager.current()
+                val box = if (pager.index == start) origin() else null
+                val w = resources.displayMetrics.widthPixels.toFloat()
+                val h = resources.displayMetrics.heightPixels.toFloat()
+                val scale = if (box == null) 0.9f else maxOf(box.width() / w, box.height() / h).coerceIn(0.1f, 1f)
+                current.animate().scaleX(scale).scaleY(scale)
+                    .translationX(if (box == null) current.translationX else box.centerX() - w / 2)
+                    .translationY(if (box == null) current.translationY + dp(40) else box.centerY() - h / 2)
+                    .alpha(if (box == null) 0f else 1f)
+                    .setDuration(220).setInterpolator(android.view.animation.AccelerateInterpolator()).start()
+                dark.animate().alpha(0f).setDuration(220).withEndAction { dialog.dismiss() }.start()
+                bar.animate().alpha(0f).setDuration(120).start()
+            }
+        }
+        dialog.closing = close
+        back.setOnClickListener { close() }
+        pager.onClose = close
         dialog.setContentView(screen)
         dialog.show()
-        load()
+        pager.show(start)
+        // In: from the tapped picture to the whole screen, the dark coming up behind it
+        pager.post {
+            toward(pager, origin())
+            pager.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f)
+                .setDuration(260).setInterpolator(android.view.animation.DecelerateInterpolator(1.5f)).start()
+            dark.animate().alpha(1f).setDuration(260).start()
+            bar.animate().alpha(1f).setStartDelay(120).setDuration(180).start()
+        }
     }
 
     /** A picture file on the phone, decoded no wider than it needs to be (and never huge). */
@@ -2077,13 +2130,13 @@ class MainActivity : Activity() {
                 background = GradientDrawable().apply { setColor(0xFF000000.toInt()); cornerRadius = dp(10).toFloat() }
                 clipToOutline = true
                 contentDescription = pics[k].name
-                setOnClickListener { showPictures(pics, k) }
+                setOnClickListener { showPictures(pics, k, this) }
             }
             cell.addView(image, FrameLayout.LayoutParams(tile, tile))
             if (k == 3 && pics.size > 4) cell.addView(TextView(this).apply {
                 text = "+${pics.size - 4}"; setTextColor(0xFFFFFFFF.toInt()); textSize = 26f; gravity = Gravity.CENTER
                 background = GradientDrawable().apply { setColor(0x99000000.toInt()); cornerRadius = dp(10).toFloat() }
-                setOnClickListener { showPictures(pics, 3) }
+                setOnClickListener { v -> showPictures(pics, 3, v) }
             }, FrameLayout.LayoutParams(tile, tile))
             grid.addView(cell, android.widget.GridLayout.LayoutParams().apply { width = tile; height = tile; setMargins(dp(2), dp(2), dp(2), dp(2)) })
             val pic = pics[k]

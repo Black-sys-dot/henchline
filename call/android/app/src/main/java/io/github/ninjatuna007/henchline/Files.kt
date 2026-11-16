@@ -131,15 +131,30 @@ object Files {
     fun notify(context: Context, agent: String, words: String, url: String, name: String, type: String, size: Long) {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Files from your crew", NotificationManager.IMPORTANCE_HIGH))
-        val open = Intent(context, MainActivity::class.java).setAction(MainActivity.OPEN_FILE)
+        // Files from one agent within a minute are one notification, as a messaging app's ("Claude sent you 5
+        // pictures"), buzzing once (the user's wish, 2026-11-16: five pictures were five notifications)
+        val kept = context.getSharedPreferences("file_notices", Context.MODE_PRIVATE)
+        val now = System.currentTimeMillis()
+        val joined = now - kept.getLong("$agent.at", 0) < 60_000
+        val count = if (joined) kept.getInt("$agent.count", 1) + 1 else 1
+        val pictures = (!joined || kept.getBoolean("$agent.pictures", true)) && type.startsWith("image/")
+        val id = if (joined) kept.getInt("$agent.id", url.hashCode()) else url.hashCode()
+        kept.edit().putLong("$agent.at", now).putInt("$agent.count", count).putBoolean("$agent.pictures", pictures)
+            .putInt("$agent.id", id).apply()
+        val who = IncomingActivity.nameOf(agent)
+        val open = if (count == 1) Intent(context, MainActivity::class.java).setAction(MainActivity.OPEN_FILE)
             .putExtra(URL, url).putExtra(NAME, name).putExtra(TYPE, type).putExtra(SIZE, size)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        val id = url.hashCode()
+        else Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)  // the chat, with its album
+        val title = if (count == 1) "$who sent you $name" else "$who sent you $count ${if (pictures) "pictures" else "files"}"
+        val text = words.ifEmpty { if (count == 1) "Tap to open it." else "Tap to see them." }
         manager.notify(id, Notification.Builder(context, CHANNEL)
             .setSmallIcon(R.drawable.ic_notify)
-            .setContentTitle("${IncomingActivity.nameOf(agent)} sent you $name")
-            .setContentText(words.ifEmpty { "Tap to open it." })
-            .setStyle(Notification.BigTextStyle().bigText(words.ifEmpty { "Tap to open it." }))
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(Notification.BigTextStyle().bigText(text))
+            .setNumber(count)
+            .setOnlyAlertOnce(true)
             .setContentIntent(PendingIntent.getActivity(context, id, open,
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT))
             .setAutoCancel(true)
