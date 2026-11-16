@@ -545,6 +545,7 @@ class MainActivity : Activity() {
             status.has("closed") -> {
                 (panel as? CallMenu)?.close()  // the call's menu goes with the call
                 callSession = ""
+                callWords = ""
                 showConnected(false)
                 showCallBar()
                 say("", status.getString("closed"), note = true)

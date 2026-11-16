@@ -161,6 +161,10 @@ class CallService : Service() {
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "henchline:call").apply { acquire() }
         applySound()
         connect(server)
+        if (Build.VERSION.SDK_INT >= 31) {
+            audio.addOnCommunicationDeviceChangedListener(mainExecutor, earbudsWatch)
+            watching = true
+        }
         try {
             listenToButtons()
         } catch (e: Exception) {  // the call goes on without the earbud button
@@ -203,6 +207,25 @@ class CallService : Service() {
         beeper?.startTone(if (starting) android.media.ToneGenerator.TONE_PROP_ACK else android.media.ToneGenerator.TONE_PROP_PROMPT, 150)
     }
 
+    @Volatile private var routedAt = 0L  // when route() last picked a device: its own changes settle meanwhile
+    private var watching = false  // earbudsWatch registered (only once a call started)
+    private var pressedAt = 0L  // the last press seen this way: a flaky call channel doesn't toggle talk on and on
+
+    /** On call sound the earbuds' button sends "hang up", not play/pause, and the phone drops their call channel:
+     *  the sound fell to the earpiece and the app never heard the press (the user's catch, 2026-11-16). That drop is
+     *  taken as the press: push-to-talk, and the sound goes back to the earbuds. */
+    private val earbudsWatch = AudioManager.OnCommunicationDeviceChangedListener { device ->
+        if (!running || clear || !useHeadset || audio.mode != AudioManager.MODE_IN_COMMUNICATION) return@OnCommunicationDeviceChangedListener
+        // The press drops the call to the earpiece (or nothing); the speaker is someone's choice, not the button
+        if (device != null && device.type != AudioDeviceInfo.TYPE_BUILTIN_EARPIECE) return@OnCommunicationDeviceChangedListener
+        val now = System.currentTimeMillis()
+        if (!headsetAvailable() || now - routedAt < 1500 || now - pressedAt < 2500) return@OnCommunicationDeviceChangedListener
+        pressedAt = now
+        android.util.Log.i("Henchline", "earbuds' call channel dropped (their button): talk, and back to them")
+        toggleTalk()
+        Thread { synchronized(audioLock) { if (running && !clear) route() } }.start()
+    }
+
     /** Start talking, or send what was said: as holding the talk button. */
     @Synchronized
     fun toggleTalk() {
@@ -216,6 +239,8 @@ class CallService : Service() {
 
     override fun onDestroy() {
         running = false
+        if (watching && Build.VERSION.SDK_INT >= 31) audio.removeOnCommunicationDeviceChangedListener(earbudsWatch)
+        watching = false
         buttons?.release()
         buttons = null
         beeper?.release()
@@ -493,6 +518,9 @@ class CallService : Service() {
             Reply.send(reply, "unreachable")
             Calls.outcome(this, reply, "unreachable")
         }
+        // Over before the screen hears it: the bar went on showing the call, and what it last said (the user's
+        // catch, 2026-11-16: still "on a call" after hanging up)
+        Bus.connected = false
         Bus.listener?.invoke(org.json.JSONObject().put("closed", why).toString())
         android.os.Handler(mainLooper).post { stopSelf() }
     }
@@ -509,6 +537,7 @@ class CallService : Service() {
         val preferred = (if (useHeadset) HEADSETS.toList() else emptyList()) +
             (if (speaker) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)
         val picked = preferred.firstNotNullOfOrNull { type -> devices.firstOrNull { it.type == type } }
+        routedAt = System.currentTimeMillis()
         picked?.let { audio.setCommunicationDevice(it) }
         nearEar(picked?.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)
     }
