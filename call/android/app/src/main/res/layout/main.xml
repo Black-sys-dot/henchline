@@ -232,23 +232,6 @@
                     android:textColor="@color/muted"
                     android:textSize="13sp" />
 
-                <!-- The agent's model, on a row of its own (which model works matters: the user's wish,
-                     2026-11-16); tap it to switch mid-chat -->
-                <TextView
-                    android:id="@+id/modelChip"
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:layout_marginTop="4dp"
-                    android:background="@drawable/pill"
-                    android:contentDescription="Switch this agent's model"
-                    android:ellipsize="end"
-                    android:maxLines="1"
-                    android:maxWidth="240dp"
-                    android:paddingHorizontal="10dp"
-                    android:paddingVertical="3dp"
-                    android:text="✦ Model"
-                    android:textColor="@color/cyan"
-                    android:textSize="13sp" />
             </LinearLayout>
 
             <ImageButton
@@ -261,6 +244,22 @@
                 android:src="@drawable/ic_phone"
                 android:tint="#FFFFFF" />
         </LinearLayout>
+
+        <!-- The agent's model, as a slim strip across the chat under its name (which model works matters: the
+             user's wish, 2026-11-16; a pill under the name looked out of place); tap it to switch mid-chat -->
+        <TextView
+            android:id="@+id/modelChip"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/surface"
+            android:contentDescription="Switch this agent's model"
+            android:ellipsize="end"
+            android:gravity="center"
+            android:maxLines="1"
+            android:paddingVertical="6dp"
+            android:text="✦ Model · tap to switch"
+            android:textColor="@color/cyan"
+            android:textSize="13sp" />
 
         <FrameLayout
             android:layout_width="match_parent"

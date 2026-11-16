@@ -1173,12 +1173,12 @@ class MainActivity : Activity() {
      *  2026-11-16); until it answers, the one last switched to from here. */
     private fun showModel(session: String) {
         val chip = findViewById<TextView>(R.id.modelChip)
-        chip.text = prefs().getString("model_$session", null)?.let { "✦ " + shortModel(it) } ?: "✦ Model"
+        chip.text = prefs().getString("model_$session", null)?.let { "✦ " + shortModel(it) + "  ·  tap to switch" } ?: "✦ Model · tap to switch"
         if (session.isEmpty() || Files.origin(this) == null) return
         ask("/crew/models?only=now&session=" + android.net.Uri.encode(session), null) { answer ->
             val now = answer.optString("now")
             if (now.isNotEmpty() && session == current) {
-                chip.text = "✦ " + shortModel(now)
+                chip.text = "✦ " + shortModel(now) + "  ·  tap to switch"
                 prefs().edit().putString("model_$session", now).apply()
             }
         }
