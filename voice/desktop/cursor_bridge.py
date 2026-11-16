@@ -38,8 +38,13 @@ def owner_of(chat: str) -> str:
     return found[0].parent.parent.name if len(found) == 1 else ""
 
 
+last_why = ""  # what the bridge said when it said no ("not a chat id" from an older bridge, before a reload)
+
+
 def ask_window(chat: str, request: dict) -> bool:
     """Sends one request to the one Cursor window that has the chat (see open_chat); True when it said yes."""
+    global last_why
+    last_why = ""
     project = owner_of(chat)
     if not project:
         return False
@@ -64,7 +69,9 @@ def ask_window(chat: str, request: dict) -> bool:
                 if not part:
                     break
                 answer += part
-        return bool(json.loads(answer.decode() or "{}").get("ok"))
+        said = json.loads(answer.decode() or "{}")
+        last_why = str(said.get("why", ""))
+        return bool(said.get("ok"))
     except (OSError, ValueError):
         return False
 
@@ -98,6 +105,9 @@ def switch_model(chat: str, wanted: str) -> str:
         if steps >= 40:
             return f"Didn't reach {wanted} in 40 steps: left on {now}."
         if not ask_window(chat, {"cycle": chat}):
+            if last_why == "not a chat id":  # a bridge from before "cycle" was there
+                return ("Cursor is still running an older Henchline bridge: in Cursor, Ctrl+Shift+P, "
+                        "Restart Extension Host, then try again.")
             return ("Cursor's bridge wouldn't step that chat (is another chat selected there?)"
                     + (f": after {steps} steps it's on {now}." if steps else ": not switched."))
         steps += 1
