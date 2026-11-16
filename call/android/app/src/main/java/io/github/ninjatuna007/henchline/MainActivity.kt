@@ -489,6 +489,12 @@ class MainActivity : Activity() {
         class Chat(val session: String, val agent: String, val project: String, val last: JSONObject?, val found: String)
         fun project(name: String) = name.substringAfter(", ", "").removePrefix("in ").ifEmpty { "home" }
         var chats = names.map { (session, name) -> Chat(session, name.substringBefore(","), project(name), Chats.last(this, session), "") }
+        // Chats an agent texted lately that the laptop's crew list doesn't name: named from the session ("cursor-_tmp");
+        // older ones stay out of the list (long-press clears one that's in it)
+        chats = chats + Chats.sessions(this).filter { s -> s !in names && (Chats.last(this, s)?.optLong("at") ?: 0) > System.currentTimeMillis() - 3 * 86_400_000L }.map { session ->
+            val agent = session.substringBefore("-").replaceFirstChar { it.uppercase() }
+            Chat(session, agent, session.substringAfter("-").trim('_').substringAfterLast("_").ifEmpty { "home" }, Chats.last(this, session), "")
+        }
         if (query.isNotEmpty()) {
             val q = query.lowercase()
             val byName = chats.filter { q in it.project.lowercase() || q in it.agent.lowercase() }
@@ -1139,12 +1145,12 @@ class MainActivity : Activity() {
                 val f = folders.getJSONObject(i)
                 f.getString("name").replace("_", " ") + "\n" + f.getString("path").substringBeforeLast("/").replace(Regex("^/home/[^/]+"), "~")
             }
-            AlertDialog.Builder(this).setTitle("New chat in…").setItems(labels.toTypedArray()) { _, i ->
-                val folder = folders.getJSONObject(i).getString("path")
-                val kinds = (0 until agents.length()).map { agents.getString(it) }
+            val kinds = (0 until agents.length()).map { agents.getString(it) }
+            // Then which agent, and off it goes; typed: a path the user gave, trusted by starting there
+            fun start(folder: String, typed: Boolean) {
                 val go = { agent: String ->
                     toast("Starting ${agent.replaceFirstChar { it.uppercase() }}…")
-                    ask("/crew/new", JSONObject().put("folder", folder).put("agent", agent)) { started ->
+                    ask("/crew/new", JSONObject().put("folder", folder).put("agent", agent).put("typed", typed)) { started ->
                         val session = started.optString("session")
                         if (session.isEmpty()) return@ask toast(started.optString("note").ifEmpty { "It didn't start." })
                         takeCrew(started)
@@ -1154,6 +1160,26 @@ class MainActivity : Activity() {
                 if (kinds.size == 1) go(kinds[0])
                 else AlertDialog.Builder(this).setTitle("Which agent?")
                     .setItems(kinds.map { it.replaceFirstChar { c -> c.uppercase() } }.toTypedArray()) { _, k -> go(kinds[k]) }.show()
+            }
+            AlertDialog.Builder(this).setTitle("New chat in…").setItems((labels + "✏️  Type a path…").toTypedArray()) { _, i ->
+                if (i < labels.size) return@setItems start(folders.getJSONObject(i).getString("path"), typed = false)
+                val box = EditText(this).apply {
+                    hint = "~/projects/something"
+                    setSingleLine()
+                    inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
+                }
+                val frame = android.widget.FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(box) }
+                AlertDialog.Builder(this).setTitle("Folder on the laptop")
+                    .setMessage("If the agent hasn't worked there before, starting it there trusts that folder: it can read and change the files in it.")
+                    .setView(frame)
+                    .setPositiveButton("Start there") { _, _ ->
+                        val path = box.text.toString().trim()
+                        if (path.isEmpty()) return@setPositiveButton
+                        // "~" is the laptop's home, not the phone's: written out the way the laptop's folders are
+                        val home = (0 until folders.length()).map { folders.getJSONObject(it) }
+                            .firstOrNull { it.optString("name") == "home" }?.optString("path")
+                        start(if (path.startsWith("~") && home != null) home + path.removePrefix("~") else path, typed = true)
+                    }.setNegativeButton("Cancel", null).show()
             }.show()
         }
     }

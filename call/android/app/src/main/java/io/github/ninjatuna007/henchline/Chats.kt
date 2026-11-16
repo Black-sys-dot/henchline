@@ -65,6 +65,13 @@ object Chats {
         if (line.optString("id") == id && rank(status) > rank(line.optString("status"))) line.put("status", status) else line
     }
 
+    /** Every chat kept on the phone, by session: one an agent texted that the crew list doesn't name still shows
+     *  (a Cursor text reached the notification but no chat, 2026-11-16). */
+    @Synchronized
+    fun sessions(context: Context): List<String> =
+        File(context.filesDir, "chats").listFiles { f -> f.isFile && f.name.endsWith(".jsonl") }
+            ?.map { it.name.removeSuffix(".jsonl") } ?: emptyList()
+
     /** The chat emptied, on this phone only (the long-press menu): the laptop and the agent keep theirs. */
     @Synchronized
     fun clear(context: Context, session: String) {

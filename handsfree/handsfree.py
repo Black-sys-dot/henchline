@@ -140,6 +140,12 @@ def caller(register: bool = False) -> Speaker | None:
     known = Speaker.load(SPEAKERS / f"{session}.json")
     if known or agent == "agent":
         return known
+    if agent == "cursor":
+        # Cursor's sandbox hides the editor's workspace, so its key can come out as its shell's folder (/tmp: a
+        # text landed in a chat the phone didn't list, 2026-11-16): the Cursor agent heard or found most lately
+        cursors = sorted((s for s in recent_speakers() if s.agent == "cursor"), key=lambda s: s.at, reverse=True)
+        if cursors:
+            return cursors[0]
     if not register:  # only a ring makes its caller known; a text or a file doesn't put it in the crew
         return Speaker(session, agent)
     # Never heard through talkback: found now, as talkback would (its workspace, its terminal tab), and kept, so an

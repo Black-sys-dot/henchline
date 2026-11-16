@@ -79,6 +79,42 @@ def pane_pid(tab: Tab) -> int:
     return int(pid) if pid.isdigit() else 0
 
 
+def pane_pids() -> dict[str, int] | None:
+    """Every pane with its first process, in one call; {} when no tmux server runs (no panes), None when tmux
+    couldn't be asked (slow, missing): then nothing is known gone."""
+    done = tmux("list-panes", "-a", "-F", "#{pane_id} #{pane_pid}")
+    if done is None:
+        return None
+    if done.returncode != 0:
+        return {} if "no server running" in done.stderr or "error connecting" in done.stderr else None
+    pairs = (line.split(" ", 1) for line in done.stdout.splitlines() if " " in line)
+    return {pane: int(pid) for pane, pid in pairs if pid.isdigit()}
+
+
+def accept_trust(tab: Tab, wait: float = 12.0) -> bool:
+    """An agent started in a folder it hasn't trusted yet asks first, and its default is to exit (Claude Code:
+    "❯ No, exit" above "Yes, I trust this folder"). Once that question is on screen, the cursor goes down to the
+    line with "yes" and "trust" in it, and Enter only when it is seen there; otherwise the question is left for
+    the user (`tmux attach -t henchline`). Only for a folder the user typed on the phone and confirmed trusting:
+    their first message must not be the answer (it was, in a test, 2026-11-16, and the agent exited)."""
+    def chosen() -> str:  # the line the cursor (❯ or >) is on
+        lines = out("capture-pane", "-p", "-t", tab.address).splitlines()
+        return next((line.lower() for line in lines if line.lstrip().startswith(("❯", ">"))), "")
+
+    until = time.monotonic() + wait
+    while time.monotonic() < until:
+        if "trust" in out("capture-pane", "-p", "-t", tab.address).lower() and chosen():
+            for _ in range(4):  # down the few answers until "yes, … trust …" is chosen
+                if "yes" in chosen() and "trust" in chosen():
+                    done = tmux("send-keys", "-t", tab.address, "Enter")
+                    return bool(done and done.returncode == 0)
+                tmux("send-keys", "-t", tab.address, "Down")
+                time.sleep(0.3)
+            return False
+        time.sleep(0.5)
+    return False
+
+
 def end(tab: Tab) -> bool:
     return tab.owner == OWNER and (done := tmux("kill-pane", "-t", tab.address)) is not None and done.returncode == 0
 
