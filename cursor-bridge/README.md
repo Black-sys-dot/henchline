@@ -26,9 +26,11 @@ the extension host alone keeps the old version).
   holding that chat's transcript (`~/.cursor/projects/<project>/agent-transcripts/<id>`). No such window, or two:
   nothing is typed, and the phone says why.
 - Then Henchline types into the window as before (the chat box, paste, Enter).
-- A model switch steps Cursor's own "cycle model" on that chat, reading the chat's model back from Cursor's store
-  after each step, and stops on the model picked, or the moment anything looks wrong (another chat changed, no
-  change, back where it started).
+- The phone shows each chat's model (with its effort) from Cursor's store. Switching it from the phone isn't
+  possible: Cursor keeps its "cycle model" action from extensions, and typing into its picker could send the model's
+  name as a message. Change it in Cursor.
+- The phone's stop button runs Cursor's own stop (`composer.cancelComposerStep`) on that chat, once the bridge has
+  brought it to the front and it is the selected one.
 
 ## Limits
 

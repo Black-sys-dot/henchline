@@ -76,57 +76,6 @@ def ask_window(chat: str, request: dict) -> bool:
         return False
 
 
-def chats_of(chat: str) -> list[str]:
-    """The other chats of the chat's project worked in this last week (its transcripts' neighbours): to check a
-    switch touched only it."""
-    project = owner_of(chat)
-    folder = Path.home() / ".cursor/projects" / project / "agent-transcripts"
-    try:
-        return [p.name for p in folder.iterdir() if p.name != chat and CHAT_ID.fullmatch(p.name)
-                and time.time() - p.stat().st_mtime < 7 * 86400] if project else []
-    except OSError:
-        return []
-
-
-def switch_model(chat: str, wanted: str) -> str:
-    """Moves a Cursor editor chat to a model by Cursor's own "cycle model", one step at a time, read back from its
-    store after each step, until the chat is on it ("" then). Stops at once when a step didn't move that chat, or
-    moved another one (Cursor's cycle works on the selected chat, so only that chat may change)."""
-    if not CHAT_ID.fullmatch(chat):
-        return "Not a Cursor chat."
-    start = chat_model(chat)
-    if not start:
-        return "Cursor's record of that chat can't be read, so it can't be checked: not switched."
-    # Only chats whose model could be read: one becoming readable meanwhile isn't a change Cursor made
-    others = {other: model for other in chats_of(chat) if (model := chat_model(other))}
-    steps = 0
-    now = start
-    while not (wanted.startswith(now) or now.startswith(wanted)):
-        if steps >= 40:
-            return f"Didn't reach {wanted} in 40 steps: left on {now}."
-        if not ask_window(chat, {"cycle": chat}):
-            if last_why == "not a chat id":  # a bridge from before "cycle" was there
-                return ("Cursor is still running an older Henchline bridge: in Cursor, Ctrl+Shift+P, "
-                        "Reload Window (when no chat is busy), then try again.")
-            return ("Cursor's bridge wouldn't step that chat (is another chat selected there?)"
-                    + (f": after {steps} steps it's on {now}." if steps else ": not switched."))
-        steps += 1
-        before = now
-        for _ in range(15):  # Cursor writes its store a moment later
-            time.sleep(0.2)
-            now = chat_model(chat)
-            if now and now != before:
-                break
-        moved = [other for other, model in others.items() if chat_model(other) != model]
-        if moved:
-            return f"Stopped: Cursor changed another chat's model instead ({len(moved)}). This chat is on {now}."
-        if not now or now == before:
-            return f"Cursor hasn't changed the model yet (it may still be changing): it's on {now or before}."
-        if now == start:
-            return f"{wanted} isn't among this chat's models in Cursor: left on {start}."
-    return ""
-
-
 def open_chat(workspace: str, chat: str) -> bool:
     """Brings that chat to the front in the one Cursor window that has it: the window whose workspace folder is
     the project holding the chat's transcript (Cursor's own commands say yes to any id, 2026-11-16). False when no

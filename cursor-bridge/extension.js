@@ -29,6 +29,12 @@ function activate(context) {
       let answer;
       try {
         const asked = JSON.parse(buffered.split("\n")[0]);
+        if (asked.commands === "model") {
+          // Which of Cursor's commands an extension can reach that name a model: to find a way to switch one
+          const all = await vscode.commands.getCommands(true);
+          conn.end(JSON.stringify({ ok: true, commands: all.filter((c) => /model/i.test(c)) }) + "\n");
+          return;
+        }
         if (typeof asked.stop === "string" && CHAT_ID.test(asked.stop)) {
           // The phone's stop button: that chat stops what it's doing, as its own stop button does
           await vscode.commands.executeCommand("composer.openComposer", asked.stop);
