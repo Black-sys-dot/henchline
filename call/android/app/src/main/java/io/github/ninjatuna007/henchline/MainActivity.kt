@@ -520,7 +520,7 @@ class MainActivity : Activity() {
                 say("", status.getString("note"), note = true)
             }
             status.has("mode") -> {
-                if (onCall()) state.text = status.optString("state")
+                if (onCall()) state.text = subtitle(status.optString("state"))
                 showMode(status.getString("mode"))
             }
         }
@@ -913,8 +913,8 @@ class MainActivity : Activity() {
         findViewById<View>(R.id.idle).visibility = if (readable) View.GONE else View.VISIBLE
         showClear(CallService.Bus.service?.clear ?: prefs().getBoolean("clear", true))
         if (!on) {
-            state.text = if (CallService.Bus.connected) "Texting · on a call with ${names[callSession]?.substringBefore(",") ?: "your crew"}"
-                         else "Not on a call"  // texts and voice messages still reach the agent (not "not connected", 2026-11-16)
+            state.text = subtitle(if (CallService.Bus.connected) "Texting · on a call with ${names[callSession]?.substringBefore(",") ?: "your crew"}"
+                         else "Not on a call")  // texts and voice messages still reach the agent (not "not connected", 2026-11-16)
             showMode("waiting")
         }
         showCrew()
@@ -1026,8 +1026,8 @@ class MainActivity : Activity() {
         val time = if (at > 0) android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(at)) else ""
         val ticks = when (status) { "" -> ""; "sent" -> "✓"; else -> "✓✓" }
         val tail = listOf(time, ticks).filter { it.isNotEmpty() }.joinToString(" ")
-        if (tail.isEmpty()) return words
-        val all = android.text.SpannableString("$words  $tail")
+        if (tail.isEmpty()) return styled(words)
+        val all = android.text.SpannableStringBuilder(styled(words)).append("  ").append(tail)
         val from = all.length - tail.length
         all.setSpan(android.text.style.ForegroundColorSpan(getColor(R.color.muted)), from, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         if (ticks.isNotEmpty() && status == "read")
@@ -1035,6 +1035,54 @@ class MainActivity : Activity() {
                 android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         all.setSpan(android.text.style.RelativeSizeSpan(0.75f), from, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         return all
+    }
+
+    /** An agent's light markdown, shown as it means: **bold** bold and `code` in a fixed-width face, the marks
+     *  themselves gone (they showed as asterisks, 2026-11-16). */
+    private fun styled(words: String): CharSequence {
+        val out = android.text.SpannableStringBuilder()
+        val marks = Regex("\\*\\*(.+?)\\*\\*|`([^`]+)`")
+        var at = 0
+        for (m in marks.findAll(words)) {
+            out.append(words, at, m.range.first)
+            val start = out.length
+            if (m.groupValues[1].isNotEmpty()) {
+                out.append(m.groupValues[1])
+                out.setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), start, out.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            } else {
+                out.append(m.groupValues[2])
+                out.setSpan(android.text.style.TypefaceSpan("monospace"), start, out.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            }
+            at = m.range.last + 1
+        }
+        out.append(words, at, words.length)
+        return out
+    }
+
+    /** The line under the agent's name: its project, then what is happening ("pc diagnostics · Not on a call"). */
+    private fun subtitle(status: String): String {
+        val name = names[current] ?: prefs().getString("current_name", "") ?: ""
+        val project = name.substringAfter(", in ", "").substringBefore(" · ").replace("_", " ")
+        return listOf(project, status).filter { it.isNotEmpty() }.joinToString(" · ")
+    }
+
+    /** A call in the chat, as WhatsApp shows one: a small bubble in the middle, with when it was. */
+    private fun callPill(words: String, at: Long) {
+        val time = if (at > 0) "  " + android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(at)) else ""
+        val text = android.text.SpannableStringBuilder(words).append(time)
+        text.setSpan(android.text.style.ForegroundColorSpan(getColor(R.color.muted)), words.length, text.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        text.setSpan(android.text.style.RelativeSizeSpan(0.85f), words.length, text.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        val pill = TextView(this).apply {
+            this.text = text
+            setTextColor(getColor(R.color.text)); textSize = 14f
+            setPadding(dp(16), dp(8), dp(16), dp(8))
+            background = GradientDrawable().apply { setColor(getColor(R.color.surface)); cornerRadius = dp(16).toFloat() }
+        }
+        chat.addView(LinearLayout(this).apply {
+            gravity = Gravity.CENTER_HORIZONTAL
+            setPadding(0, dp(6), 0, dp(6))
+            addView(pill)
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
     }
 
     /** "Today", "Yesterday" or the date, centred between the lines of different days. */
@@ -1440,7 +1488,7 @@ class MainActivity : Activity() {
             else if (line.has("thumb")) picture(line.getString("thumb"), line.optString("text"), current)
             else if (line.optBoolean("note")) {  // a kept note: a call and its length
                 dayLine(line.optLong("at"))
-                say("", line.optString("text"), note = true, session = current, keep = false)
+                callPill(line.optString("text"), line.optLong("at"))
             } else {
                 val bubble = say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"),
                     session = current, keep = false, at = line.optLong("at"),

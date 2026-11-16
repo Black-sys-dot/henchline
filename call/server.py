@@ -759,6 +759,9 @@ async def crew_stop(request: web.Request) -> web.Response:
         if not stopped and cursor_bridge.last_why == "not a chat id":
             return web.json_response({"note": "Cursor runs an older Henchline bridge: Reload Window in Cursor."},
                                      status=409)
+        if not stopped and cursor_bridge.last_why == "another chat is selected":
+            return web.json_response({"note": "Another chat is selected in Cursor, so nothing was stopped."},
+                                     status=409)
     else:
         terminals = desktop().terminals
         running = await loop.run_in_executor(None, terminals.agent_running, target.tab)

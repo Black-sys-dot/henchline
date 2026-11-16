@@ -32,6 +32,13 @@ function activate(context) {
         if (typeof asked.stop === "string" && CHAT_ID.test(asked.stop)) {
           // The phone's stop button: that chat stops what it's doing, as its own stop button does
           await vscode.commands.executeCommand("composer.openComposer", asked.stop);
+          // As for cycle: Cursor's stop takes no chat id and works on the selected chat, which must be this one
+          const selected = await vscode.commands.executeCommand("composer.getOrderedSelectedComposerIds");
+          const last = Array.isArray(selected) ? selected[selected.length - 1] : undefined;
+          if (last !== asked.stop) {
+            conn.end(JSON.stringify({ ok: false, why: "another chat is selected", selected }) + "\n");
+            return;
+          }
           await vscode.commands.executeCommand("composer.cancelComposerStep");
           conn.end(JSON.stringify({ ok: true }) + "\n");
           return;
