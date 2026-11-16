@@ -7,6 +7,7 @@ window's workspace); voice/agents.py keys the chat by the first and names it by 
 
 from __future__ import annotations
 
+import contextlib
 import json
 import re
 import socket
@@ -79,26 +80,35 @@ def open_chat(workspace: str, chat: str) -> bool:
 STATE_DB = Path.home() / ".config/Cursor/User/globalStorage/state.vscdb"
 
 
-def cursor_title(chat: str) -> str:
-    """The chat's title as Cursor shows it ("Ozer's PR review rules"), from Cursor's own store, read only."""
+_titles: dict[str, tuple[float, str]] = {}  # chat id: (when read, title); the list is rebuilt every few seconds
+
+
+def composer(chat: str) -> dict:
+    """Cursor's own record of a chat (title, model), from its store, read only; {} when it can't be read."""
     try:
-        with sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=1) as db:
+        with contextlib.closing(sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=1)) as db:
             row = db.execute("select value from cursorDiskKV where key = ?", (f"composerData:{chat}",)).fetchone()
-        return str(json.loads(row[0]).get("name") or "").strip() if row else ""
-    except (sqlite3.Error, ValueError, TypeError, AttributeError):
-        return ""
+        found = json.loads(row[0]) if row else {}
+        return found if isinstance(found, dict) else {}
+    except (sqlite3.Error, ValueError, TypeError):
+        return {}
+
+
+def cursor_title(chat: str) -> str:
+    """The chat's title as Cursor shows it ("Ozer's PR review rules"), kept a minute."""
+    at, title = _titles.get(chat, (0.0, ""))
+    if time.monotonic() - at > 60:
+        title = str(composer(chat).get("name") or "").strip()
+        _titles[chat] = (time.monotonic(), title)
+    return title
 
 
 def chat_model(chat: str) -> str:
     """The model a Cursor editor chat uses ("grok-4.7"), from Cursor's own store, read only."""
     if not CHAT_ID.fullmatch(chat):
         return ""
-    try:
-        with sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=1) as db:
-            row = db.execute("select value from cursorDiskKV where key = ?", (f"composerData:{chat}",)).fetchone()
-        return str((json.loads(row[0]).get("modelConfig") or {}).get("modelName") or "") if row else ""
-    except (sqlite3.Error, ValueError, TypeError, AttributeError):
-        return ""
+    config = composer(chat).get("modelConfig")
+    return str(config.get("modelName") or "") if isinstance(config, dict) else ""
 
 
 def chat_title(chat: str) -> str:

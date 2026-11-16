@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 import subprocess
 import sys
+import threading
 import time
 from enum import Enum
 from pathlib import Path
@@ -316,22 +317,25 @@ def introduced(speaker: Speaker, heard: Heard) -> None:
         (INTRODUCED / speaker.session).touch()
 
 
-why_not = ""  # why the last delivery didn't happen, for a text's sender (the phone) as well as the room
+_why = threading.local()  # per thread: the call server delivers on several at once
+
+
+def why_not() -> str:
+    """Why this thread's last delivery didn't happen, for a text's sender (the phone) as well as the room."""
+    return getattr(_why, "words", "")
 
 
 def refuse(words: str) -> None:
     """A delivery that can't happen: said out loud, and kept for the phone (it said only "the laptop says why",
     out of the user's earshot, 2026-11-16)."""
-    global why_not
-    why_not = words
+    _why.words = words
     say(words)
 
 
 def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
     """Type the words, tagged with how they were heard, to `to`, or else to the agent that spoke last. When it
-    can't, says why out loud and leaves the reason in why_not, for the phone to show too."""
-    global why_not
-    why_not = ""
+    can't, says why out loud and leaves the reason in why_not(), for the phone to show too."""
+    _why.words = ""
     speaker = to or last_speaker()
     message = f"{heard.tag} {introduce(speaker, heard)}{text}"
     if speaker is None:
