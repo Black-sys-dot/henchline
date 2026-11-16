@@ -315,11 +315,12 @@ def agents() -> dict:
 
 
 def switch(session: str) -> None:
-    """The page's agent menu: replies go to that agent now, announced as when spoken."""
+    """The phone's pick (its agent menu, or the chat a call was started from): replies go to that agent now.
+    Not announced: the phone shows who it is, and "Now talking to …" over the call said it again (the user's
+    catch, 2026-11-16). A switch said out loud ("switch me to Cursor") is still announced: there it's the only sign."""
     target = next((s for s in recent_speakers() if s.session == session), None)
     if target and routing.reachable(target):
         routing.switch_to(target)
-        routing.say(f"Now talking to {target.spoken()}.")
 
 
 def typed(words: str, session: str) -> tuple[bool, str]:
