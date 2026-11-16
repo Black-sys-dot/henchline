@@ -129,6 +129,10 @@ class MainActivity : Activity() {
 
         findViewById<ImageButton>(R.id.menu).setOnClickListener { show(listScreen) }
         findViewById<View>(R.id.compose).setOnClickListener { newChat() }
+        findViewById<Switch>(R.id.thoughtsSwitch).apply {
+            isChecked = prefs().getBoolean("thoughts", true)
+            setOnCheckedChangeListener { _, on -> prefs().edit().putBoolean("thoughts", on).apply() }
+        }
         for (id in listOf(R.id.callBarList, R.id.callBarChat)) findViewById<View>(id).setOnClickListener { openCall() }
         findViewById<View>(R.id.modelChip).setOnClickListener { switchModel() }
         findViewById<View>(R.id.tabChats).setOnClickListener { showCalls(false) }
@@ -1003,6 +1007,59 @@ class MainActivity : Activity() {
 
     /** The stop square: shown while the agent works on what you sent, i.e. your last line there was typed into it
      *  (delivered) and it hasn't answered since (the Claude app's stop button, the user's wish, 2026-11-16). */
+    private var thoughtsSince = ""  // the newest thought shown, for the next ask
+    private var thoughtsOf = ""  // the chat they belong to
+    private val thoughtsPoll = object : Runnable {
+        override fun run() {
+            pollThoughts()
+            if (chatScreen.visibility == View.VISIBLE) main.postDelayed(this, 5000)
+        }
+    }
+
+    /** A Cursor IDE chat's thinking, as thought bubbles, while its chat is on screen (the user's wish, 2026-11-16:
+     *  a thought bubble beside the speech ones). Only thoughts after its last kept line, then each new one. */
+    private fun pollThoughts() {
+        val session = current
+        if (!session.matches(Regex("cursor-[0-9a-f-]{36}")) || !prefs().getBoolean("thoughts", true)) return
+        if (thoughtsOf != session) {
+            thoughtsOf = session
+            val at = Chats.last(this, session)?.optLong("at") ?: 0L
+            thoughtsSince = if (at > 0) java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.US)
+                .apply { timeZone = java.util.TimeZone.getTimeZone("UTC") }.format(java.util.Date(at)) else ""
+        }
+        ask("/chat/thoughts?session=" + android.net.Uri.encode(session) + "&since=" + android.net.Uri.encode(thoughtsSince), null) { answer ->
+            val list = answer.optJSONArray("thoughts") ?: return@ask
+            if (session != current || chatScreen.visibility != View.VISIBLE) return@ask
+            for (i in 0 until list.length()) {
+                val thought = list.getJSONObject(i)
+                thoughtsSince = maxOf(thoughtsSince, thought.optString("at"))
+                thoughtBubble(thought.optString("text"))
+            }
+        }
+    }
+
+    /** A thought: a cloud, not a speech bubble: dashed, italic, muted, three lines until tapped. */
+    private fun thoughtBubble(words: String) {
+        val bubble = TextView(this).apply {
+            text = "💭 " + words
+            setTextColor(getColor(R.color.muted)); textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.ITALIC)
+            maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            background = GradientDrawable().apply {
+                setColor(android.graphics.Color.TRANSPARENT); cornerRadius = dp(20).toFloat()
+                setStroke(dp(1), getColor(R.color.surface_high), dp(6).toFloat(), dp(4).toFloat())
+            }
+            setOnClickListener { maxLines = if (maxLines == 3) Int.MAX_VALUE else 3 }
+            maxWidth = (resources.displayMetrics.widthPixels * 0.75).toInt()
+        }
+        chat.addView(LinearLayout(this).apply {
+            setPadding(dp(36), dp(2), 0, dp(2))
+            addView(bubble)
+        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
     private fun refreshStop() {
         val last = if (current.isEmpty()) null else Chats.last(this, current)
         val working = last != null && last.optBoolean("mine") && last.optString("status") == "delivered"
@@ -1244,6 +1301,8 @@ class MainActivity : Activity() {
         showCallBar()
         // A chat opens at its newest message, as a messaging app's does (it opened at the oldest, 2026-11-16)
         if (screen === chatScreen) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+        main.removeCallbacks(thoughtsPoll)
+        if (screen === chatScreen) { thoughtsOf = ""; main.post(thoughtsPoll) }
         Messages.viewing = if (screen === chatScreen) current else ""
         if (screen !== chatScreen) { sentBubbles.clear(); myBubbles.clear() }  // only bubbles on screen are kept
     }

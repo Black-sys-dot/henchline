@@ -39,3 +39,9 @@ the extension host alone keeps the old version).
 - Linux and X11, like the rest of Henchline. A locked screen can't be typed into.
 - Cursor's internal commands and its store's layout aren't a public API: a Cursor update can change them, and then
   the bridge refuses rather than typing into the wrong chat.
+
+## Thought bubbles
+
+While a Cursor IDE chat is open on the phone, its thinking (what Cursor's IDE lets you expand under each step) is
+read from Cursor's store and shown as dashed thought bubbles. Only while you look: never pushed, never a
+notification, not kept in the chat. Settings → Show agents' thinking turns them off.

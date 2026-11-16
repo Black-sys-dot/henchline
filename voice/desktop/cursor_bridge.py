@@ -146,6 +146,31 @@ def set_model(chat: str, model: str, params: list[dict]) -> str:
     return f"Switched to {entry['name']}, but Cursor shows {', '.join(off)} differently so far."
 
 
+def thoughts(chat: str, since: str = "", most: int = 20) -> list[dict]:
+    """A Cursor editor chat's thinking, as Cursor keeps it with each step (what its IDE lets you expand), newest
+    last: [{at (ISO time), text}], only those after `since`. Read only from Cursor's store."""
+    if not CHAT_ID.fullmatch(chat):
+        return []
+    found = []
+    try:
+        with contextlib.closing(sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=1)) as db:
+            rows = db.execute("select value from cursorDiskKV where key like ? order by rowid desc limit 300",
+                              (f"bubbleId:{chat}:%",)).fetchall()
+    except sqlite3.Error:
+        return []
+    for (raw,) in rows:
+        try:
+            bubble = json.loads(raw)
+        except ValueError:
+            continue
+        thought = bubble.get("thinking") if isinstance(bubble, dict) else None
+        text = str(thought.get("text") or "").strip() if isinstance(thought, dict) else ""
+        at = str(bubble.get("createdAt", "")) if isinstance(bubble, dict) else ""
+        if text and at and at > since:
+            found.append({"at": at, "text": text[:2000]})
+    return sorted(found, key=lambda t: t["at"])[-most:]
+
+
 def params_of(chat: str) -> list[dict]:
     """The settings Cursor keeps with a chat's model: [{id, value}] (effort, fast, context)."""
     config = composer(chat).get("modelConfig") or {}

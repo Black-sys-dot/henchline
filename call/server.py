@@ -923,6 +923,18 @@ async def crew_model(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "name": model["name"]})
 
 
+async def chat_thoughts(request: web.Request) -> web.Response:
+    """A Cursor IDE chat's thinking for the phone's thought bubbles (the user's wish, 2026-11-16): ?session=&since=
+    (an ISO time); {"thoughts": [{at, text}]}, empty for any other agent."""
+    trusted(request)
+    session = request.query.get("session", "")
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    chat = cursor_bridge.chat_of(session) if target and target.in_editor else ""
+    since = request.query.get("since", "")
+    found = await asyncio.get_running_loop().run_in_executor(None, cursor_bridge.thoughts, chat, since) if chat else []
+    return web.json_response({"thoughts": found})
+
+
 async def crew_stop(request: web.Request) -> web.Response:
     """The phone's stop button: the agent stops what it's doing, as Escape in its terminal (or Cursor's own stop for
     an editor chat, through the bridge). {session}"""
@@ -1205,6 +1217,7 @@ def main() -> int:
     app.router.add_post("/crew/new", crew_new)
     app.router.add_post("/crew/end", crew_end)
     app.router.add_post("/crew/stop", crew_stop)
+    app.router.add_get("/chat/thoughts", chat_thoughts)
     app.router.add_get("/crew/models", crew_models)
     app.router.add_post("/crew/model", crew_model)
     app.router.add_get("/files/{secret}/{name}", sent_file)

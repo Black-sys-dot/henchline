@@ -514,6 +514,28 @@
                 android:contentDescription="Clear sound: media audio instead of the phone-call path" />
         </LinearLayout>
 
+        <!-- Agents' thinking as thought bubbles in their chats (Cursor IDE chats keep it) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Show agents' thinking"
+                android:textColor="@color/text"
+                android:textSize="16sp" />
+
+            <Switch
+                android:id="@+id/thoughtsSwitch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="Show agents' thinking as thought bubbles" />
+        </LinearLayout>
+
         <LinearLayout
             android:id="@+id/serverRow"
             android:layout_width="match_parent"
