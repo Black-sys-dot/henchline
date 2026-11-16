@@ -154,10 +154,15 @@ def current() -> Desktop:
     """KDE when it is running (Klipper, Konsole), any other X11 desktop otherwise."""
     if os.environ.get("XDG_SESSION_TYPE") == "wayland":
         raise NotImplementedError("Wayland is not supported yet: log in to the X11 session (see the README)")
+    from voice.desktop.tmux import WithTmux
+
     if kde_session():
         from voice.desktop.kde_x11 import KdeX11
 
-        return KdeX11()
-    from voice.desktop.generic_x11 import GenericX11
+        found: Desktop = KdeX11()
+    else:
+        from voice.desktop.generic_x11 import GenericX11
 
-    return GenericX11()
+        found = GenericX11()
+    found.terminals = WithTmux(found.terminals)  # tmux panes on any desktop (voice/desktop/tmux.py)
+    return found

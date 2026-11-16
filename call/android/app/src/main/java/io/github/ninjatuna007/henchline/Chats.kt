@@ -65,6 +65,15 @@ object Chats {
         if (line.optString("id") == id && rank(status) > rank(line.optString("status"))) line.put("status", status) else line
     }
 
+    /** The chat emptied, on this phone only (the long-press menu): the laptop and the agent keep theirs. */
+    @Synchronized
+    fun clear(context: Context, session: String) {
+        if (session.isEmpty()) return
+        file(context, session).delete()
+        lasts.remove(session)
+        sweep(context)
+    }
+
     /** A line's words changed in place: a voice message once the laptop has heard it. */
     @Synchronized
     fun setText(context: Context, session: String, id: String, text: String) = rewrite(context, session) { line ->

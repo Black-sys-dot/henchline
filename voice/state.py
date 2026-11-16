@@ -56,6 +56,7 @@ CALL_RING = STATE / "call.ring-endpoint"  # where Henchline can be rung (its Uni
 CALL_RINGER = STATE / "call.ringer"  # who rang the user last (session, when): the call server routes the answer there
 CALL_HANGUP = STATE / "call.hangup"  # end the phone call once talkback is done: the user said so, or an agent
 VOICE_NOTES = STATE / "voicenotes"
+SPAWNED = STATE / "spawned.json"  # tmux panes of agents started from the phone: only these can be ended from it
 # A voice message not yet typed after this long is dropped, never typed late: the phone stops waiting at 180 s
 VOICE_NOTE_STALE = 150  # voice messages from the phone, waiting for hands-free to transcribe them
 TEXTS = STATE / "texts"  # each text an agent sent the phone (`handsfree text`): its id, who, and how far it got

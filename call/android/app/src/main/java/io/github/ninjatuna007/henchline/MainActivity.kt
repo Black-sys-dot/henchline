@@ -23,6 +23,7 @@ import android.widget.ScrollView
 import android.widget.Switch
 import android.widget.TextView
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 
@@ -120,7 +121,9 @@ class MainActivity : Activity() {
         showCrew()
 
         findViewById<ImageButton>(R.id.menu).setOnClickListener { show(listScreen) }
-        findViewById<ImageButton>(R.id.calls).setOnClickListener { showCalls(!showingCalls) }
+        findViewById<View>(R.id.compose).setOnClickListener { newChat() }
+        findViewById<View>(R.id.tabChats).setOnClickListener { showCalls(false) }
+        findViewById<View>(R.id.tabCalls).setOnClickListener { showCalls(true) }
         callButton.setOnClickListener { if (CallService.Bus.connected) hangUp() else call() }
         findViewById<View>(R.id.serverRow).setOnClickListener { askServer { } }
         showClear(prefs().getBoolean("clear", true))
@@ -313,7 +316,16 @@ class MainActivity : Activity() {
     override fun onPause() {
         Messages.viewing = ""  // not on screen: texts get their banner again
         CallService.Bus.listener = null  // the call goes on; this screen just stops drawing it
+        // Leaving mid-recording: the mic is never left open with nothing on screen. Held, it is dropped (the
+        // finger left with the app); locked, it was meant to be sent
+        if (voiceNote != null) endVoiceNote(keep = locked, why = "Dropped: you left the app")
         super.onPause()
+    }
+
+    override fun onDestroy() {
+        main.removeCallbacks(recordClock)
+        lockHint?.dismiss(); lockHint = null
+        super.onDestroy()
     }
 
     private fun call(given: String? = null) {
@@ -642,6 +654,7 @@ class MainActivity : Activity() {
         override fun run() {
             val note = voiceNote ?: return
             val seconds = (System.currentTimeMillis() - note.started) / 1000
+            if (seconds >= VoiceNote.LONGEST) return endVoiceNote(keep = true)  // at the cap: sent, and the mic let go
             val clock = "%d:%02d".format(seconds / 60, seconds % 60)
             text.hint = if (locked) "🔴 $clock   ✕ drops it, the button sends" else "🔴 $clock   ◀ slide to drop · ▲ to lock"
             main.postDelayed(this, 500)
@@ -700,6 +713,9 @@ class MainActivity : Activity() {
                 Chats.setStatus(this, to, id, "delivered")
                 main.post {
                     if (sentBubbles[id]?.first === bubble) sentBubbles[id] = bubble to words
+                    // And the bubble waiting to turn blue: the agent's answer must not put "Voice message…" back
+                    // (it did, 2026-11-16)
+                    myBubbles.replaceAll { if (it.first === bubble) bubble to words else it }
                     bubble.text = stamp(bubble, words, "delivered")  // in place: no redraw under you
                 }
             } else {
@@ -979,11 +995,12 @@ class MainActivity : Activity() {
         }
     }
 
-    /** The phone button in the list's top bar: lit while the call history shows. */
+    /** The bottom bar: Chats or Calls, the one showing lit. */
     private fun showCalls(on: Boolean) {
         showingCalls = on
-        findViewById<ImageButton>(R.id.calls).setColorFilter(getColor(if (on) R.color.cyan else R.color.muted))
-        findViewById<View>(R.id.sort).visibility = if (on) View.GONE else View.VISIBLE
+        findViewById<TextView>(R.id.tabChats).setTextColor(getColor(if (on) R.color.muted else R.color.cyan))
+        findViewById<TextView>(R.id.tabCalls).setTextColor(getColor(if (on) R.color.cyan else R.color.muted))
+        for (id in listOf(R.id.sort, R.id.search, R.id.compose)) findViewById<View>(id).visibility = if (on) View.GONE else View.VISIBLE
         showCrew()
     }
 
@@ -998,6 +1015,7 @@ class MainActivity : Activity() {
             setPadding(dp(20), dp(12), dp(20), dp(12))
             background = getDrawable(if (session == current) R.drawable.row_current else android.R.color.transparent)
             setOnClickListener { open(session) }
+            setOnLongClickListener { chatMenu(session, project, agent); true }
         }
         row.addView(ImageView(this).apply { setImageResource(avatarOf(session)) }, LinearLayout.LayoutParams(dp(52), dp(52)))
         val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; setPadding(dp(14), 0, 0, 0) }
@@ -1080,6 +1098,97 @@ class MainActivity : Activity() {
                 showCrew()
             }
         }.start()
+    }
+
+    /** A request to the laptop off the main thread: the JSON answer (with "note" saying why not), on the main thread. */
+    private fun ask(path: String, body: JSONObject?, then: (JSONObject) -> Unit) {
+        val origin = Files.origin(this) ?: return say("", "Set the laptop's address in Settings first.", note = true).let {}
+        Thread {
+            val answer = try {
+                val request = okhttp3.Request.Builder().url("$origin$path").header("Origin", origin)
+                if (body != null) request.post(body.toString().toRequestBody("application/json".toMediaType()))
+                Files.client.newCall(request.build()).execute().use { JSONObject(it.body?.string()?.ifEmpty { "{}" } ?: "{}") }
+            } catch (_: Exception) { JSONObject().put("note", "Couldn't reach the laptop (is Tailscale on?)") }
+            main.post { then(answer) }
+        }.start()
+    }
+
+    /** The crew as the laptop listed it: names, and which agents were started from here (those can be ended). */
+    private fun takeCrew(answer: JSONObject) {
+        val found = answer.optJSONArray("agents") ?: return
+        names = (0 until found.length()).associate { found.getJSONObject(it).getString("session") to found.getJSONObject(it).getString("name") }
+        prefs().edit().putString("crew", found.toString()).apply()
+    }
+
+    private fun startedHere(session: String): Boolean = try {
+        val crew = org.json.JSONArray(prefs().getString("crew", "[]"))
+        (0 until crew.length()).any { crew.getJSONObject(it).optString("session") == session && crew.getJSONObject(it).optBoolean("spawned") }
+    } catch (_: Exception) { false }
+
+    /** New chat (the user's wish, 2026-11-16): pick a folder the laptop's Claude already trusts, newest first, and
+     *  which agent; it starts in its own tmux window there and its chat opens. */
+    private fun newChat() {
+        val toast = { words: String -> android.widget.Toast.makeText(this, words, android.widget.Toast.LENGTH_LONG).show() }
+        ask("/crew/folders", null) { answer ->
+            val folders = answer.optJSONArray("folders")
+            val agents = answer.optJSONArray("agents")
+            if (folders == null || folders.length() == 0 || agents == null || agents.length() == 0) {
+                return@ask toast(answer.optString("note").ifEmpty { "No folder or agent to start on the laptop (needs tmux)." })
+            }
+            val labels = (0 until folders.length()).map { i ->
+                val f = folders.getJSONObject(i)
+                f.getString("name").replace("_", " ") + "\n" + f.getString("path").substringBeforeLast("/").replace(Regex("^/home/[^/]+"), "~")
+            }
+            AlertDialog.Builder(this).setTitle("New chat in…").setItems(labels.toTypedArray()) { _, i ->
+                val folder = folders.getJSONObject(i).getString("path")
+                val kinds = (0 until agents.length()).map { agents.getString(it) }
+                val go = { agent: String ->
+                    toast("Starting ${agent.replaceFirstChar { it.uppercase() }}…")
+                    ask("/crew/new", JSONObject().put("folder", folder).put("agent", agent)) { started ->
+                        val session = started.optString("session")
+                        if (session.isEmpty()) return@ask toast(started.optString("note").ifEmpty { "It didn't start." })
+                        takeCrew(started)
+                        open(session)
+                    }
+                }
+                if (kinds.size == 1) go(kinds[0])
+                else AlertDialog.Builder(this).setTitle("Which agent?")
+                    .setItems(kinds.map { it.replaceFirstChar { c -> c.uppercase() } }.toTypedArray()) { _, k -> go(kinds[k]) }.show()
+            }.show()
+        }
+    }
+
+    /** Long-press on a chat: clear it on this phone, or (for an agent started from here) end that agent. Agents the
+     *  user started on the laptop are never ended from the phone. */
+    private fun chatMenu(session: String, project: String, agent: String) {
+        val ending = startedHere(session)
+        val choices = listOfNotNull("Clear chat (this phone only)", if (ending) "End agent (closes it on the laptop)" else null)
+        AlertDialog.Builder(this).setTitle("$agent · ${project.replace("_", " ")}").setItems(choices.toTypedArray()) { _, i ->
+            if (i == 0) {
+                Chats.clear(this, session)
+                if (session == current) showHistory()
+                showCrew()
+                return@setItems
+            }
+            AlertDialog.Builder(this).setTitle("End $agent in ${project.replace("_", " ")}?")
+                .setMessage("Its tmux window on the laptop closes and its chat leaves the list.")
+                .setPositiveButton("End it") { _, _ ->
+                    ask("/crew/end", JSONObject().put("session", session)) { answer ->
+                        if (!answer.optBoolean("ok")) {
+                            android.widget.Toast.makeText(this, answer.optString("note").ifEmpty { "Not ended." }, android.widget.Toast.LENGTH_LONG).show()
+                            return@ask
+                        }
+                        Chats.clear(this, session)
+                        names = names - session
+                        val crew = org.json.JSONArray((0 until (org.json.JSONArray(prefs().getString("crew", "[]"))).length())
+                            .map { org.json.JSONArray(prefs().getString("crew", "[]")).getJSONObject(it) }
+                            .filter { it.optString("session") != session })
+                        prefs().edit().putString("crew", crew.toString()).apply()
+                        if (session == current) { current = ""; prefs().edit().putString("current", "").apply() }
+                        showCrew()
+                    }
+                }.setNegativeButton("Keep it", null).show()
+        }.show()
     }
 
     /** Replying to a message: shown above the box until sent, or tapped away. */

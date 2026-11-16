@@ -38,9 +38,9 @@ sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
-from voice.desktop import current as desktop  # noqa: E402
+from voice.desktop import current as desktop, tmux  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
-                         TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
+                         SPAWNED, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
                          CALL_PORT, CALL_PUSH,
                          CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
                          PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SENT, SPEAKERS,
@@ -287,7 +287,9 @@ async def from_page(message: dict, ear: Ear) -> str:
 def agents() -> dict:
     """The agents a call can switch to: heard lately and still running, and the one replies go to now."""
     current, locked = last_speaker(), desktop().locked()
-    listed = [{"session": s.session, "name": s.spoken() + (" (laptop locked)" if s.in_editor and locked else "")}
+    started = spawned()
+    listed = [{"session": s.session, "name": s.spoken() + (" (laptop locked)" if s.in_editor and locked else ""),
+               "spawned": s.tab.owner == tmux.OWNER and s.tab.address in started}
               for s in recent_speakers() if routing.reachable(s)]
     return {"agents": listed,
             "current": current.session if current else ""}
@@ -430,6 +432,81 @@ async def crew(request: web.Request) -> web.Response:
     loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, routing.discover_all)
     return web.json_response(await loop.run_in_executor(None, agents))
+
+
+def spawned() -> list[str]:
+    """The tmux panes of agents started from the phone."""
+    return [p for p in read_json(SPAWNED).get("panes", []) if isinstance(p, str)]
+
+
+def trusted_folders() -> list[Path]:
+    """Where a new chat can start: folders Claude Code already trusts (its own trust prompt would otherwise be the
+    first thing the phone's words answer), that still exist, most recently used first."""
+    try:
+        projects = json.loads((Path.home() / ".claude.json").read_text()).get("projects", {})
+    except (OSError, ValueError, AttributeError):
+        return []
+    found = [Path(p) for p, v in projects.items() if isinstance(v, dict) and v.get("hasTrustDialogAccepted")]
+
+    def used(folder: Path) -> float:  # Claude keeps each folder's sessions in ~/.claude/projects/<path, dashed>
+        try:
+            return (Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(folder))).stat().st_mtime
+        except OSError:
+            return 0.0
+    return sorted((f for f in found if f.is_dir()), key=used, reverse=True)[:30]
+
+
+async def crew_folders(request: web.Request) -> web.Response:
+    """A new chat's choices: the folders it can start in and the agents installed."""
+    trusted(request)
+    folders = await asyncio.get_running_loop().run_in_executor(None, trusted_folders)
+    listed = [{"path": str(f), "name": "home" if f == Path.home() else f.name} for f in folders]
+    return web.json_response({"folders": listed, "agents": tmux.available()})
+
+
+async def crew_new(request: web.Request) -> web.Response:
+    """A new chat: the agent started in its own tmux window in one of those folders (nothing else: the phone names
+    one from the list), registered, and its session returned with the crew."""
+    trusted(request)
+    try:
+        body = await request.json()
+        folder, agent = str(body.get("folder", "")), str(body.get("agent", "claude"))
+    except (ValueError, AttributeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    loop = asyncio.get_running_loop()
+    match = next((f for f in await loop.run_in_executor(None, trusted_folders) if str(f) == folder), None)
+    if match is None or agent not in tmux.available():
+        return web.json_response({"note": "Not a folder or agent the laptop offers."}, status=400)
+    tab = await loop.run_in_executor(None, tmux.start, agent, match)
+    if not tab:
+        return web.json_response({"note": f"{agent} didn't start."}, status=500)
+    write_json(SPAWNED, {"panes": [*spawned()[-49:], tab.address]}, private=True)
+    log(HANDSFREE_LOG, f"started {agent} in {match} (tmux {tab.address}) from the phone")
+    for _ in range(20):  # registered once its process shows in the pane (a second or two)
+        await loop.run_in_executor(None, routing.discover_all)
+        found = next((s for s in recent_speakers() if s.tab == tab), None)
+        if found:
+            return web.json_response({"session": found.session, **await loop.run_in_executor(None, agents)})
+        await asyncio.sleep(0.5)
+    return web.json_response({"note": f"{agent} started, but didn't show up: pull down to refresh."}, status=504)
+
+
+async def crew_end(request: web.Request) -> web.Response:
+    """Ending an agent from the phone (the long-press menu, after asking): only one Henchline started itself, in
+    its tmux pane. Agents the user started never are."""
+    trusted(request)
+    try:
+        session = str((await request.json()).get("session", ""))
+    except (ValueError, AttributeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    if target is None or target.tab.owner != tmux.OWNER or target.tab.address not in spawned():
+        return web.json_response({"note": "Only agents started from the phone can be ended from it."}, status=403)
+    await asyncio.get_running_loop().run_in_executor(None, tmux.end, target.tab)
+    write_json(SPAWNED, {"panes": [p for p in spawned() if p != target.tab.address]}, private=True)
+    (SPEAKERS / f"{session}.json").unlink(missing_ok=True)  # an exact match from recent_speakers: never a made-up path
+    log(HANDSFREE_LOG, f"ended {target.spoken()} (tmux {target.tab.address}) from the phone")
+    return web.json_response({"ok": True})
 
 
 async def text_status(request: web.Request) -> web.Response:
@@ -655,6 +732,9 @@ def main() -> int:
     app.router.add_post("/voice-note", voice_note)
     app.router.add_get("/voice-note/{nid}", voice_note_status)
     app.router.add_post("/crew", crew)  # it registers what it finds: a POST
+    app.router.add_get("/crew/folders", crew_folders)
+    app.router.add_post("/crew/new", crew_new)
+    app.router.add_post("/crew/end", crew_end)
     app.router.add_get("/files/{secret}/{name}", sent_file)
     proxied = False
     if args.host in ("serve", "tailscale"):

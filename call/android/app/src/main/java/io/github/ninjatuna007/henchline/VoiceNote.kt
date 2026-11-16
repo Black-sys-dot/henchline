@@ -39,7 +39,7 @@ class VoiceNote {
             val chunk = ByteArray(size)
             while (going) {
                 val n = recorder.read(chunk, 0, chunk.size)
-                if (n > 0) synchronized(pcm) { if (pcm.size() < MAX) pcm.write(chunk, 0, n) }
+                if (n > 0) synchronized(pcm) { if (pcm.size() < MAX) pcm.write(chunk, 0, n) else going = false }
             }
         }.also { it.start() }
         return true
@@ -64,7 +64,8 @@ class VoiceNote {
 
     companion object {
         const val RATE = 16000
-        private const val MAX = RATE * 2 * 300  // five minutes; the laptop takes up to 20 MiB
+        const val LONGEST = 300  // seconds: then it is sent (MainActivity's clock)
+        private const val MAX = RATE * 2 * LONGEST  // the laptop takes up to 20 MiB
 
         /** Sends it to the laptop for that agent and waits for what was heard: ("", words) once typed to the
          *  agent, or (why not, "") when it failed. Off the main thread. */

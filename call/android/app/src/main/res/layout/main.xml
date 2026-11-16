@@ -33,17 +33,6 @@
                 android:textSize="26sp"
                 android:textStyle="bold" />
 
-            <!-- Chats or the call history: tap to switch -->
-            <ImageButton
-                android:id="@+id/calls"
-                android:layout_width="40dp"
-                android:layout_height="40dp"
-                android:layout_marginEnd="8dp"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Call history"
-                android:src="@drawable/ic_phone"
-                android:tint="@color/muted" />
-
             <!-- How the chats are ordered: tap to cycle (recent, by project, by agent) -->
             <TextView
                 android:id="@+id/sort"
@@ -83,22 +72,75 @@
             android:textColorHint="@color/muted"
             android:textSize="15sp" />
 
-        <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-            android:id="@+id/refresh"
+        <FrameLayout
             android:layout_width="match_parent"
-            android:layout_height="match_parent">
+            android:layout_height="0dp"
+            android:layout_weight="1">
 
-            <ScrollView
+            <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
+                android:id="@+id/refresh"
                 android:layout_width="match_parent"
                 android:layout_height="match_parent">
 
-                <LinearLayout
-                    android:id="@+id/crew"
+                <ScrollView
                     android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical" />
-            </ScrollView>
-        </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+                    android:layout_height="match_parent">
+
+                    <LinearLayout
+                        android:id="@+id/crew"
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:paddingBottom="88dp"
+                        android:orientation="vertical" />
+                </ScrollView>
+            </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+
+            <!-- New chat: start an agent on the laptop in a folder it already trusts (as WhatsApp's new chat) -->
+            <ImageButton
+                android:id="@+id/compose"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
+                android:layout_gravity="bottom|end"
+                android:layout_margin="18dp"
+                android:background="@drawable/round_call"
+                android:backgroundTint="@color/cyan"
+                android:contentDescription="New chat: start an agent"
+                android:elevation="6dp"
+                android:src="@drawable/ic_compose"
+                android:tint="@color/navy" />
+        </FrameLayout>
+
+        <!-- Chats and Calls, as WhatsApp's bottom bar (the user's wish, 2026-11-16) -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="60dp"
+            android:background="@color/surface"
+            android:orientation="horizontal">
+
+            <TextView
+                android:id="@+id/tabChats"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?android:attr/selectableItemBackground"
+                android:gravity="center"
+                android:text="💬  Chats"
+                android:textColor="@color/cyan"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+
+            <TextView
+                android:id="@+id/tabCalls"
+                android:layout_width="0dp"
+                android:layout_height="match_parent"
+                android:layout_weight="1"
+                android:background="?android:attr/selectableItemBackground"
+                android:gravity="center"
+                android:text="📞  Calls"
+                android:textColor="@color/muted"
+                android:textSize="15sp"
+                android:textStyle="bold" />
+        </LinearLayout>
     </LinearLayout>
 
     <!-- A chat -->
