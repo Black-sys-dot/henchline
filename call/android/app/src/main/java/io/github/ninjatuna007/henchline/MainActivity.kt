@@ -1020,7 +1020,7 @@ class MainActivity : Activity() {
      *  a thought bubble beside the speech ones). Only thoughts after its last kept line, then each new one. */
     private fun pollThoughts() {
         val session = current
-        if (!session.matches(Regex("cursor-[0-9a-f-]{36}")) || !prefs().getBoolean("thoughts", true)) return
+        if (!session.matches(Regex("(cursor|claude)-[0-9a-f-]{36}")) || !prefs().getBoolean("thoughts", true)) return
         if (thoughtsOf != session) {
             thoughtsOf = session
             val at = Chats.last(this, session)?.optLong("at") ?: 0L
@@ -1038,25 +1038,39 @@ class MainActivity : Activity() {
         }
     }
 
-    /** A thought: a cloud, not a speech bubble: dashed, italic, muted, three lines until tapped. */
+    /** A thought: a cloud, not a speech bubble (as a comic's: soft and round, with the small circles trailing
+     *  from the thinker), italic and quieter than speech; two lines and "tap to read all", the rest a tap away. */
     private fun thoughtBubble(words: String) {
+        val cloud = getColor(R.color.surface) and 0x00FFFFFF or 0x99000000.toInt()
         val bubble = TextView(this).apply {
-            text = "💭 " + words
-            setTextColor(getColor(R.color.muted)); textSize = 13f
+            text = words
+            setTextColor(getColor(R.color.muted)); textSize = 13.5f
             setTypeface(typeface, android.graphics.Typeface.ITALIC)
             maxLines = 3; ellipsize = android.text.TextUtils.TruncateAt.END
-            setPadding(dp(14), dp(8), dp(14), dp(8))
-            background = GradientDrawable().apply {
-                setColor(android.graphics.Color.TRANSPARENT); cornerRadius = dp(20).toFloat()
-                setStroke(dp(1), getColor(R.color.surface_high), dp(6).toFloat(), dp(4).toFloat())
+            setPadding(dp(18), dp(12), dp(18), dp(12))
+            background = GradientDrawable().apply { setColor(cloud); cornerRadius = dp(28).toFloat() }
+            setOnClickListener {  // open in full; again: folded to three lines
+                if (maxLines != Int.MAX_VALUE) { maxLines = Int.MAX_VALUE; text = words } else { maxLines = 3; text = words }
             }
-            setOnClickListener { maxLines = if (maxLines == 3) Int.MAX_VALUE else 3 }
-            maxWidth = (resources.displayMetrics.widthPixels * 0.75).toInt()
+            maxWidth = (resources.displayMetrics.widthPixels * 0.72).toInt()
         }
-        chat.addView(LinearLayout(this).apply {
-            setPadding(dp(36), dp(2), 0, dp(2))
+        bubble.post {  // folded: say there is more
+            val layout = bubble.layout ?: return@post
+            if (layout.lineCount >= 3 && layout.getEllipsisCount(2) > 0) {  // the hint as the 3rd line's end
+                bubble.maxLines = 4
+                bubble.text = layout.text.subSequence(0, layout.getLineEnd(1)).toString().trimEnd() + "…\n— tap to read all"
+            }
+        }
+        fun dot(size: Int) = View(this).apply {
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(cloud) }
+        }.also { it.layoutParams = LinearLayout.LayoutParams(dp(size), dp(size)).apply { marginEnd = dp(3) } }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM
+            setPadding(dp(16), dp(4), 0, dp(4))
+            addView(dot(6)); addView(dot(10).apply { (layoutParams as LinearLayout.LayoutParams).bottomMargin = dp(6) })
             addView(bubble)
-        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        }
+        chat.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
@@ -1126,23 +1140,61 @@ class MainActivity : Activity() {
         return listOf(project, status).filter { it.isNotEmpty() }.joinToString(" · ")
     }
 
-    /** A call in the chat, as WhatsApp shows one: a small bubble in the middle, with when it was. */
-    private fun callPill(words: String, at: Long) {
-        val time = if (at > 0) "  " + android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(at)) else ""
-        val text = android.text.SpannableStringBuilder(words).append(time)
-        text.setSpan(android.text.style.ForegroundColorSpan(getColor(R.color.muted)), words.length, text.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        text.setSpan(android.text.style.RelativeSizeSpan(0.85f), words.length, text.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        val pill = TextView(this).apply {
-            this.text = text
-            setTextColor(getColor(R.color.text)); textSize = 14f
-            setPadding(dp(16), dp(8), dp(16), dp(8))
-            background = GradientDrawable().apply { setColor(getColor(R.color.surface)); cornerRadius = dp(16).toFloat() }
+    /** A call in the chat as WhatsApp shows one (the user's example, 2026-11-16): a message bubble on the side of
+     *  whoever started it, a round phone mark (red when missed), "Voice call" and how long, and its time. */
+    private fun callBubble(line: JSONObject) {
+        val call = line.optJSONObject("call") ?: JSONObject().put("dir", "out")  // from before: one of yours
+        val mine = call.optString("dir") == "out"
+        val outcome = call.optString("outcome")
+        val missed = outcome == "missed" || outcome == "declined"
+        val title = when (outcome) { "missed" -> "Missed voice call"; "declined" -> "Declined voice call"; else -> "Voice call" }
+        val detail = when {
+            call.has("seconds") -> Calls.length(call.optLong("seconds"))
+            missed -> call.optString("why").take(60)
+            else -> line.optString("text").substringAfter("· ", "")
         }
-        chat.addView(LinearLayout(this).apply {
-            gravity = Gravity.CENTER_HORIZONTAL
-            setPadding(0, dp(6), 0, dp(6))
-            addView(pill)
-        }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        val at = line.optLong("at")
+        val time = if (at > 0) android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(at)) else ""
+        val mark = TextView(this).apply {
+            text = if (mine) "↗" else "↙"
+            setTextColor(getColor(if (missed) R.color.hang else R.color.text)); textSize = 18f; gravity = Gravity.CENTER
+            background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(getColor(R.color.navy)) }
+        }
+        val words = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL; setPadding(dp(12), 0, dp(12), 0)
+            addView(TextView(this@MainActivity).apply {
+                text = "📞 $title"; setTextColor(getColor(if (missed) R.color.hang else R.color.text)); textSize = 15f
+                typeface = android.graphics.Typeface.DEFAULT_BOLD
+            })
+            if (detail.isNotEmpty()) addView(TextView(this@MainActivity).apply {
+                text = detail; setTextColor(getColor(R.color.muted)); textSize = 13f; maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+        }
+        val bubble = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(10), dp(10), dp(12), dp(8))
+            setBackgroundResource(if (mine) R.drawable.bubble_mine else R.drawable.bubble_agent)
+            addView(mark, LinearLayout.LayoutParams(dp(40), dp(40)))
+            addView(words, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            addView(TextView(this@MainActivity).apply {
+                text = time; setTextColor(getColor(R.color.muted)); textSize = 11f
+            }, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                gravity = Gravity.BOTTOM
+            })
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = if (mine) Gravity.END else Gravity.START or Gravity.BOTTOM
+            setPadding(0, dp(4), 0, dp(4))
+        }
+        if (!mine) row.addView(ImageView(this).apply { setImageResource(avatarOf(current)) },
+            LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) })
+        row.addView(bubble, LinearLayout.LayoutParams((resources.displayMetrics.widthPixels * 0.68).toInt(),
+            LinearLayout.LayoutParams.WRAP_CONTENT))
+        if (mine) row.addView(ImageView(this).apply { setImageResource(R.drawable.avatar_you) },
+            LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(8) })
+        chat.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
     }
 
     /** "Today", "Yesterday" or the date, centred between the lines of different days. */
@@ -1588,7 +1640,7 @@ class MainActivity : Activity() {
             else if (line.has("thumb")) picture(line.getString("thumb"), line.optString("text"), current)
             else if (line.optBoolean("note")) {  // a kept note: a call and its length
                 dayLine(line.optLong("at"))
-                callPill(line.optString("text"), line.optLong("at"))
+                callBubble(line)
             } else {
                 val bubble = say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"),
                     session = current, keep = false, at = line.optLong("at"),

@@ -923,6 +923,35 @@ async def crew_model(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "name": model["name"]})
 
 
+def claude_thoughts(target: Speaker, since: str, most: int = 20) -> list[dict]:
+    """A Claude session's thinking that it kept as text (summaries of its reasoning, not every step), from its
+    session log, after `since` (an ISO time): [{at, text}], newest last."""
+    uuid = target.session.removeprefix("claude-")
+    if not re.fullmatch(r"[0-9a-f-]{36}", uuid):
+        return []
+    found = []
+    for log_file in (Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"):
+        try:
+            with log_file.open("rb") as f:
+                f.seek(max(0, log_file.stat().st_size - 2_000_000))
+                tail = f.read().splitlines()
+        except OSError:
+            continue
+        for raw in tail:
+            try:
+                entry = json.loads(raw)
+            except ValueError:
+                continue
+            message = entry.get("message") if isinstance(entry, dict) else None
+            at = str(entry.get("timestamp", "")) if isinstance(entry, dict) else ""
+            if not isinstance(message, dict) or entry.get("isSidechain") or not at or at <= since:
+                continue
+            for part in message.get("content") or []:
+                if isinstance(part, dict) and part.get("type") == "thinking" and str(part.get("thinking", "")).strip():
+                    found.append({"at": at, "text": str(part["thinking"]).strip()[:2000]})
+    return found[-most:]
+
+
 async def chat_thoughts(request: web.Request) -> web.Response:
     """A Cursor IDE chat's thinking for the phone's thought bubbles (the user's wish, 2026-11-16): ?session=&since=
     (an ISO time); {"thoughts": [{at, text}]}, empty for any other agent."""
@@ -930,8 +959,14 @@ async def chat_thoughts(request: web.Request) -> web.Response:
     session = request.query.get("session", "")
     target = next((s for s in recent_speakers() if s.session == session), None)
     chat = cursor_bridge.chat_of(session) if target and target.in_editor else ""
-    since = request.query.get("since", "")
-    found = await asyncio.get_running_loop().run_in_executor(None, cursor_bridge.thoughts, chat, since) if chat else []
+    since = request.query.get("since", "")  # ISO times, compared as text: both stores write them the same way
+    loop = asyncio.get_running_loop()
+    if chat:
+        found = await loop.run_in_executor(None, cursor_bridge.thoughts, chat, since)
+    elif target and target.agent == "claude":  # Claude keeps some of its thinking as text in its session log
+        found = await loop.run_in_executor(None, claude_thoughts, target, since)
+    else:  # Codex keeps its reasoning encrypted: nothing to show
+        found = []
     return web.json_response({"thoughts": found})
 
 

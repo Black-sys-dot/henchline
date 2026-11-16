@@ -35,10 +35,21 @@ object Calls {
     }
 
     /** How a ring ended, once: the first answer, decline or miss stands. */
-    fun outcome(context: Context, reply: String?, what: String) = update(context, ringId(reply)) {
-        // Answered but the laptop out of reach: "unreachable" says more than "answered"
-        if (it.optString("outcome") == "ringing" || (what == "unreachable" && it.optString("outcome") == "answered"))
-            it.put("outcome", what)
+    fun outcome(context: Context, reply: String?, what: String) {
+        var ended: JSONObject? = null
+        update(context, ringId(reply)) {
+            // Answered but the laptop out of reach: "unreachable" says more than "answered"
+            if (it.optString("outcome") == "ringing" || (what == "unreachable" && it.optString("outcome") == "answered")) {
+                it.put("outcome", what)
+                if (what == "missed" || what == "declined") ended = JSONObject(it.toString())
+            }
+        }
+        // A ring not taken shows in that agent's chat too, on its side, as WhatsApp's missed call does
+        ended?.let { ring ->
+            Chats.add(context, ring.optString("session"), JSONObject().put("from", "").put("note", true).put("mine", false)
+                .put("text", if (what == "missed") "📞 Missed call" else "📞 Declined call")
+                .put("call", JSONObject().put("dir", "in").put("outcome", what).put("why", ring.optString("why"))))
+        }
     }
 
     /** "45 s", "4 min", "1 h 12 min" */

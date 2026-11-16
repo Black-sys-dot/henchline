@@ -407,10 +407,14 @@ class CallService : Service() {
     /** The call ended: its length in the history, and a line in the chat it ended on, as WhatsApp shows one. */
     private fun logCall() {
         val seconds = (System.currentTimeMillis() - startedAt) / 1000
-        val session = getSharedPreferences("call", MODE_PRIVATE).getString("current", "") ?: ""
+        // The chat of the agent the call was with (the laptop's last word on it), not the chat shown
+        val withAgent = try { org.json.JSONObject(Bus.lastAgents ?: "{}").optString("current") } catch (_: Exception) { "" }
+        val session = withAgent.ifEmpty { getSharedPreferences("call", MODE_PRIVATE).getString("current", "") ?: "" }
         Calls.update(this, "call-$startedAt") { it.put("seconds", seconds).put("session", session) }
+        // As WhatsApp shows a call: on the side of whoever started it (an answered ring: the agent's)
         Chats.add(this, session, org.json.JSONObject().put("from", "").put("note", true).put("mine", false)
-            .put("text", "📞 Call · ${Calls.length(seconds)}"))
+            .put("text", "📞 Call · ${Calls.length(seconds)}")
+            .put("call", org.json.JSONObject().put("dir", if (reply != null) "in" else "out").put("seconds", seconds)))
         startedAt = 0
     }
 
