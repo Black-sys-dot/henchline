@@ -1,6 +1,7 @@
 // Henchline's bridge inside Cursor: each window listens on a private Unix socket and, asked {"open": "<chat id>"},
-// brings that agent chat to the front (Cursor's own composer.openComposer). Henchline then types into it as it
-// always has. Nothing else is accepted: no text, no other command. The socket and its note are only the user's
+// brings that agent chat to the front (Cursor's own composer.openComposer); asked {"cycle": "<chat id>"}, moves
+// that chat to its next model (composer.cycleModel). Henchline then types into it as it always has. Nothing else
+// is accepted: no text, no other command. The socket and its note are only the user's
 // (0700 folder, 0600 files), under ~/.local/state/ptt/cursor-bridge/.
 const fs = require("fs");
 const net = require("net");
@@ -27,6 +28,14 @@ function activate(context) {
       let answer;
       try {
         const asked = JSON.parse(buffered.split("\n")[0]);
+        if (typeof asked.cycle === "string" && CHAT_ID.test(asked.cycle)) {
+          // The chat's next model, as Cursor's own "cycle model" does: no keys, no text; Henchline reads the model
+          // it lands on from Cursor's store and asks again until it's the one picked on the phone
+          await vscode.commands.executeCommand("composer.openComposer", asked.cycle);
+          await vscode.commands.executeCommand("composer.cycleModel");
+          conn.end(JSON.stringify({ ok: true }) + "\n");
+          return;
+        }
         if (typeof asked.open !== "string" || !CHAT_ID.test(asked.open)) throw new Error("not a chat id");
         // Belt only: Cursor hands back a handle even for an id it doesn't have, so Henchline itself picks the
         // window whose project holds the chat's transcript (voice/desktop/cursor_bridge.py)

@@ -38,12 +38,8 @@ def owner_of(chat: str) -> str:
     return found[0].parent.parent.name if len(found) == 1 else ""
 
 
-def open_chat(workspace: str, chat: str) -> bool:
-    """Brings that chat to the front in the one Cursor window that has it: the window whose workspace folder is
-    the project holding the chat's transcript (Cursor's own commands say yes to any id, 2026-11-16). False when no
-    window has it: then nothing may be typed, or the words would land in whatever chat is on screen."""
-    if not CHAT_ID.fullmatch(chat):
-        return False
+def ask_window(chat: str, request: dict) -> bool:
+    """Sends one request to the one Cursor window that has the chat (see open_chat); True when it said yes."""
     project = owner_of(chat)
     if not project:
         return False
@@ -57,29 +53,63 @@ def open_chat(workspace: str, chat: str) -> bool:
             owners.append(note)
     if len(owners) != 1:  # none, or two windows on that project: which has the chat can't be told, so neither
         return False
-    for note in owners:
-        try:
-            with socket.socket(socket.AF_UNIX) as conn:
-                conn.settimeout(5)
-                conn.connect(str(note.with_suffix(".sock")))
-                conn.sendall(json.dumps({"open": chat}).encode() + b"\n")
-                answer = b""
-                while b"\n" not in answer and len(answer) < 4096:  # the whole answer line, however it arrives
-                    part = conn.recv(4096)
-                    if not part:
-                        break
-                    answer += part
-            if json.loads(answer.decode() or "{}").get("ok"):
-                time.sleep(0.4)  # Cursor moving its focus to that chat, before anything is typed
-                return True
-        except (OSError, ValueError):
-            continue  # a window that has gone: its note stays until Cursor cleans it up
-    return False
+    try:
+        with socket.socket(socket.AF_UNIX) as conn:
+            conn.settimeout(5)
+            conn.connect(str(owners[0].with_suffix(".sock")))
+            conn.sendall(json.dumps(request).encode() + b"\n")
+            answer = b""
+            while b"\n" not in answer and len(answer) < 4096:  # the whole answer line, however it arrives
+                part = conn.recv(4096)
+                if not part:
+                    break
+                answer += part
+        return bool(json.loads(answer.decode() or "{}").get("ok"))
+    except (OSError, ValueError):
+        return False
+
+
+def switch_model(chat: str, wanted: str) -> str:
+    """Moves a Cursor editor chat to a model by Cursor's own "cycle model", read back from its store after each
+    step until the chat is on it ("" then), or back where it started (it isn't among the chat's models)."""
+    if not CHAT_ID.fullmatch(chat):
+        return "Not a Cursor chat."
+    start = chat_model(chat)
+    if not start:
+        return "Cursor's record of that chat can't be read, so it can't be checked: not switched."
+    if wanted.startswith(start) or start.startswith(wanted):
+        return ""
+    seen = start
+    for _ in range(40):
+        if not ask_window(chat, {"cycle": chat}):
+            return "Cursor's bridge didn't answer (reload Cursor's extensions?): not switched."
+        for _ in range(10):  # Cursor writes its store a moment later
+            time.sleep(0.3)
+            now = chat_model(chat)
+            if now and now != seen:
+                break
+        if not now or now == seen:
+            return "Cursor didn't change the model: not switched."
+        seen = now
+        if wanted.startswith(now) or now.startswith(wanted):
+            return ""
+        if now == start:
+            return f"{wanted} isn't among this chat's models in Cursor: left on {start}."
+    return f"Didn't reach {wanted}: left on {seen}."
+
+
+def open_chat(workspace: str, chat: str) -> bool:
+    """Brings that chat to the front in the one Cursor window that has it: the window whose workspace folder is
+    the project holding the chat's transcript (Cursor's own commands say yes to any id, 2026-11-16). False when no
+    window has it: then nothing may be typed, or the words would land in whatever chat is on screen. (workspace:
+    the chat's label, kept for the callers; the transcript decides.)"""
+    if not CHAT_ID.fullmatch(chat) or not ask_window(chat, {"open": chat}):
+        return False
+    time.sleep(0.4)  # Cursor moving its focus to that chat, before anything is typed
+    return True
 
 
 STATE_DB = Path.home() / ".config/Cursor/User/globalStorage/state.vscdb"
-
-
 _titles: dict[str, tuple[float, str]] = {}  # chat id: (when read, title); the list is rebuilt every few seconds
 
 
