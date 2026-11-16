@@ -70,10 +70,15 @@ def ask_window(chat: str, request: dict) -> bool:
 
 
 def chats_of(chat: str) -> list[str]:
-    """The other chats of the chat's project (its transcripts' neighbours): to check a switch touched only it."""
+    """The other chats of the chat's project worked in this last week (its transcripts' neighbours): to check a
+    switch touched only it."""
     project = owner_of(chat)
     folder = Path.home() / ".cursor/projects" / project / "agent-transcripts"
-    return [p.name for p in folder.iterdir() if p.name != chat and CHAT_ID.fullmatch(p.name)] if project else []
+    try:
+        return [p.name for p in folder.iterdir() if p.name != chat and CHAT_ID.fullmatch(p.name)
+                and time.time() - p.stat().st_mtime < 7 * 86400] if project else []
+    except OSError:
+        return []
 
 
 def switch_model(chat: str, wanted: str) -> str:
@@ -85,7 +90,8 @@ def switch_model(chat: str, wanted: str) -> str:
     start = chat_model(chat)
     if not start:
         return "Cursor's record of that chat can't be read, so it can't be checked: not switched."
-    others = {other: chat_model(other) for other in chats_of(chat)}
+    # Only chats whose model could be read: one becoming readable meanwhile isn't a change Cursor made
+    others = {other: model for other in chats_of(chat) if (model := chat_model(other))}
     steps = 0
     now = start
     while not (wanted.startswith(now) or now.startswith(wanted)):
