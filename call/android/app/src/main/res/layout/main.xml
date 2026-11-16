@@ -105,8 +105,9 @@
                 android:background="@drawable/squircle"
                 android:contentDescription="New chat: start an agent"
                 android:elevation="6dp"
-                android:src="@drawable/ic_compose"
-                android:tint="@color/navy" />
+                android:padding="0dp"
+                android:scaleType="fitCenter"
+                android:src="@drawable/ic_launcher_foreground" />
         </FrameLayout>
 
         <!-- Chats and Calls, as WhatsApp's bottom bar (the user's wish, 2026-11-16) -->

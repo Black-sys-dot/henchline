@@ -122,6 +122,7 @@ class NewChatSheet(
     private var agent = agents.first()
     private var folder: JSONObject? = folders.firstOrNull()
     private var typed = ""  // a path in the box, when it is one
+    private var failure = ""  // why the last start didn't happen, shown until something else is picked
 
     fun show() {
         val sheet = open("New chat", "Starts an agent on your laptop, in its own tmux window")
@@ -129,8 +130,7 @@ class NewChatSheet(
         val chips = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         val go = primary("")
         val warning = TextView(activity).apply {
-            setTextColor(colour(R.color.muted)); textSize = 12f; gravity = Gravity.CENTER; visibility = View.GONE
-            text = "A folder the agent hasn't worked in: starting there trusts it to read and change its files."
+            textSize = 12f; gravity = Gravity.CENTER; visibility = View.GONE
         }
         val cards = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val box = EditText(activity)
@@ -155,10 +155,18 @@ class NewChatSheet(
             go.text = if (where.isEmpty()) "Pick a folder" else "Start ${agent.replaceFirstChar { it.uppercase() }} in ${where.replace("_", " ")}"
             go.isEnabled = where.isNotEmpty()
             go.alpha = if (go.isEnabled) 1f else 0.5f
-            warning.visibility = if (typed.isNotEmpty()) View.VISIBLE else View.GONE
+            when {
+                failure.isNotEmpty() -> { warning.text = failure; warning.setTextColor(colour(R.color.hang)); warning.visibility = View.VISIBLE }
+                typed.isNotEmpty() -> {
+                    warning.text = "A folder the agent hasn't worked in: starting there trusts it to read and change its files."
+                    warning.setTextColor(colour(R.color.muted)); warning.visibility = View.VISIBLE
+                }
+                else -> warning.visibility = View.GONE
+            }
         }
         fun listFolders(query: String) {
             cards.removeAllViews()
+            failure = ""
             val q = query.trim()
             typed = if (q.startsWith("/") || q.startsWith("~")) q else ""
             if (typed.isNotEmpty()) cards.addView(card("typed", "✏️", "Use this path", typed) { refresh() })
@@ -167,6 +175,7 @@ class NewChatSheet(
             for (f in shown) cards.addView(card(f.optString("path"), "📁", f.optString("name").replace("_", " "),
                 pretty(f.optString("path")).substringBeforeLast("/").ifEmpty { "/" }) {
                 folder = f
+                failure = ""
                 if (typed.isNotEmpty()) box.setText("")  // a picked card wins over a half-typed path
                 refresh()
             })
@@ -187,7 +196,7 @@ class NewChatSheet(
                     text = if (kind == "cursor") "Cursor CLI" else kind.replaceFirstChar { it.uppercase() }
                     setTextColor(colour(R.color.text)); textSize = 13f; gravity = Gravity.CENTER; setPadding(0, px(6), 0, 0)
                 })
-                setOnClickListener { agent = kind; pop(this); refresh() }
+                setOnClickListener { agent = kind; failure = ""; pop(this); refresh() }
             }, LinearLayout.LayoutParams(px(96), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = px(10) })
         }
         sheet.addView(HorizontalScrollView(activity).apply { isHorizontalScrollBarEnabled = false; addView(chips) }, wide(10))
@@ -220,11 +229,8 @@ class NewChatSheet(
             go.text = "Starting ${agent.replaceFirstChar { it.uppercase() }}…"
             go.animate().alpha(0.7f).setDuration(150).start()
             start(path, agent, typed.isNotEmpty()) { why ->
-                if (why == null) close()
-                else {
-                    warning.text = why; warning.setTextColor(colour(R.color.hang)); warning.visibility = View.VISIBLE
-                    refresh()
-                }
+                if (why == null) close()  // this sheet's own close: never a newer sheet's
+                else { failure = why; refresh() }
             }
         }
         sheet.addView(buttons, wide(16))
