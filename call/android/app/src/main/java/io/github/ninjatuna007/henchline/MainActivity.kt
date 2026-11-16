@@ -335,7 +335,12 @@ class MainActivity : Activity() {
         if (chatScreen.visibility == View.VISIBLE && sheet?.isOpen != true) when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> edgeStart = if (event.x < dp(24)) event.x else -1f
             MotionEvent.ACTION_UP -> {
-                if (edgeStart >= 0 && event.x - edgeStart > dp(100)) { edgeStart = -1f; show(listScreen); return true }
+                if (edgeStart >= 0 && event.x - edgeStart > dp(100)) {
+                    edgeStart = -1f
+                    // Back, as the system's back does: an open menu goes first (it stayed up over the list, 2026-11-16)
+                    if (panel?.isOpen == true) panel?.close() else show(listScreen)
+                    return true
+                }
                 edgeStart = -1f
             }
         }
@@ -1850,6 +1855,7 @@ class MainActivity : Activity() {
 
     /** One screen at a time: the chat list, a chat, or settings. */
     private fun show(screen: View) {
+        if (panel?.isOpen == true) panel?.close(animate = false)  // a menu belongs to the screen it opened on
         for (s in listOf(listScreen, chatScreen, settingsScreen)) s.visibility = if (s === screen) View.VISIBLE else View.GONE
         if (screen === listScreen) { showCrew(); refreshCrewQuietly() }
         showCallBar()
