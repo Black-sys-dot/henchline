@@ -38,7 +38,7 @@ sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
-from voice.desktop import current as desktop, tmux  # noqa: E402
+from voice.desktop import Tab, current as desktop, tmux  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
                          SPAWNED, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
                          CALL_PORT, CALL_PUSH,
@@ -435,8 +435,13 @@ async def crew(request: web.Request) -> web.Response:
 
 
 def spawned() -> list[str]:
-    """The tmux panes of agents started from the phone."""
-    return [p for p in read_json(SPAWNED).get("panes", []) if isinstance(p, str)]
+    """The tmux panes of agents started from the phone that are still those panes: each kept with its process id,
+    since tmux numbers panes from 0 again after a restart, and a reused id may be one the user started."""
+    kept = [e for e in read_json(SPAWNED).get("panes", []) if isinstance(e, dict)]
+    alive = [e for e in kept if e.get("pid") and tmux.pane_pid(Tab(tmux.OWNER, str(e.get("pane", "")))) == e["pid"]]
+    if len(alive) != len(kept):  # gone, or now someone else's: forgotten
+        write_json(SPAWNED, {"panes": alive}, private=True)
+    return [str(e["pane"]) for e in alive]
 
 
 def trusted_folders() -> list[Path]:
@@ -480,14 +485,18 @@ async def crew_new(request: web.Request) -> web.Response:
     tab = await loop.run_in_executor(None, tmux.start, agent, match)
     if not tab:
         return web.json_response({"note": f"{agent} didn't start."}, status=500)
-    write_json(SPAWNED, {"panes": [*spawned()[-49:], tab.address]}, private=True)
+    entries = [e for e in read_json(SPAWNED).get("panes", []) if isinstance(e, dict)]
+    pid = await loop.run_in_executor(None, tmux.pane_pid, tab)
+    write_json(SPAWNED, {"panes": [*entries[-49:], {"pane": tab.address, "pid": pid}]}, private=True)
     log(HANDSFREE_LOG, f"started {agent} in {match} (tmux {tab.address}) from the phone")
-    for _ in range(20):  # registered once its process shows in the pane (a second or two)
-        await loop.run_in_executor(None, routing.discover_all)
-        found = next((s for s in recent_speakers() if s.tab == tab), None)
-        if found:
-            return web.json_response({"session": found.session, **await loop.run_in_executor(None, agents)})
+    for _ in range(16):  # the pane alone is asked (cheap) until the agent runs in it, then the desktop once
+        if await loop.run_in_executor(None, desktop().terminals.agent_running, tab):
+            break
         await asyncio.sleep(0.5)
+    await loop.run_in_executor(None, routing.discover_all)
+    found = next((s for s in recent_speakers() if s.tab == tab), None)
+    if found:
+        return web.json_response({"session": found.session, **await loop.run_in_executor(None, agents)})
     return web.json_response({"note": f"{agent} started, but didn't show up: pull down to refresh."}, status=504)
 
 
@@ -503,7 +512,8 @@ async def crew_end(request: web.Request) -> web.Response:
     if target is None or target.tab.owner != tmux.OWNER or target.tab.address not in spawned():
         return web.json_response({"note": "Only agents started from the phone can be ended from it."}, status=403)
     await asyncio.get_running_loop().run_in_executor(None, tmux.end, target.tab)
-    write_json(SPAWNED, {"panes": [p for p in spawned() if p != target.tab.address]}, private=True)
+    write_json(SPAWNED, {"panes": [e for e in read_json(SPAWNED).get("panes", [])
+                                   if isinstance(e, dict) and e.get("pane") != target.tab.address]}, private=True)
     (SPEAKERS / f"{session}.json").unlink(missing_ok=True)  # an exact match from recent_speakers: never a made-up path
     log(HANDSFREE_LOG, f"ended {target.spoken()} (tmux {target.tab.address}) from the phone")
     return web.json_response({"ok": True})

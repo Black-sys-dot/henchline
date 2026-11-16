@@ -23,13 +23,13 @@ TYPE_PAUSE = 0.15  # seconds between the text and its Enter, as for Konsole
 COMMANDS = {"claude": "claude", "codex": "codex", "cursor": "cursor-agent"}  # what a new chat starts, per agent
 
 
-def tmux(*args: str, own_scope: bool = False) -> subprocess.CompletedProcess | None:
+def tmux(*args: str, own_scope: bool = False, given: str | None = None) -> subprocess.CompletedProcess | None:
     """own_scope: the tmux server started in a systemd scope of its own, so restarting the service that asked
     (the call server) doesn't take every agent started from the phone down with its cgroup."""
     scope = ["systemd-run", "--user", "--scope", "--quiet", "--collect"] \
         if own_scope and shutil.which("systemd-run") else []
     try:
-        return subprocess.run([*scope, "tmux", *args], capture_output=True, text=True, timeout=5)
+        return subprocess.run([*scope, "tmux", *args], input=given, capture_output=True, text=True, timeout=5)
     except (OSError, subprocess.TimeoutExpired):
         return None
 
@@ -72,6 +72,13 @@ def start(agent: str, folder: Path) -> Tab:
     return Tab(OWNER, pane) if pane.startswith("%") else Tab()
 
 
+def pane_pid(tab: Tab) -> int:
+    """The pane's first process: with the pane id, says it is still the same pane (tmux reuses ids after a
+    restart)."""
+    pid = out("display-message", "-p", "-t", tab.address, "#{pane_pid}") if tab.owner == OWNER else ""
+    return int(pid) if pid.isdigit() else 0
+
+
 def end(tab: Tab) -> bool:
     return tab.owner == OWNER and (done := tmux("kill-pane", "-t", tab.address)) is not None and done.returncode == 0
 
@@ -89,14 +96,19 @@ class WithTmux(Terminals):
     def agent_running(self, tab: Tab) -> bool:
         if tab.owner != OWNER:
             return self.inner.agent_running(tab)
-        pid = out("display-message", "-p", "-t", tab.address, "#{pane_pid}")
-        return pid.isdigit() and agent_in(int(pid)) > 0
+        pid = pane_pid(tab)
+        return pid > 0 and agent_in(pid) > 0
 
     def type_line(self, tab: Tab, text: str) -> bool:
         if tab.owner != OWNER:
             return self.inner.type_line(tab, text)
-        typed = tmux("send-keys", "-t", tab.address, "-l", text)
-        if not typed or typed.returncode != 0:
+        # Through a paste buffer from stdin: the words are never tmux arguments, so a leading "-" or a trailing ";"
+        # (tmux's command separator) can't be read as tmux's own, and a newline doesn't send early
+        buffer = f"henchline-{os.getpid()}-{time.monotonic_ns()}"
+        loaded = tmux("load-buffer", "-b", buffer, "-", given=text)
+        pasted = loaded and loaded.returncode == 0 and tmux("paste-buffer", "-d", "-p", "-b", buffer, "-t", tab.address)
+        if not pasted or pasted.returncode != 0:
+            tmux("delete-buffer", "-b", buffer)
             return False
         time.sleep(TYPE_PAUSE)
         entered = tmux("send-keys", "-t", tab.address, "Enter")
