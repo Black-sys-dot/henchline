@@ -1,6 +1,8 @@
 [Unit]
 Description=Echo-cancelled built-in mic for hands-free (kept apart so a hands-free restart does not reset it)
 After=pipewire.service
+# Restarted with PipeWire: its source lives in PipeWire and goes when PipeWire goes
+PartOf=pipewire.service
 
 [Service]
 Type=simple

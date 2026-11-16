@@ -63,14 +63,19 @@ def start_canceller(restart: bool = False) -> float:
     It is its own unit so restarting hands-free does not reset it: a fresh
     canceller has to learn the room again, and leaks our voice meanwhile.
     """
-    subprocess.run(["systemctl", "--user", "restart" if restart else "start", EC_UNIT], check=False)
-    for _ in range(50):
-        sources = subprocess.run(["pactl", "list", "short", "sources"], capture_output=True, text=True).stdout
-        if EC_SOURCE in sources:
-            since = subprocess.run(["systemctl", "--user", "show", "-p", "ActiveEnterTimestampMonotonic",
-                                    "--value", EC_UNIT], capture_output=True, text=True).stdout.strip()
-            return int(since) / 1e6 if since.isdigit() else time.monotonic()
-        time.sleep(0.1)
+    # Running is not enough: when PipeWire itself restarts (it crashed during a Zoom meeting, 2026-11-16), the
+    # canceller's process lives on with its source gone, and "start" does nothing. Missing after a wait: restarted
+    for attempt in (restart, True):
+        subprocess.run(["systemctl", "--user", "restart" if attempt else "start", EC_UNIT], check=False)
+        for _ in range(50):
+            sources = subprocess.run(["pactl", "list", "short", "sources"], capture_output=True, text=True).stdout
+            if EC_SOURCE in sources:
+                since = subprocess.run(["systemctl", "--user", "show", "-p", "ActiveEnterTimestampMonotonic",
+                                        "--value", EC_UNIT], capture_output=True, text=True).stdout.strip()
+                return int(since) / 1e6 if since.isdigit() else time.monotonic()
+            time.sleep(0.1)
+        if attempt:
+            break
     raise SystemExit("echo canceller did not come up")
 
 
