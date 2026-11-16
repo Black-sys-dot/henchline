@@ -65,8 +65,10 @@ class CallMenu(
             outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
             clipToOutline = true
         }
-        val face = ImageView(activity).apply { setImageResource(MainActivity.avatarOf(session)) }
-        window.addView(face, android.widget.FrameLayout.LayoutParams(px(48), px(48), Gravity.CENTER))
+        // The henchman itself, without its backdrop (the window is that), looking about, blinking and moving its own
+        // way as the README's do; the one on the call as it always looks
+        val face = ImageView(activity).apply { setImageResource(if (on) MainActivity.avatarOf(session) else aliveOf(session)) }
+        window.addView(face, android.widget.FrameLayout.LayoutParams(px(if (on) 48 else 58), px(if (on) 48 else 58), Gravity.CENTER))
         addView(window, LinearLayout.LayoutParams(px(60), px(60)))
         addView(TextView(activity).apply {
             text = name; textSize = 12.5f; maxLines = 1; gravity = Gravity.CENTER
@@ -130,16 +132,29 @@ class CallMenu(
                     private var cancelled = false
                     override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
                     override fun onAnimationEnd(animation: android.animation.Animator) {
-                        if (!cancelled) next(900L + random.nextInt(2200))
+                        if (!cancelled) next(2500L + random.nextInt(4000))
                     }
                 })
                 start()
             }
         }
         face.addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(v: android.view.View) { stopped = false; next(300L + place * 400L + random.nextInt(500)) }
-            override fun onViewDetachedFromWindow(v: android.view.View) { stopped = true; running?.cancel(); running = null }
+            override fun onViewAttachedToWindow(v: android.view.View) {
+                (face.drawable as? android.graphics.drawable.Animatable)?.start()  // its eyes, blinks and sway
+                stopped = false; next(1500L + place * 700L + random.nextInt(1500))
+            }
+            override fun onViewDetachedFromWindow(v: android.view.View) {
+                (face.drawable as? android.graphics.drawable.Animatable)?.stop()
+                stopped = true; running?.cancel(); running = null
+            }
         })
+    }
+
+    private fun aliveOf(session: String): Int = when {
+        session.startsWith("claude") -> R.drawable.avatar_claude_alive
+        session.startsWith("cursor") -> R.drawable.avatar_cursor_alive
+        session.startsWith("codex") -> R.drawable.avatar_codex_alive
+        else -> R.drawable.avatar_handsfree_alive
     }
 
     /** Two halves of a pill, the one that's on lit in cyan; a tap on the other picks it (true: the first). */
