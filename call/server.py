@@ -470,6 +470,19 @@ def trusted_folders() -> list[Path]:
     return sorted((f for f in found if f.is_dir()), key=used, reverse=True)[:30]
 
 
+def typed_folder(given: str) -> Path | None:
+    """A folder typed on the phone for a new chat: an existing folder of the user's (under home, or a drive mounted
+    under /media/<user>), never home's credential folders (files.PRIVATE) and never home itself, which holds them."""
+    path = Path(given).expanduser()
+    if not path.is_absolute():
+        return None
+    path = path.resolve()
+    roots = [Path.home(), Path("/media") / Path.home().name]
+    if not path.is_dir() or path in roots or not any(r in path.parents for r in roots) or files.private(path):
+        return None
+    return path
+
+
 async def crew_folders(request: web.Request) -> web.Response:
     """A new chat's choices: the folders it can start in and the agents installed."""
     trusted(request)
@@ -490,17 +503,18 @@ async def crew_new(request: web.Request) -> web.Response:
     loop = asyncio.get_running_loop()
     match = next((f for f in await loop.run_in_executor(None, trusted_folders) if str(f) == folder), None)
     if match is None and typed:  # a path the user typed (and confirmed trusting): any folder of theirs that exists
-        given = Path(folder).expanduser()
-        match = given.resolve() if given.is_absolute() and given.is_dir() and given.resolve() != Path("/") else None
+        match = typed_folder(folder)
         if match is None:
-            return web.json_response({"note": f"No such folder on the laptop: {folder}"}, status=400)
+            return web.json_response({"note": f"Not a folder of yours on the laptop: {folder}"}, status=400)
     if match is None or agent not in tmux.available():
         return web.json_response({"note": "Not a folder or agent the laptop offers."}, status=400)
     tab = await loop.run_in_executor(None, tmux.start, agent, match)
     if not tab:
         return web.json_response({"note": f"{agent} didn't start."}, status=500)
-    if typed and match not in await loop.run_in_executor(None, trusted_folders):
-        await loop.run_in_executor(None, tmux.accept_trust, tab)
+    if typed and agent == "claude" and match not in await loop.run_in_executor(None, trusted_folders):
+        accepted = await loop.run_in_executor(None, tmux.accept_trust, tab, match)
+        answer = "accepted" if accepted else "left to answer in tmux"
+        log(HANDSFREE_LOG, f"trust for {match} {answer} (typed on the phone)")
     pid = await loop.run_in_executor(None, tmux.pane_pid, tab)
     await loop.run_in_executor(None, spawned, lambda alive: [*alive[-49:], {"pane": tab.address, "pid": pid}])
     log(HANDSFREE_LOG, f"started {agent} in {match} (tmux {tab.address}) from the phone")

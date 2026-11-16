@@ -91,21 +91,35 @@ def pane_pids() -> dict[str, int] | None:
     return {pane: int(pid) for pane, pid in pairs if pid.isdigit()}
 
 
-def accept_trust(tab: Tab, wait: float = 12.0) -> bool:
-    """An agent started in a folder it hasn't trusted yet asks first, and its default is to exit (Claude Code:
-    "❯ No, exit" above "Yes, I trust this folder"). Once that question is on screen, the cursor goes down to the
-    line with "yes" and "trust" in it, and Enter only when it is seen there; otherwise the question is left for
-    the user (`tmux attach -t henchline`). Only for a folder the user typed on the phone and confirmed trusting:
-    their first message must not be the answer (it was, in a test, 2026-11-16, and the agent exited)."""
-    def chosen() -> str:  # the line the cursor (❯ or >) is on
-        lines = out("capture-pane", "-p", "-t", tab.address).splitlines()
-        return next((line.lower() for line in lines if line.lstrip().startswith(("❯", ">"))), "")
+def accept_trust(tab: Tab, folder: Path, wait: float = 12.0) -> bool:
+    """Claude Code started in a folder it hasn't trusted yet asks first, and its default is to exit ("❯ No, exit"
+    above "Yes, I trust this folder"). Answered yes only when that very question is on screen: its wording and the
+    folder's own path, in the pane's last lines, the highlighted answer (❯) among them reading "yes, I trust this
+    folder". Anything else is left for the user (`tmux attach -t henchline`). Only for Claude, and only for a
+    folder the user typed on the phone and confirmed: their first message must not be the answer (it was, in a
+    test, 2026-11-16, and the agent exited)."""
+    shown = str(folder).replace(str(Path.home()), "~", 1)
+
+    def screen() -> list[str]:  # the bottom of the pane: where the question and its answers are
+        return out("capture-pane", "-p", "-t", tab.address).splitlines()[-30:]
+
+    def asking(lines: list[str]) -> bool:
+        text = " ".join(lines).lower()
+        return "trust this folder" in text and ("quick safety check" in text or "do you trust" in text) \
+            and any(shown in line or str(folder) in line for line in lines)
+
+    def chosen(lines: list[str]) -> str:
+        return next((line.strip().lower() for line in lines if line.lstrip().startswith("❯")), "")
 
     until = time.monotonic() + wait
     while time.monotonic() < until:
-        if "trust" in out("capture-pane", "-p", "-t", tab.address).lower() and chosen():
-            for _ in range(4):  # down the few answers until "yes, … trust …" is chosen
-                if "yes" in chosen() and "trust" in chosen():
+        lines = screen()
+        if asking(lines) and chosen(lines):
+            for _ in range(3):  # down the answers until "yes, i trust this folder" is the chosen one
+                lines = screen()
+                if not asking(lines):
+                    return False
+                if chosen(lines).startswith("❯ yes, i trust this folder"):
                     done = tmux("send-keys", "-t", tab.address, "Enter")
                     return bool(done and done.returncode == 0)
                 tmux("send-keys", "-t", tab.address, "Down")

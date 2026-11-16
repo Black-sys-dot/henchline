@@ -493,7 +493,7 @@ class MainActivity : Activity() {
         // older ones stay out of the list (long-press clears one that's in it)
         chats = chats + Chats.sessions(this).filter { s -> s !in names && (Chats.last(this, s)?.optLong("at") ?: 0) > System.currentTimeMillis() - 3 * 86_400_000L }.map { session ->
             val agent = session.substringBefore("-").replaceFirstChar { it.uppercase() }
-            Chat(session, agent, session.substringAfter("-").trim('_').substringAfterLast("_").ifEmpty { "home" }, Chats.last(this, session), "")
+            Chat(session, agent, "not on the crew list", Chats.last(this, session), "")  // its key can't say its folder
         }
         if (query.isNotEmpty()) {
             val q = query.lowercase()

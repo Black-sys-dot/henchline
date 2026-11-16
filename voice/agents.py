@@ -106,6 +106,28 @@ def agent_folder() -> Path:
         return Path.cwd()
 
 
+def editor_workspace() -> str | None:
+    """A Cursor editor chat runs its commands in a sandbox that hides the editor, so it is known by its folder:
+    the editor window whose workspace is that folder or one above it gets the key hands-free found it under
+    ("/<workspace>", as routing.discover names a window). Several windows matching, or none: None, never a guess
+    (a guess sent a text to another Cursor's chat, the user's catch, 2026-11-16). Two chats in one window share it."""
+    from voice.desktop import current as desktop  # here: the desktop imports this module
+
+    try:
+        names = {w.title.removesuffix(" - Cursor").rsplit(" - ", 1)[-1] for w in desktop().windows("cursor")}
+    except Exception:  # no display (a service), or X11 refusing: unknown
+        return None
+    names.discard("")
+    folder = agent_folder()
+    for place in (folder, *folder.parents):
+        matches = [n for n in names if n == place.name]
+        if len(matches) == 1:
+            return f"/{matches[0]}"
+        if matches:
+            return None
+    return None
+
+
 def in_cursor_sandbox() -> bool:
     """Cursor runs an agent's commands confined by an AppArmor profile named cursorsandbox."""
     try:
@@ -133,6 +155,7 @@ def identity(agent: str = "", session: str = "") -> tuple[str, str]:
     if not session:
         session = ((os.environ.get("CLAUDE_CODE_SESSION_ID") if agent == "claude" else None)
                    or (os.environ.get("CURSOR_TRACE_ID") if agent == "cursor" else None)
+                   or (editor_workspace() if agent == "cursor" and in_cursor_sandbox() else None)
                    or str(agent_folder()))
     return agent, re.sub(r"[^A-Za-z0-9_.-]+", "_", f"{agent}-{session}")[-120:]
 
