@@ -196,30 +196,41 @@
                     android:textSize="18sp"
                     android:textStyle="bold" />
 
-                <TextView
-                    android:id="@+id/state"
-                    android:layout_width="wrap_content"
+                <!-- What is happening, and the agent's model (tap it to switch mid-chat): under the name, so a long
+                     model name can't push the call button off the bar (it did, 2026-11-16) -->
+                <LinearLayout
+                    android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:ellipsize="end"
-                    android:maxLines="1"
-                    android:text="Not on a call"
-                    android:textColor="@color/muted"
-                    android:textSize="13sp" />
-            </LinearLayout>
+                    android:gravity="center_vertical"
+                    android:orientation="horizontal">
 
-            <!-- The agent's model: tap to switch it mid-chat -->
-            <TextView
-                android:id="@+id/modelChip"
-                android:layout_width="wrap_content"
-                android:layout_height="wrap_content"
-                android:layout_marginEnd="10dp"
-                android:background="@drawable/pill"
-                android:contentDescription="Switch this agent's model"
-                android:paddingHorizontal="12dp"
-                android:paddingVertical="6dp"
-                android:text="✦ Model"
-                android:textColor="@color/cyan"
-                android:textSize="13sp" />
+                    <TextView
+                        android:id="@+id/state"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:text="Not on a call"
+                        android:textColor="@color/muted"
+                        android:textSize="13sp" />
+
+                    <TextView
+                        android:id="@+id/modelChip"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_marginStart="8dp"
+                        android:background="@drawable/pill"
+                        android:contentDescription="Switch this agent's model"
+                        android:ellipsize="end"
+                        android:maxLines="1"
+                        android:maxWidth="120dp"
+                        android:paddingHorizontal="8dp"
+                        android:paddingVertical="2dp"
+                        android:text="✦ Model"
+                        android:textColor="@color/cyan"
+                        android:textSize="12sp" />
+                </LinearLayout>
+            </LinearLayout>
 
             <ImageButton
                 android:id="@+id/call"

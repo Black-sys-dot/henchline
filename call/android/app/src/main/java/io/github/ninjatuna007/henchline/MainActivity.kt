@@ -1094,16 +1094,24 @@ class MainActivity : Activity() {
         showModel(session)
     }
 
+    /** A model's name short enough for the top bar: "Claude Opus 5.5 300K Medium" is "Opus 5.5", "gpt-5.6-sol xhigh"
+     *  is "gpt-5.6-sol" (the chip pushed the call button off the bar, 2026-11-16). */
+    private fun shortModel(name: String): String {
+        val words = name.split(" ").filter { it.isNotEmpty() }
+            .takeWhile { !Regex("(?i)\\d+[KM]|low|medium|high|xhigh|extra|max|fast|thinking|\\(.*").matches(it) }
+        return words.dropWhile { it.equals("Claude", ignoreCase = true) && words.size > 1 }.joinToString(" ").ifEmpty { name }
+    }
+
     /** The chat's model chip: the model the agent is using now, as the laptop sees it (the user's wish,
      *  2026-11-16); until it answers, the one last switched to from here. */
     private fun showModel(session: String) {
         val chip = findViewById<TextView>(R.id.modelChip)
-        chip.text = prefs().getString("model_$session", null)?.let { "✦ $it" } ?: "✦ Model"
+        chip.text = prefs().getString("model_$session", null)?.let { "✦ " + shortModel(it) } ?: "✦ Model"
         if (session.isEmpty() || Files.origin(this) == null) return
         ask("/crew/models?only=now&session=" + android.net.Uri.encode(session), null) { answer ->
             val now = answer.optString("now")
             if (now.isNotEmpty() && session == current) {
-                chip.text = "✦ $now"
+                chip.text = "✦ " + shortModel(now)
                 prefs().edit().putString("model_$session", now).apply()
             }
         }
