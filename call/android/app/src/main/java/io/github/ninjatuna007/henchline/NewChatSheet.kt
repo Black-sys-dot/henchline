@@ -26,6 +26,14 @@ import org.json.JSONObject
  * Bottom sheets in the share sheet's style (the user's wish, 2026-11-16: the plain dialogs looked "from 2008"):
  * a panel that slides up over the chat list, dimming it, closed by a tap outside it or Cancel.
  */
+/** The keyboard put away, so a sheet or menu opening shows in full (it came up behind the keyboard, 2026-11-16). */
+fun hideKeyboard(activity: Activity) {
+    val focus = activity.currentFocus ?: return
+    activity.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+        ?.hideSoftInputFromWindow(focus.windowToken, 0)
+    focus.clearFocus()
+}
+
 open class BottomPanel(protected val activity: Activity) {
     protected val dp = activity.resources.displayMetrics.density
     protected fun px(v: Int) = (v * dp).toInt()
@@ -42,6 +50,7 @@ open class BottomPanel(protected val activity: Activity) {
     /** A fresh panel with its handle, title and a line under it; what goes in it is added to the returned layout. */
     protected fun open(title: String, subtitle: String): LinearLayout {
         close(animate = false)
+        hideKeyboard(activity)  // every sheet above it, not behind it (the model picker was, 2026-11-16)
         val root = FrameLayout(activity).apply { setBackgroundColor(Color.parseColor("#99000000")); alpha = 0f }
         val sheet = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL

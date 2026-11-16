@@ -46,6 +46,7 @@ class Sheet(
     }
 
     fun show() {
+        hideKeyboard(activity)  // above the keyboard, not behind it
         val root = FrameLayout(activity).apply { setBackgroundColor(Color.parseColor("#99000000")) }
         val sheet = LinearLayout(activity).apply {
             orientation = LinearLayout.VERTICAL
