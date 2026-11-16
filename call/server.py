@@ -659,7 +659,10 @@ def model_in_use(target: Speaker) -> str:
 def switch_model(target: Speaker, model: dict) -> str:
     """Types the agent's own /model into its terminal; "" when done, else why not."""
     if target.in_editor:  # a Cursor editor chat: through the bridge, read back from Cursor's store
-        return cursor_bridge.switch_model(cursor_bridge.chat_of(target.session), model["id"])
+        why = cursor_bridge.switch_model(cursor_bridge.chat_of(target.session), model["id"])
+        # Said, so it isn't a surprise: the effort is Cursor's default for the model, and (as in Cursor) the model is
+        # now the default for new chats too
+        return why or "Switched, at Cursor's default effort for it; Cursor also makes it the default for new chats."
     terminals = desktop().terminals
     if not terminals.agent_running(target.tab):
         return "That agent isn't running."
