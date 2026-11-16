@@ -42,6 +42,7 @@ from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
 from voice.desktop import current as desktop, tmux  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
+                         CALL_PINNED,
                          SPAWNED, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
                          CALL_PORT, CALL_PUSH,
                          CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
@@ -826,6 +827,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             "parec", "--raw", f"--device={PHONE_SPEAKER_MONITOR}", "--format=s16le", f"--rate={SPEAKER_RATE}",
             "--channels=1", "--latency-msec=40", "--client-name=phone-call", stdout=asyncio.subprocess.PIPE)
         CALL_HANGUP.unlink(missing_ok=True)  # a hang-up asked for when no call was up is not for this one
+        CALL_PINNED.unlink(missing_ok=True)  # the last call's pick: this call starts with whoever spoke last
         blank_words()  # words a killed server never blanked
         for stale in CALL_MIRROR.glob("*.json"):  # terminal lines from before this call
             stale.unlink(missing_ok=True)

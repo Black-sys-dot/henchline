@@ -17,8 +17,8 @@ from pathlib import Path
 
 from voice.agents import SPOKEN_TO, identity, process
 from voice.desktop import current as desktop
-from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent, Speaker, in_call,
-                         last_speaker, log, recent_speakers)
+from voice.state import (BY_HANDSFREE, CALL_PINNED, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent, Speaker,
+                         in_call, last_speaker, log, recent_speakers)
 
 SAY = Path(__file__).resolve().parents[2] / "talkback/scripts/say.py"
 AFTER_SWITCH = 30.0  # seconds to start talking after "Now talking to …"
@@ -188,6 +188,8 @@ def discover_all() -> int:
 def switch_to(speaker: Speaker) -> None:
     """Replies go to this agent now, with time to start talking."""
     speaker.save(LAST)
+    if in_call():  # the user's pick, kept for the call (Speaker.remember)
+        CALL_PINNED.write_text(speaker.session)
     LISTEN.write_text(str(time.time() + AFTER_SWITCH))
     log(HANDSFREE_LOG, f"switched to {speaker.agent} in {speaker.where or '?'}")
 

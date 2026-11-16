@@ -58,6 +58,7 @@ CALL_HANGUP = STATE / "call.hangup"  # end the phone call once talkback is done:
 VOICE_NOTES = STATE / "voicenotes"
 INTRODUCED = STATE / "introduced"  # a file per agent session already told, once, how phone messages work
 SPAWNED = STATE / "spawned.json"  # tmux panes of agents started from the phone: only these can be ended from it
+CALL_PINNED = STATE / "call.pinned"  # the agent picked on this call: another speaking doesn't take the call over
 # A voice message not yet typed after this long is dropped, never typed late: the phone stops waiting at 180 s
 VOICE_NOTE_STALE = 150  # voice messages from the phone, waiting for hands-free to transcribe them
 TEXTS = STATE / "texts"  # each text an agent sent the phone (`handsfree text`): its id, who, and how far it got
@@ -287,7 +288,11 @@ class Speaker:
         same tab (or, in the Cursor editor, the same workspace) under another key goes: hands-free may have found
         it running before it spoke (routing.discover), and it must not show up twice."""
         self.at = time.time()
-        self.save(LAST)
+        # On a call where the user picked an agent, another one speaking doesn't take the call from it (Claude's
+        # own clip moved a call opened from a Cursor chat back to Claude, 2026-11-16)
+        pinned = CALL_PINNED.read_text().strip() if CALL_PINNED.exists() else ""
+        if not (pinned and pinned != self.session and in_call()):
+            self.save(LAST)
         self.save(SPEAKERS / f"{self.session}.json")
         for path in SPEAKERS.glob("*.json"):
             other = Speaker.load(path)
