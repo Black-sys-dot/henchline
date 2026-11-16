@@ -58,7 +58,7 @@ object Chats {
         File(folder, "thumbs").listFiles()?.filter { it.path !in named && it.lastModified() < settled }?.forEach { it.delete() }
     }
 
-    /** Your message's ticks, WhatsApp's way: "sent" (one: the laptop has it), "delivered" (two: typed into the
+    /** Your message's ticks, a messaging app's way: "sent" (one: the laptop has it), "delivered" (two: typed into the
      *  agent), "read" (two, blue: the agent has answered since). */
     @Synchronized
     fun setStatus(context: Context, session: String, id: String, status: String) = rewrite(context, session) { line ->

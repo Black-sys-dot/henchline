@@ -57,7 +57,7 @@ class MainActivity : Activity() {
     private val main = Handler(Looper.getMainLooper())
     private var buttonOnly = false  // a noisy place: only holding the button gets in
     private var current = ""  // the chat shown: texts and voice messages go to its agent
-    // The call and the chats are apart, as WhatsApp's (the user's wish, 2026-11-16): the call is with callSession;
+    // The call and the chats are apart, as a messaging app's (the user's wish, 2026-11-16): the call is with callSession;
     // any other chat can be read and texted meanwhile, and a bar leads back to the call
     private var callSession = ""
     private var callFrom = ""  // the chat a call was started from: the call goes to its agent
@@ -663,7 +663,7 @@ class MainActivity : Activity() {
     private var downX = 0f
     private var downY = 0f
 
-    /** Off a call, with the box empty, the send button is a mic, as in WhatsApp (the user's wish, 2026-11-16): hold
+    /** Off a call, with the box empty, the send button is a mic, as in a messaging app (the user's wish, 2026-11-16): hold
      *  to record and let go to send; slide left to drop it; slide up to lock it on, then the button sends and ✕
      *  drops. The button follows the finger, so it feels like something is happening. The laptop transcribes the
      *  message and types it to this chat's agent. */
@@ -688,7 +688,7 @@ class MainActivity : Activity() {
                     // Raw coordinates: the button moves under the finger, so its own would chase themselves
                     val dx = (event.rawX - downX).coerceAtMost(0f)
                     val dy = (event.rawY - downY).coerceAtMost(0f)
-                    val sideways = -dx > -dy  // one direction at a time, as WhatsApp does
+                    val sideways = -dx > -dy  // one direction at a time, as messaging apps do
                     send.translationX = if (sideways) dx else 0f
                     send.translationY = if (sideways) 0f else dy
                     lockHint?.contentView?.alpha = if (sideways) 0.4f else 1f
@@ -1093,7 +1093,7 @@ class MainActivity : Activity() {
     private val bubbleAt = java.util.WeakHashMap<TextView, Long>()  // when each bubble's line was said
     private var lastDay = ""  // the day of the newest line drawn, for the day line between days
 
-    /** The words with the time and, for yours, the ticks small at the end, as WhatsApp shows them: ✓ sent,
+    /** The words with the time and, for yours, the ticks small at the end, as messaging apps shows them: ✓ sent,
      *  ✓✓ delivered, ✓✓ in cyan once read. */
     private fun stamp(bubble: TextView, words: String, status: String): CharSequence {
         val at = bubbleAt[bubble] ?: 0L
@@ -1140,7 +1140,7 @@ class MainActivity : Activity() {
         return listOf(project, status).filter { it.isNotEmpty() }.joinToString(" · ")
     }
 
-    /** A call in the chat as WhatsApp shows one (the user's example, 2026-11-16): a message bubble on the side of
+    /** A call in the chat as a messaging app shows one (the user's example, 2026-11-16): a message bubble on the side of
      *  whoever started it, a round phone mark (red when missed), "Voice call" and how long, and its time. */
     private fun callBubble(line: JSONObject) {
         val call = line.optJSONObject("call") ?: JSONObject().put("dir", "out")  // from before: one of yours
@@ -1581,7 +1581,7 @@ class MainActivity : Activity() {
         if (words.isNotEmpty()) text.requestFocus()
     }
 
-    /** A message dragged to the right far enough is the one being replied to, as in WhatsApp. */
+    /** A message dragged to the right far enough is the one being replied to, as in a messaging app. */
     private fun swipeToReply(row: View, words: String) {
         var startX = 0f
         var startY = 0f

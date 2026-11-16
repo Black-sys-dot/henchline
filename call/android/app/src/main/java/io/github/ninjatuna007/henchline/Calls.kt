@@ -44,7 +44,7 @@ object Calls {
                 if (what == "missed" || what == "declined") ended = JSONObject(it.toString())
             }
         }
-        // A ring not taken shows in that agent's chat too, on its side, as WhatsApp's missed call does
+        // A ring not taken shows in that agent's chat too, on its side, as a missed call does in a messaging app
         ended?.let { ring ->
             Chats.add(context, ring.optString("session"), JSONObject().put("from", "").put("note", true).put("mine", false)
                 .put("text", if (what == "missed") "📞 Missed call" else "📞 Declined call")

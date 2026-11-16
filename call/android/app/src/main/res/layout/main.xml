@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Three screens, one shown at a time: the chat list (home), a chat, and settings. WhatsApp's way: the list,
+<!-- Three screens, one shown at a time: the chat list (home), a chat, and settings. A messaging app's way: the list,
      then into a chat and back; your avatar on the list opens settings -->
 <FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:id="@+id/screens"
@@ -108,7 +108,7 @@
                 </ScrollView>
             </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
 
-            <!-- New chat: start an agent on the laptop in a folder it already trusts (as WhatsApp's new chat) -->
+            <!-- New chat: start an agent on the laptop in a folder it already trusts (as a messaging app's new chat) -->
             <ImageButton
                 android:id="@+id/compose"
                 android:layout_width="56dp"
@@ -123,7 +123,7 @@
                 android:src="@drawable/ic_launcher_foreground" />
         </FrameLayout>
 
-        <!-- Chats and Calls, as WhatsApp's bottom bar (the user's wish, 2026-11-16) -->
+        <!-- Chats and Calls, as a messaging app's bottom bar (the user's wish, 2026-11-16) -->
         <LinearLayout
             android:layout_width="match_parent"
             android:layout_height="60dp"

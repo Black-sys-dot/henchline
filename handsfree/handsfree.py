@@ -209,7 +209,7 @@ def send(args: list[str]) -> int:
 def text(words: str, until_read: float = 0) -> int:
     """A message for the user's phone from the agent running this: a notification with a reply box, or a line
     in the call's chat when a call is up. Its id is printed: `handsfree text-status ID` says how far it got,
-    WhatsApp's way (sent, delivered: on the phone, read: the user opened that chat or replied). until_read:
+    the way messaging apps do it (sent, delivered: on the phone, read: the user opened that chat or replied). until_read:
     minutes to wait for it to be read, and then ring if it wasn't (the user's idea, 2026-11-16)."""
     if not words.strip():
         print("usage: handsfree text [--until-read MINUTES] WORDS")
