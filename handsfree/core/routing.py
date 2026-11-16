@@ -323,8 +323,10 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
         # chat on screen gets the words, as before
         chat = cursor_bridge.chat_of(speaker.session)
         if chat and not cursor_bridge.open_chat(speaker.where, chat):
-            log(HANDSFREE_LOG, f"Cursor bridge couldn't open chat {chat[:8]} in {speaker.where}: "
-                               "typing into the open one")
+            # Never into whatever chat is open instead: that may be another agent's
+            log(HANDSFREE_LOG, f"Cursor bridge couldn't open chat {chat[:8]} in {speaker.where}: nothing typed")
+            say("I couldn't open that Cursor chat, so nothing was typed. Is its window still open?")
+            return False
         wid = cursor_window(speaker.where)
         if not wid:
             log(HANDSFREE_LOG, f"no Cursor window for {speaker.where}")

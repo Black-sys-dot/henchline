@@ -22,11 +22,15 @@ function activate(context) {
     let buffered = "";
     conn.on("data", async (chunk) => {
       buffered += chunk.toString();
+      if (buffered.length > 4096) { conn.destroy(); return; }  // one short line is all it ever takes
       if (!buffered.includes("\n")) return;
       let answer;
       try {
         const asked = JSON.parse(buffered.split("\n")[0]);
         if (typeof asked.open !== "string" || !CHAT_ID.test(asked.open)) throw new Error("not a chat id");
+        // Only a chat this window has: asked of every window, just the one that owns it says yes
+        const handle = await vscode.commands.executeCommand("composer.getComposerHandleById", asked.open);
+        if (!handle) throw new Error("not a chat of this window");
         await vscode.commands.executeCommand("composer.openComposer", asked.open);
         answer = { ok: true };
       } catch (e) {

@@ -25,28 +25,34 @@ def chat_of(session: str) -> str:
 
 
 def open_chat(workspace: str, chat: str) -> bool:
-    """Asks the bridge of the window showing that workspace to bring the chat to the front; False when no bridge
-    answered yes (not installed, the window closed, or Cursor refused)."""
+    """Asks Cursor's windows to bring that chat to the front: the window showing that workspace first, then any
+    other (a label can differ from the window's name); only the window that has the chat says yes. False when none
+    did: then nothing may be typed, or the words would land in whatever chat is on screen."""
     if not CHAT_ID.fullmatch(chat):
         return False
+    windows = []
     for note in DIR.glob("*.json"):
         try:
-            window = json.loads(note.read_text())
+            windows.append((json.loads(note.read_text()), note.with_suffix(".sock")))
         except (OSError, ValueError):
             continue
-        if window.get("workspace") != workspace:
-            continue
-        sock = note.with_suffix(".sock")
+    windows.sort(key=lambda w: w[0].get("workspace") != workspace)  # its own window first
+    for _, sock in windows:
         try:
             with socket.socket(socket.AF_UNIX) as conn:
                 conn.settimeout(5)
                 conn.connect(str(sock))
                 conn.sendall(json.dumps({"open": chat}).encode() + b"\n")
-                answer = json.loads(conn.recv(4096).decode() or "{}")
+                answer = b""
+                while b"\n" not in answer and len(answer) < 4096:  # the whole answer line, however it arrives
+                    part = conn.recv(4096)
+                    if not part:
+                        break
+                    answer += part
+            if json.loads(answer.decode() or "{}").get("ok"):
+                return True
         except (OSError, ValueError):
             continue  # a window that has gone: its note stays until Cursor cleans it up
-        if answer.get("ok"):
-            return True
     return False
 
 
