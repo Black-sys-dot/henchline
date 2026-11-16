@@ -149,7 +149,28 @@ class MainActivity : Activity() {
             isChecked = prefs().getBoolean("thoughts", true)
             setOnCheckedChangeListener { _, on -> prefs().edit().putBoolean("thoughts", on).apply() }
         }
-        for (id in listOf(R.id.callBarList, R.id.callBarChat)) findViewById<View>(id).setOnClickListener { openCall() }
+        findViewById<View>(R.id.callBar).apply {
+            // In the call's chat a tap opens the call's menu; anywhere else it goes back to the call first
+            setOnClickListener { if (chatScreen.visibility == View.VISIBLE && current == callSession) callMenu() else openCall() }
+            setOnLongClickListener { callMenu(); true }
+        }
+        findViewById<View>(R.id.callBarHang).setOnClickListener { hangUp() }
+        // The window's edges by hand: the status bar's height to a strip of our own (green on a call), the sides and
+        // the bottom (gesture bar, keyboard) as padding, so only the top turns green
+        findViewById<View>(R.id.root).setOnApplyWindowInsetsListener { root, insets ->
+            val (left, top, right, bottom) = if (android.os.Build.VERSION.SDK_INT >= 30) insets.getInsets(
+                android.view.WindowInsets.Type.systemBars() or android.view.WindowInsets.Type.ime()).let { listOf(it.left, it.top, it.right, it.bottom) }
+            else @Suppress("DEPRECATION") listOf(insets.systemWindowInsetLeft, insets.systemWindowInsetTop,
+                insets.systemWindowInsetRight, insets.systemWindowInsetBottom)  // Android 10
+            findViewById<View>(R.id.statusSpace).layoutParams.height = top
+            findViewById<View>(R.id.statusSpace).requestLayout()
+            root.setPadding(left, 0, right, bottom)
+            android.view.WindowInsets.CONSUMED
+        }
+        findViewById<View>(R.id.callPulse).background =  // the "live" ring behind the avatar (pulsed by showCallBar)
+            GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(2), getColor(R.color.call_live)) }
+        findViewById<ImageView>(R.id.callAvatar).background =
+            GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x0FFFFFFF); setStroke(dp(2), 0x66FFFFFF) }
         findViewById<View>(R.id.modelChip).setOnClickListener { switchModel() }
         findViewById<View>(R.id.tabChats).setOnClickListener { showCalls(false) }
         findViewById<View>(R.id.tabCalls).setOnClickListener { showCalls(true) }
@@ -358,8 +379,11 @@ class MainActivity : Activity() {
         }
     }
 
+    private var lifecycleSeen = false  // the app on screen (between onResume and onPause)
+
     override fun onResume() {
         super.onResume()
+        lifecycleSeen = true
         CallService.Bus.listener = { message -> main.post { fromServer(message) } }
         showConnected(onCall())
         if (CallService.Bus.connected) {  // what was said while this screen wasn't looking
@@ -375,6 +399,7 @@ class MainActivity : Activity() {
         showHistory()  // what came meanwhile (a call's lines, a text): from the kept chat, on a call or off it
         showServer()
         showRinging()
+        showCallBar()  // and its live ring beats again
     }
 
     /** Opened while an agent's ring still sounds: say so, with Answer and Decline. */
@@ -401,6 +426,9 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         Messages.viewing = ""  // not on screen: texts get their banner again
+        lifecycleSeen = false
+        pulseLive(false)  // no beat for nobody
+        (panel as? CallMenu)?.close(animate = false)  // nor henchmen hopping unseen, or a menu left under the lock
         main.removeCallbacks(thoughtsPoll)  // nobody looking: the laptop isn't asked every few seconds
         main.removeCallbacks(workingPoll)
         stopWorkingBubble()  // nor anything left dancing: the next ask brings it back
@@ -505,6 +533,7 @@ class MainActivity : Activity() {
                 if (buttonOnly) CallService.Bus.service?.send(JSONObject().put("button_only", true).toString())
             }
             status.has("closed") -> {
+                (panel as? CallMenu)?.close()  // the call's menu goes with the call
                 callSession = ""
                 showConnected(false)
                 showCallBar()
@@ -561,6 +590,8 @@ class MainActivity : Activity() {
             }
             status.has("mode") -> {
                 if (onCall()) state.text = subtitle(status.optString("state"))
+                callWords = status.optString("state").substringBefore(" · ").lowercase()
+                findViewById<TextView>(R.id.callStatus).text = if (callWords.isNotEmpty()) " · $callWords" else ""
                 showMode(status.getString("mode"))
             }
         }
@@ -897,14 +928,68 @@ class MainActivity : Activity() {
         if (callSession.isNotEmpty() && callSession != current) open(callSession) else { showConnected(onCall()); show(chatScreen) }
     }
 
-    /** The bar over the list and other chats while a call is up: who it's with; a tap goes back to it. */
-    private fun showCallBar() {
-        val up = CallService.Bus.connected && !(chatScreen.visibility == View.VISIBLE && onCall())
-        val words = "📞  On a call with ${names[callSession]?.substringBefore(",") ?: "your crew"} · tap to return"
-        for (id in listOf(R.id.callBarList, R.id.callBarChat)) findViewById<TextView>(id).apply {
-            visibility = if (up) View.VISIBLE else View.GONE
-            text = words
+    private var callWords = ""  // what is happening on the call ("speaking", "listening"), for the bar's second line
+    private var pulse: android.animation.Animator? = null  // the live ring's beat: only while the bar shows and the app is seen
+
+    private fun pulseLive(on: Boolean) {
+        if (on == (pulse != null)) return
+        pulse?.cancel(); pulse = null
+        if (!on) return
+        val ring = findViewById<View>(R.id.callPulse)
+        pulse = android.animation.AnimatorSet().apply {
+            playTogether(
+                android.animation.ObjectAnimator.ofFloat(ring, View.SCALE_X, 1f, 1.35f).apply { repeatCount = android.animation.ValueAnimator.INFINITE },
+                android.animation.ObjectAnimator.ofFloat(ring, View.SCALE_Y, 1f, 1.35f).apply { repeatCount = android.animation.ValueAnimator.INFINITE },
+                android.animation.ObjectAnimator.ofFloat(ring, View.ALPHA, 0.7f, 0f).apply { repeatCount = android.animation.ValueAnimator.INFINITE })
+            duration = 1600
+            start()
         }
+    }
+
+    /** While a call is up, on every screen, the same bar (the user's wish, 2026-11-16: it changed between the list
+     *  and the chat): the agent's face with a live ring, its name, the call's time and what is happening, speaker
+     *  and hang-up. The status bar turns the bar's green with it. */
+    private fun showCallBar() {
+        val up = CallService.Bus.connected
+        val bar = findViewById<View>(R.id.callBar)
+        if (up != (bar.visibility == View.VISIBLE)) {
+            bar.visibility = if (up) View.VISIBLE else View.GONE
+            window.statusBarColor = getColor(if (up) R.color.call_bar else R.color.navy)
+            // Newer Android draws the app under the status bar and ignores its colour: our own strip shows there
+            findViewById<View>(R.id.statusSpace).setBackgroundColor(getColor(if (up) R.color.call_bar else R.color.navy))
+        }
+        pulseLive(up && !isFinishing && lifecycleSeen)
+        val timer = findViewById<android.widget.Chronometer>(R.id.callTimer)
+        if (!up) { timer.stop(); return }
+        val name = names[callSession]?.substringBefore(",") ?: "Your crew"
+        findViewById<TextView>(R.id.callName).text = name
+        findViewById<ImageView>(R.id.callAvatar).setImageResource(avatarOf(callSession.ifEmpty { "handsfree" }))
+        val started = CallService.Bus.service?.callStartedAt ?: 0L
+        if (started > 0) {
+            timer.base = android.os.SystemClock.elapsedRealtime() - (System.currentTimeMillis() - started)
+            timer.start()
+        }
+        findViewById<TextView>(R.id.callStatus).text = if (callWords.isNotEmpty()) " · $callWords" else ""
+        bar.contentDescription = "On a call with $name. Tap to return; hold to switch who it's with."
+        showSpeaker(CallService.Bus.service?.speaker ?: prefs().getBoolean("speaker", true))
+    }
+
+    /** The call's menu: who it's with and the crew to move it to, speaker, sound, talk mode, hang up. */
+    private fun callMenu() {
+        val service = CallService.Bus.service ?: return
+        panel = CallMenu(this, names[callSession]?.substringBefore(",") ?: "Your crew",
+            names.map { (session, name) -> session to name }, callSession,
+            speaker = service.speaker, clear = service.clear, buttonOnly = buttonOnly,
+            onSwitch = { session -> service.send(JSONObject().put("switch", session).toString()) },
+            onSpeaker = { on -> if (service.speaker != on) speakerButton.performClick() },
+            onClear = { on -> if (clear.isChecked != on) clear.isChecked = on },  // the settings switch does the rest
+            onButtonOnly = { only ->
+                if (buttonOnly != only) {
+                    buttonOnly = only
+                    service.send(JSONObject().put("button_only", buttonOnly).toString())
+                }
+            },
+            onHangUp = { hangUp() }).also { it.show() }
     }
 
     /** On the call, a tap on the agent's name or face: who the call is with, switched (as "switch me to …"). */
@@ -935,13 +1020,15 @@ class MainActivity : Activity() {
 
     /** The speaker button as it is: lit on the loudspeaker, dim on the earpiece. */
     private fun showSpeaker(on: Boolean) {
-        speakerButton.alpha = if (on) 1f else 0.45f
+        speakerButton.background = if (on) android.graphics.drawable.InsetDrawable(
+            GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x33FFFFFF) }, dp(6)) else null
+        speakerButton.alpha = if (on) 1f else 0.6f
         speakerButton.contentDescription = if (on) "Speaker on: tap for the earpiece" else "Earpiece: tap for the speaker"
     }
 
     private fun showConnected(on: Boolean) {
-        speakerButton.visibility = if (on) View.VISIBLE else View.GONE
-        if (on) showSpeaker(CallService.Bus.service?.speaker ?: prefs().getBoolean("speaker", true))
+        // While a call is up the call bar has its controls: the header's call button would only repeat them
+        callButton.visibility = if (CallService.Bus.connected) View.GONE else View.VISIBLE
         callButton.setImageResource(if (on) R.drawable.ic_call_end else R.drawable.ic_phone)
         callButton.setBackgroundResource(if (on) R.drawable.round_hang else R.drawable.round_call)
         callButton.contentDescription = if (on) "Hang up" else "Call"
@@ -1110,7 +1197,7 @@ class MainActivity : Activity() {
         orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
         setPadding(dp(16), dp(12), dp(16), dp(12))
         clipToPadding = false; clipChildren = false  // what bobs and hops shows in full (the dots' tops were cut)
-        background = GradientDrawable().apply { setColor(getColor(R.color.surface_high)); cornerRadius = dp(20).toFloat() }
+        setBackgroundResource(R.drawable.bubble_agent)  // the agent's next bubble: its fill, its shape and tail
     }
 
     /** A property animation that runs while the view is on screen: started when it is attached, ended when it is
@@ -1136,11 +1223,11 @@ class MainActivity : Activity() {
             val dot = View(this).apply {
                 background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(getColor(R.color.muted)) }
             }
-            bubble.addView(dot, LinearLayout.LayoutParams(dp(8), dp(8)).apply { if (i > 0) marginStart = dp(5) })
+            bubble.addView(dot, LinearLayout.LayoutParams(dp(7), dp(7)).apply { if (i > 0) marginStart = dp(4) })
             bob(dot, i * 300L, dp(4).toFloat())
         }
         return LinearLayout(this).apply {
-            setPadding(dp(4), dp(8), 0, dp(4)); addView(bubble)
+            setPadding(dp(36), dp(8), 0, dp(4)); addView(bubble)  // in line with the agent's bubbles (after its face)
             contentDescription = "${names[current]?.substringBefore(",") ?: "The agent"} is thinking"
         }
     }
@@ -1197,7 +1284,7 @@ class MainActivity : Activity() {
         bubble.addView(words, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
         return LinearLayout(this).apply {
-            setPadding(dp(4), dp(8), 0, dp(4)); addView(bubble)
+            setPadding(0, dp(8), 0, dp(4)); addView(bubble)  // it carries the agent's face itself
             contentDescription = "${names[current]?.substringBefore(",") ?: "The agent"} is running a tool"
         }
     }
@@ -1313,7 +1400,9 @@ class MainActivity : Activity() {
         if (tail.isEmpty()) return styled(words)
         val all = android.text.SpannableStringBuilder(styled(words)).append("  ").append(tail)
         val from = all.length - tail.length
-        all.setSpan(android.text.style.ForegroundColorSpan(getColor(R.color.muted)), from, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        // On your teal bubble the muted grey-blue was too faint (3.6:1): a lighter one there (5.4:1)
+        val faint = if (status.isNotEmpty()) 0xFFB4CCD8.toInt() else getColor(R.color.muted)
+        all.setSpan(android.text.style.ForegroundColorSpan(faint), from, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
         if (ticks.isNotEmpty() && status == "read")
             all.setSpan(android.text.style.ForegroundColorSpan(getColor(R.color.cyan)), all.length - ticks.length, all.length,
                 android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
@@ -1589,7 +1678,7 @@ class MainActivity : Activity() {
     /** A model's name short enough for the top bar: "Claude Opus 5.5 300K Medium" is "Opus 5.5", "gpt-5.6-sol xhigh"
      *  is "gpt-5.6-sol" (the chip pushed the call button off the bar, 2026-11-16). */
     private fun shortModel(name: String): String {
-        val words = name.split(" ").filter { it.isNotEmpty() }
+        val words = name.split(" ").filter { it.isNotEmpty() && it != "·" }  // the laptop's own " · " parts: not words
             .takeWhile { !Regex("(?i)\\d+[KM]|low|medium|high|xhigh|extra|max|fast|thinking|\\(.*").matches(it) }
         val short = words.dropWhile { it.equals("Claude", ignoreCase = true) && words.size > 1 }.joinToString(" ").ifEmpty { name }
         // The effort, short, when the name has one: "Grok 4.7 Extra High" is "Grok 4.7 · xhigh" (showing only the

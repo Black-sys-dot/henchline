@@ -76,6 +76,7 @@ class CallService : Service() {
     @Volatile private var ended = false  // the screen was already told why the call ended
     private var reply: String? = null  // an answered ring's report-back address: told if the call can't connect
     @Volatile private var startedAt = 0L  // when the laptop answered: the call's length, for the history
+    val callStartedAt get() = startedAt  // the call bar's timer counts from here, whichever screen shows it
     @Volatile var lastSession = ""  // the chat a typed line was last sent in (its ticks are kept there)
     private val heard = LinkedBlockingDeque<ByteArray>()  // the agents' voices, waiting to be played
     private val audio by lazy { getSystemService(AudioManager::class.java) }

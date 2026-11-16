@@ -10,4 +10,8 @@
     <color name="mine">#0E4F63</color>
     <color name="call">#2E9E5B</color>
     <color name="hang">#D14343</color>
+    <!-- A live call: its bar (white text on it 6.9:1), the bar's second line, and green marks on navy -->
+    <color name="call_bar">#17673F</color>
+    <color name="call_bar_sub">#D9F2E3</color>
+    <color name="call_live">#4CD08A</color>
 </resources>

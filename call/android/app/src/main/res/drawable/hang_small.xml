@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The call bar's hang-up: a 36dp red circle (white on it 4.6:1) with the hang-up mark -->
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item>
+        <shape android:shape="oval">
+            <solid android:color="@color/hang" />
+        </shape>
+    </item>
+    <item android:drawable="@drawable/ic_call_end" android:bottom="8dp" android:left="8dp" android:right="8dp"
+        android:top="8dp" />
+</layer-list>

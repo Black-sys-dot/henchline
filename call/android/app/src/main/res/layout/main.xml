@@ -1,12 +1,122 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!-- Three screens, one shown at a time: the chat list (home), a chat, and settings. A messaging app's way: the list,
      then into a chat and back; your avatar on the list opens settings -->
-<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
-    android:id="@+id/screens"
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/root"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:background="@color/navy"
-    android:fitsSystemWindows="true">
+    android:orientation="vertical">
+
+<!-- Under the status bar: its height comes from the window's insets; the call's green during a call -->
+<View
+    android:id="@+id/statusSpace"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:background="@color/navy" />
+
+<!-- While a call is up, on every screen: who it's with, how long, what is happening; speaker and hang-up.
+     A tap goes back to the call's chat, a long press switches who it's with -->
+<LinearLayout
+    android:id="@+id/callBar"
+    android:layout_width="match_parent"
+    android:layout_height="56dp"
+    android:background="@color/call_bar"
+    android:clickable="true"
+    android:focusable="true"
+    android:gravity="center_vertical"
+    android:orientation="horizontal"
+    android:paddingHorizontal="12dp"
+    android:visibility="gone">
+
+    <FrameLayout
+        android:layout_width="40dp"
+        android:layout_height="40dp">
+
+        <View
+            android:id="@+id/callPulse"
+            android:layout_width="40dp"
+            android:layout_height="40dp" />
+
+        <ImageView
+            android:id="@+id/callAvatar"
+            android:layout_width="36dp"
+            android:layout_height="36dp"
+            android:layout_gravity="center"
+            android:importantForAccessibility="no" />
+    </FrameLayout>
+
+    <LinearLayout
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_marginStart="10dp"
+        android:layout_weight="1"
+        android:orientation="vertical">
+
+        <TextView
+            android:id="@+id/callName"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:ellipsize="end"
+            android:fontFamily="sans-serif-medium"
+            android:maxLines="1"
+            android:textColor="#FFFFFF"
+            android:textSize="15sp" />
+
+        <LinearLayout
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal">
+
+            <Chronometer
+                android:id="@+id/callTimer"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:fontFeatureSettings="tnum"
+                android:textColor="@color/call_bar_sub"
+                android:textSize="12.5sp" />
+
+            <TextView
+                android:id="@+id/callStatus"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:ellipsize="end"
+                android:maxLines="1"
+                android:textColor="@color/call_bar_sub"
+                android:textSize="12.5sp" />
+        </LinearLayout>
+    </LinearLayout>
+
+    <!-- Loudspeaker (a light circle) or the earpiece (dimmer, no circle), as a phone call's speaker button -->
+    <ImageButton
+        android:id="@+id/speaker"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="@android:color/transparent"
+        android:contentDescription="Speaker"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_sound"
+        android:tint="#FFFFFF" />
+
+    <ImageButton
+        android:id="@+id/callBarHang"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:layout_marginStart="4dp"
+        android:background="@android:color/transparent"
+        android:contentDescription="Hang up"
+        android:padding="6dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/hang_small" />
+</LinearLayout>
+
+<FrameLayout
+    android:id="@+id/screens"
+    android:layout_width="match_parent"
+    android:layout_height="0dp"
+    android:layout_weight="1"
+    android:background="@color/navy">
 
     <!-- The chat list: your crew, newest first; pull down to look for every agent running -->
     <LinearLayout
@@ -15,18 +125,6 @@
         android:layout_height="match_parent"
         android:background="@color/navy"
         android:orientation="vertical">
-        <!-- While a call is up and another chat or the list shows: who the call is with; a tap returns to it -->
-        <TextView
-            android:id="@+id/callBarList"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@color/call"
-            android:gravity="center"
-            android:paddingVertical="10dp"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
 
 
         <LinearLayout
@@ -164,18 +262,6 @@
         android:background="@color/navy"
         android:orientation="vertical"
         android:visibility="gone">
-        <!-- While a call is up and another chat or the list shows: who the call is with; a tap returns to it -->
-        <TextView
-            android:id="@+id/callBarChat"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@color/call"
-            android:gravity="center"
-            android:paddingVertical="10dp"
-            android:textColor="#FFFFFF"
-            android:textSize="14sp"
-            android:textStyle="bold"
-            android:visibility="gone" />
 
 
         <!-- Who you are talking to: their henchman, their name, what is happening; and the call button -->
@@ -217,10 +303,10 @@
                     android:layout_height="wrap_content"
                     android:ellipsize="end"
                     android:maxLines="1"
+                    android:fontFamily="sans-serif-medium"
                     android:text="Henchline"
                     android:textColor="@color/text"
-                    android:textSize="18sp"
-                    android:textStyle="bold" />
+                    android:textSize="18sp" />
 
                 <TextView
                     android:id="@+id/state"
@@ -233,18 +319,6 @@
                     android:textSize="13sp" />
 
             </LinearLayout>
-
-            <!-- On a call: loudspeaker (lit) or earpiece (dim), as a phone call's speaker button -->
-            <ImageButton
-                android:id="@+id/speaker"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
-                android:layout_marginEnd="8dp"
-                android:background="@drawable/pill"
-                android:contentDescription="Speaker"
-                android:src="@drawable/ic_sound"
-                android:tint="@color/cyan"
-                android:visibility="gone" />
 
             <ImageButton
                 android:id="@+id/call"
@@ -276,6 +350,12 @@
                     android:orientation="vertical"
                     android:paddingBottom="8dp" />
             </ScrollView>
+
+            <View
+                android:layout_width="match_parent"
+                android:layout_height="12dp"
+                android:layout_gravity="top"
+                android:background="@drawable/fade_top" />
 
             <!-- Not on a call: just the henchman and how to call -->
             <LinearLayout
@@ -599,3 +679,4 @@
         </LinearLayout>
     </LinearLayout>
 </FrameLayout>
+</LinearLayout>
