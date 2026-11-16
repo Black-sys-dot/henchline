@@ -235,6 +235,7 @@ class MainActivity : Activity() {
     override fun onBackPressed() {
         when {  // back closes the sheet, then a chat or settings (to the list); only the list leaves the app
             sheet?.isOpen == true -> sheet?.close()
+            panel?.isOpen == true -> panel?.close()
             listScreen.visibility != View.VISIBLE -> show(listScreen)
             else -> super.onBackPressed()
         }
@@ -1132,90 +1133,54 @@ class MainActivity : Activity() {
         (0 until crew.length()).any { crew.getJSONObject(it).optString("session") == session && crew.getJSONObject(it).optBoolean("spawned") }
     } catch (_: Exception) { false }
 
-    /** New chat (the user's wish, 2026-11-16): pick a folder the laptop's Claude already trusts, newest first, and
-     *  which agent; it starts in its own tmux window there and its chat opens. */
+    private var panel: BottomPanel? = null  // the new-chat or long-press sheet, while it is up
+
+    /** New chat (the user's wish, 2026-11-16): the laptop's folders (those its Claude trusts, newest first, or a
+     *  typed path) and agents, in a bottom sheet; the agent starts in its own tmux window there and its chat opens. */
     private fun newChat() {
-        val toast = { words: String -> android.widget.Toast.makeText(this, words, android.widget.Toast.LENGTH_LONG).show() }
         ask("/crew/folders", null) { answer ->
             val folders = answer.optJSONArray("folders")
             val agents = answer.optJSONArray("agents")
-            if (folders == null || folders.length() == 0 || agents == null || agents.length() == 0) {
-                return@ask toast(answer.optString("note").ifEmpty { "No folder or agent to start on the laptop (needs tmux)." })
+            if (folders == null || agents == null || agents.length() == 0) {
+                android.widget.Toast.makeText(this, answer.optString("note").ifEmpty { "No agent to start on the laptop (it needs tmux)." },
+                    android.widget.Toast.LENGTH_LONG).show()
+                return@ask
             }
-            val labels = (0 until folders.length()).map { i ->
-                val f = folders.getJSONObject(i)
-                f.getString("name").replace("_", " ") + "\n" + f.getString("path").substringBeforeLast("/").replace(Regex("^/home/[^/]+"), "~")
-            }
-            val kinds = (0 until agents.length()).map { agents.getString(it) }
-            // Then which agent, and off it goes; typed: a path the user gave, trusted by starting there
-            fun start(folder: String, typed: Boolean) {
-                val go = { agent: String ->
-                    toast("Starting ${agent.replaceFirstChar { it.uppercase() }}…")
-                    ask("/crew/new", JSONObject().put("folder", folder).put("agent", agent).put("typed", typed)) { started ->
-                        val session = started.optString("session")
-                        if (session.isEmpty()) return@ask toast(started.optString("note").ifEmpty { "It didn't start." })
-                        takeCrew(started)
-                        open(session)
-                    }
+            panel = NewChatSheet(this, (0 until folders.length()).map { folders.getJSONObject(it) },
+                (0 until agents.length()).map { agents.getString(it) }) { folder, agent, typed, done ->
+                ask("/crew/new", JSONObject().put("folder", folder).put("agent", agent).put("typed", typed)) { started ->
+                    val session = started.optString("session")
+                    if (session.isEmpty()) return@ask done(started.optString("note").ifEmpty { "It didn't start." })
+                    done(null)
+                    takeCrew(started)
+                    open(session)
                 }
-                if (kinds.size == 1) go(kinds[0])
-                else AlertDialog.Builder(this).setTitle("Which agent?")
-                    .setItems(kinds.map { it.replaceFirstChar { c -> c.uppercase() } }.toTypedArray()) { _, k -> go(kinds[k]) }.show()
-            }
-            AlertDialog.Builder(this).setTitle("New chat in…").setItems((labels + "✏️  Type a path…").toTypedArray()) { _, i ->
-                if (i < labels.size) return@setItems start(folders.getJSONObject(i).getString("path"), typed = false)
-                val box = EditText(this).apply {
-                    hint = "~/projects/something"
-                    setSingleLine()
-                    inputType = android.text.InputType.TYPE_CLASS_TEXT or android.text.InputType.TYPE_TEXT_VARIATION_URI
-                }
-                val frame = android.widget.FrameLayout(this).apply { setPadding(dp(20), dp(8), dp(20), 0); addView(box) }
-                AlertDialog.Builder(this).setTitle("Folder on the laptop")
-                    .setMessage("If the agent hasn't worked there before, starting it there trusts that folder: it can read and change the files in it.")
-                    .setView(frame)
-                    .setPositiveButton("Start there") { _, _ ->
-                        val path = box.text.toString().trim()
-                        if (path.isEmpty()) return@setPositiveButton
-                        // "~" is the laptop's home, not the phone's: written out the way the laptop's folders are
-                        val home = (0 until folders.length()).map { folders.getJSONObject(it) }
-                            .firstOrNull { it.optString("name") == "home" }?.optString("path")
-                        start(if (path.startsWith("~") && home != null) home + path.removePrefix("~") else path, typed = true)
-                    }.setNegativeButton("Cancel", null).show()
-            }.show()
+            }.also { it.show() }
         }
     }
 
-    /** Long-press on a chat: clear it on this phone, or (for an agent started from here) end that agent. Agents the
-     *  user started on the laptop are never ended from the phone. */
+    /** Long-press on a chat: clear it on this phone, or (for an agent started from here) end that agent, asked again
+     *  first. Agents the user started on the laptop are never ended from the phone. */
     private fun chatMenu(session: String, project: String, agent: String) {
-        val ending = startedHere(session)
-        val choices = listOfNotNull("Clear chat (this phone only)", if (ending) "End agent (closes it on the laptop)" else null)
-        AlertDialog.Builder(this).setTitle("$agent · ${project.replace("_", " ")}").setItems(choices.toTypedArray()) { _, i ->
-            if (i == 0) {
+        panel = ChatActionsSheet(this, agent, project.replace("_", " "), startedHere(session),
+            onClear = {
                 Chats.clear(this, session)
                 if (session == current) showHistory()
                 showCrew()
-                return@setItems
-            }
-            AlertDialog.Builder(this).setTitle("End $agent in ${project.replace("_", " ")}?")
-                .setMessage("Its tmux window on the laptop closes and its chat leaves the list.")
-                .setPositiveButton("End it") { _, _ ->
-                    ask("/crew/end", JSONObject().put("session", session)) { answer ->
-                        if (!answer.optBoolean("ok")) {
-                            android.widget.Toast.makeText(this, answer.optString("note").ifEmpty { "Not ended." }, android.widget.Toast.LENGTH_LONG).show()
-                            return@ask
-                        }
-                        Chats.clear(this, session)
-                        names = names - session
-                        val crew = org.json.JSONArray((0 until (org.json.JSONArray(prefs().getString("crew", "[]"))).length())
-                            .map { org.json.JSONArray(prefs().getString("crew", "[]")).getJSONObject(it) }
-                            .filter { it.optString("session") != session })
-                        prefs().edit().putString("crew", crew.toString()).apply()
-                        if (session == current) { current = ""; prefs().edit().putString("current", "").apply() }
-                        showCrew()
-                    }
-                }.setNegativeButton("Keep it", null).show()
-        }.show()
+            },
+            onEnd = { done ->
+                ask("/crew/end", JSONObject().put("session", session)) { answer ->
+                    if (!answer.optBoolean("ok")) return@ask done(answer.optString("note").ifEmpty { "Not ended." })
+                    done(null)
+                    Chats.clear(this, session)
+                    names = names - session
+                    val kept = org.json.JSONArray(prefs().getString("crew", "[]"))
+                    val crew = org.json.JSONArray((0 until kept.length()).map { kept.getJSONObject(it) }.filter { it.optString("session") != session })
+                    prefs().edit().putString("crew", crew.toString()).apply()
+                    if (session == current) { current = ""; prefs().edit().putString("current", "").apply() }
+                    showCrew()
+                }
+            }).also { it.show() }
     }
 
     /** Replying to a message: shown above the box until sent, or tapped away. */

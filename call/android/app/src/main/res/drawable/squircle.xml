@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A rounded square (Material 3's floating button): the new-chat button -->
+<shape xmlns:android="http://schemas.android.com/apk/res/android" android:shape="rectangle">
+    <solid android:color="@color/cyan" />
+    <corners android:radius="18dp" />
+</shape>
