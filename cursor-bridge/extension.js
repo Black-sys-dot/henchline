@@ -50,8 +50,8 @@ function activate(context) {
           return;
         }
         if (typeof asked.model === "string" && CHAT_ID.test(asked.model) && asked.config && typeof asked.config.modelId === "string") {
-          // A chat's model, by Cursor's own "Switch to Model Slug" (it sets the selected chat's model, and also
-          // the default for new chats, which is put back after, by its "Switch to model")
+          // A chat's model, by Cursor's own "Switch to Model Slug": it sets the selected chat's model and, as a
+          // change made in Cursor itself does, the default for new chats
           await vscode.commands.executeCommand("composer.openComposer", asked.model);
           const selected = await vscode.commands.executeCommand("composer.getOrderedSelectedComposerIds");
           const last = Array.isArray(selected) ? selected[selected.length - 1] : undefined;
@@ -61,9 +61,6 @@ function activate(context) {
           }
           const config = { modelId: String(asked.config.modelId), params: Array.isArray(asked.config.params) ? asked.config.params : [] };
           await vscode.commands.executeCommand("cursorai.action.switchToModelSlug", { modelIdWithParams: JSON.stringify(config) });
-          if (typeof asked.keepDefault === "string" && asked.keepDefault) {
-            await vscode.commands.executeCommand("cursorai.action.switchToModel", asked.keepDefault, "composer");
-          }
           conn.end(JSON.stringify({ ok: true }) + "\n");
           return;
         }

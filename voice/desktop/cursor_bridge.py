@@ -79,45 +79,24 @@ def ask_window(chat: str, request: dict) -> bool:
 EFFORTS = ("xhigh", "high", "medium", "low")
 
 
-def default_model() -> str:
-    """Cursor's default model for new chats ("composer" in its settings), read only; "" when unknown."""
-    try:
-        with contextlib.closing(sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=1)) as db:
-            for (raw,) in db.execute("select value from ItemTable where key like ?",
-                                     ("%reactiveStorageServiceImpl.persistentStorage.applicationUser",)):
-                config = ((json.loads(raw).get("aiSettings") or {}).get("modelConfig") or {}).get("composer") or {}
-                if config.get("modelName"):
-                    return str(config["modelName"])
-    except (sqlite3.Error, ValueError, TypeError, AttributeError):
-        pass
-    return ""
-
-
 def switch_model(chat: str, slug: str) -> str:
-    """Sets a Cursor editor chat's model from a model's listed id ("grok-4.7-medium", "gpt-5.6-sol-xhigh-fast": the
-    model, its effort, fast), through Cursor's own "Switch to Model Slug", then reads the chat's model back from
-    Cursor's store. "" when it is on it; else why not."""
-    base, params = slug, []
-    if base.endswith("-fast"):
-        base = base.removesuffix("-fast")
-        params.append({"id": "fast", "value": "true"})
+    """Sets a Cursor editor chat's model from a model's listed id ("grok-4.7-medium": the model is "grok-4.7")
+    through Cursor's own "Switch to Model Slug", then reads the chat's model back from Cursor's store: "" when it is
+    on it, else why not. Only the model is set; its effort is Cursor's default for it (its parameter names differ
+    between models). As when the model is changed in Cursor itself, it also becomes the default for new chats."""
+    base = slug.removesuffix("-fast")
     for effort in EFFORTS:
-        if base.endswith("-" + effort):
-            base = base.removesuffix("-" + effort)
-            params.append({"id": "reasoning_effort", "value": effort})
-            break
+        base = base.removesuffix("-" + effort)
     before = chat_model(chat)
     if not before:
         return "Cursor's record of that chat can't be read, so a switch couldn't be checked: not switched."
-    keep = default_model()
-    if not ask_window(chat, {"model": chat, "config": {"modelId": base, "params": params}, "keepDefault": keep}):
+    if not ask_window(chat, {"model": chat, "config": {"modelId": base, "params": []}}):
         if last_why == "not a chat id":
             return "Cursor runs an older Henchline bridge: Reload Window in Cursor, then try again."
         return f"Cursor didn't take it ({last_why or 'no answer'}): still on {before}."
     for _ in range(15):  # Cursor writes its store a moment later
         time.sleep(0.2)
-        now = chat_model(chat)
-        if now == base:
+        if chat_model(chat) == base:
             return ""
     return f"Cursor still shows {chat_model(chat) or before} for that chat: it may not know {base}."
 
@@ -171,7 +150,8 @@ def chat_effort(chat: str) -> str:
     config = composer(chat).get("modelConfig") if CHAT_ID.fullmatch(chat) else None
     for picked in (config or {}).get("selectedModels") or []:
         for parameter in (picked.get("parameters") or []) if isinstance(picked, dict) else []:
-            if isinstance(parameter, dict) and parameter.get("id") == "reasoning_effort":
+            # "reasoning_effort" for most models, "reasoning" for Codex ones (gpt-5.3-codex, 2026-11-16)
+            if isinstance(parameter, dict) and parameter.get("id") in ("reasoning_effort", "reasoning"):
                 return str(parameter.get("value") or "")
     return ""
 

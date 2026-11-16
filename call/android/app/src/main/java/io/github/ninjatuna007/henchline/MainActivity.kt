@@ -346,7 +346,10 @@ class MainActivity : Activity() {
             CallService.Bus.lastAgents?.let { fromServer(it) }
             CallService.Bus.lastMode?.let { fromServer(it) }
         }
-        if (chatScreen.visibility == View.VISIBLE) Messages.viewing = current
+        if (chatScreen.visibility == View.VISIBLE) {
+            Messages.viewing = current
+            showModel(current)  // the model may have been changed on the laptop meanwhile (in Cursor itself)
+        }
         showHistory()  // what came meanwhile (a call's lines, a text): from the kept chat, on a call or off it
         showServer()
         showRinging()
