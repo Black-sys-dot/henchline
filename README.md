@@ -37,7 +37,7 @@ One snippet (`agents/AGENTS-snippet.md`) teaches every agent (Claude Code, Curso
 
 ## Yours, and only yours
 
-- **Local.** Whisper hears you and Kokoro speaks, on your machine. No cloud speech, no relay, no account.
+- **Local.** Whisper and NVIDIA's Nemotron hear you and Kokoro speaks, on your machine. No cloud speech, no relay, no account.
 - **Your network.** The phone reaches your computer over your own Tailscale; only your devices can.
 - **Any agent.** Not tied to one vendor: if it runs in a terminal or in Cursor, it's on the crew.
 - **Your voice stays yours.** Record the henchman phrases in your own voice; they stay on your phone, never in the repository.
@@ -56,7 +56,7 @@ its modules in `core/`, its tools in `tools/`, and what gets installed into the 
 | [`call/`](call/) | **Phone call and Henchline:** the call server and page; `hooks/` the Claude Code terminal mirror; `system/` the unit; [`android/`](call/android/) the app. | `handsfree/`, Tailscale |
 | [`agents/`](agents/) | What the agents are told: one snippet for Claude Code, Cursor, Codex and anything reading `AGENTS.md`. | `talkback/` |
 | [`cursor-bridge/`](cursor-bridge/) | A small Cursor extension: each Cursor IDE chat becomes its own chat on the phone, and replies, voice messages and model switches reach that very chat. `./install.sh agents` installs it. | Cursor |
-| [`voice/`](voice/) | What all of them share: the state files (`state.py`), agents and their tabs (`agents.py`), talkback's queue (`spool.py`), files to and from the phone (`files.py`); `desktop/` windows, keys, the clipboard and terminals (KDE or any X11); `speech/` Whisper and tone marks. | nothing |
+| [`voice/`](voice/) | What all of them share: the state files (`state.py`), agents and their tabs (`agents.py`), talkback's queue (`spool.py`), files to and from the phone (`files.py`); `desktop/` windows, keys, the clipboard and terminals (KDE or any X11); `speech/` Whisper, Nemotron streaming and tone marks. | nothing |
 | [`tests/`](tests/) | Unit tests per piece, and a throwaway-container test of the generic X11 desktop. | |
 | [`docs/`](docs/) | The README's pictures and the scripts that draw them. | |
 
@@ -101,7 +101,7 @@ Your agents speak their replies aloud, each in its own voice, one at a time, thr
 
 <img src="docs/peek_handsfree.svg" align="left" width="190" alt="">
 
-Talk to your agents without touching a key. Answer right after they speak; say *"hey Claude"* (your own trained wake word) or tap your earbuds the rest of the time. Talk over a reply to cut it off; *"over"* sends at once, *"give me a minute"* keeps listening, *"switch me to Cursor"* hands you over, announced out loud. An echo canceller keeps it from hearing itself. More: [handsfree/README.md](handsfree/README.md).
+Talk to your agents without touching a key. Answer right after they speak; say *"hey Claude"* (your own trained wake word) or tap your earbuds the rest of the time. Talk over a reply to cut it off; *"over"* sends at once, *"give me a minute"* keeps listening, *"switch me to Cursor"* hands you over, announced out loud. An echo canceller keeps it from hearing itself. NVIDIA's Nemotron Speech Streaming writes your words down while you are still talking, on the CPU, so they are ready a moment after you stop, even on battery (Whisper takes over if it isn't installed). More: [handsfree/README.md](handsfree/README.md).
 
 <br clear="left">
 
@@ -124,3 +124,5 @@ The call as a real app (Android 10+): it keeps going with the screen off, rings 
 ## License
 
 MIT
+
+`install.sh handsfree` downloads [NVIDIA Nemotron Speech Streaming](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b) (as [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)'s int8 export) from its publishers; it is licensed by NVIDIA Corporation under the [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/), not MIT, and is not part of this repository.

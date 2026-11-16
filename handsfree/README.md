@@ -21,6 +21,8 @@ An agent asked to hand you over runs `handsfree switch claude|cursor|codex [work
 
 A leading "okay", "no" or "actually" is fine. Anything negated ("don't switch me to Claude") or longer is an ordinary message to the current agent. A switch never sends your words anywhere by itself and is announced out loud, so a misheard one is undone with "back to …". `handsfree listen N` and `handsfree close` widen or close the window.
 
+Turns are transcribed while they are recorded by NVIDIA's Nemotron Speech Streaming (`voice/speech/nemotron.py`, run by sherpa-onnx on the CPU, with the hint words from `~/.config/ptt/config.json`), so the words are ready about 0.15 s after you stop, on battery too. `install.sh handsfree` downloads it (about 630 MB, NVIDIA Open Model License) into `~/.local/share/handsfree/nemotron`; without it, or with `"streaming": false` in the config, Whisper transcribes each turn once it has ended, as before. Whisper still confirms the wake word and the "over".
+
 The wake word is a personal detector: `handsfree/tools/wakeword_collect.py` records you at a few spots around the house, `handsfree/tools/wakeword_train.py` fits it on openWakeWord embeddings (`pip install --user --no-deps openwakeword`; its TFLite dependency has no Python 3.12 build), and Whisper confirms each candidate on just those two seconds.
 
 Log: `~/.local/state/ptt/handsfree.log` (events, no words)
