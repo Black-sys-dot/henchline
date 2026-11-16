@@ -1208,7 +1208,7 @@ class MainActivity : Activity() {
                 thoughtsSince = maxOf(thoughtsSince, thought.optString("at"))
                 // Reopening a chat asks again from its last kept line, and two asks can cross: never twice (the
                 // user saw them repeated, 2026-11-16)
-                if (!shownThoughts.add(session + " " + thought.optString("at"))) continue
+                if (!shownThoughts.add(session + " " + thought.optString("at") + " " + thought.optString("text").hashCode())) continue
                 thoughtBubble(thought.optString("text"))
             }
         }
@@ -1842,6 +1842,10 @@ class MainActivity : Activity() {
         if (!onCall()) showConnected(false)  // not the call's chat: the chat if there is one, else the henchman
         refreshStop()
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+        // The thoughts went with the old views: asked for again since the chat's last line (after a resume, a
+        // reinstall, an album joining; the user missed them, 2026-11-16). Each still shows once.
+        thoughtsOf = ""
+        if (chatScreen.visibility == View.VISIBLE) { main.removeCallbacks(thoughtsPoll); main.post(thoughtsPoll) }
     }
 
     /** A file an agent sent: a picture shown small (tap for it whole), audio with its own play button, anything
