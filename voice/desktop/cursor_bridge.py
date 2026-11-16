@@ -76,6 +76,52 @@ def ask_window(chat: str, request: dict) -> bool:
         return False
 
 
+EFFORTS = ("xhigh", "high", "medium", "low")
+
+
+def default_model() -> str:
+    """Cursor's default model for new chats ("composer" in its settings), read only; "" when unknown."""
+    try:
+        with contextlib.closing(sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=1)) as db:
+            for (raw,) in db.execute("select value from ItemTable where key like ?",
+                                     ("%reactiveStorageServiceImpl.persistentStorage.applicationUser",)):
+                config = ((json.loads(raw).get("aiSettings") or {}).get("modelConfig") or {}).get("composer") or {}
+                if config.get("modelName"):
+                    return str(config["modelName"])
+    except (sqlite3.Error, ValueError, TypeError, AttributeError):
+        pass
+    return ""
+
+
+def switch_model(chat: str, slug: str) -> str:
+    """Sets a Cursor editor chat's model from a model's listed id ("grok-4.7-medium", "gpt-5.6-sol-xhigh-fast": the
+    model, its effort, fast), through Cursor's own "Switch to Model Slug", then reads the chat's model back from
+    Cursor's store. "" when it is on it; else why not."""
+    base, params = slug, []
+    if base.endswith("-fast"):
+        base = base.removesuffix("-fast")
+        params.append({"id": "fast", "value": "true"})
+    for effort in EFFORTS:
+        if base.endswith("-" + effort):
+            base = base.removesuffix("-" + effort)
+            params.append({"id": "reasoning_effort", "value": effort})
+            break
+    before = chat_model(chat)
+    if not before:
+        return "Cursor's record of that chat can't be read, so a switch couldn't be checked: not switched."
+    keep = default_model()
+    if not ask_window(chat, {"model": chat, "config": {"modelId": base, "params": params}, "keepDefault": keep}):
+        if last_why == "not a chat id":
+            return "Cursor runs an older Henchline bridge: Reload Window in Cursor, then try again."
+        return f"Cursor didn't take it ({last_why or 'no answer'}): still on {before}."
+    for _ in range(15):  # Cursor writes its store a moment later
+        time.sleep(0.2)
+        now = chat_model(chat)
+        if now == base:
+            return ""
+    return f"Cursor still shows {chat_model(chat) or before} for that chat: it may not know {base}."
+
+
 def open_chat(workspace: str, chat: str) -> bool:
     """Brings that chat to the front in the one Cursor window that has it: the window whose workspace folder is
     the project holding the chat's transcript (Cursor's own commands say yes to any id, 2026-11-16). False when no

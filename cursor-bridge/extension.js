@@ -1,7 +1,7 @@
 // Henchline's bridge inside Cursor: each window listens on a private Unix socket and takes three requests about
 // one agent chat, by its id: {"open"} brings it to the front (Cursor's composer.openComposer), {"cycle"} moves it
 // to its next model (composer.cycleModel, only when it is the selected chat), {"stop"} stops what it's doing
-// (composer.cancelComposerStep). Henchline then types into the chat as it always has. Nothing else is accepted:
+// (composer.cancelComposerStep), {"model", "config"} sets its model (cursorai.action.switchToModelSlug). Henchline then types into the chat as it always has. Nothing else is accepted:
 // no text, no other command. The socket and its note are only the user's (0700 folder, 0600 files), under
 // ~/.local/state/ptt/cursor-bridge/.
 const fs = require("fs");
@@ -46,6 +46,24 @@ function activate(context) {
             return;
           }
           await vscode.commands.executeCommand("composer.cancelComposerStep");
+          conn.end(JSON.stringify({ ok: true }) + "\n");
+          return;
+        }
+        if (typeof asked.model === "string" && CHAT_ID.test(asked.model) && asked.config && typeof asked.config.modelId === "string") {
+          // A chat's model, by Cursor's own "Switch to Model Slug" (it sets the selected chat's model, and also
+          // the default for new chats, which is put back after, by its "Switch to model")
+          await vscode.commands.executeCommand("composer.openComposer", asked.model);
+          const selected = await vscode.commands.executeCommand("composer.getOrderedSelectedComposerIds");
+          const last = Array.isArray(selected) ? selected[selected.length - 1] : undefined;
+          if (last !== asked.model) {
+            conn.end(JSON.stringify({ ok: false, why: "another chat is selected", selected }) + "\n");
+            return;
+          }
+          const config = { modelId: String(asked.config.modelId), params: Array.isArray(asked.config.params) ? asked.config.params : [] };
+          await vscode.commands.executeCommand("cursorai.action.switchToModelSlug", { modelIdWithParams: JSON.stringify(config) });
+          if (typeof asked.keepDefault === "string" && asked.keepDefault) {
+            await vscode.commands.executeCommand("cursorai.action.switchToModel", asked.keepDefault, "composer");
+          }
           conn.end(JSON.stringify({ ok: true }) + "\n");
           return;
         }

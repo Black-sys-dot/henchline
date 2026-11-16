@@ -593,9 +593,10 @@ async def crew_models(request: web.Request) -> web.Response:
         if target is None:
             return web.json_response({"note": "That agent isn't known to the laptop."}, status=404)
         agent = target.agent
-        # Codex's /model only opens a picker. A Cursor editor chat's model is shown, not switched: Cursor keeps its
-        # "cycle model" from extensions ("command not found", 2026-11-16), and typing into its picker isn't safe
-        switchable = agent in ("claude", "cursor") and bool(target.tab)
+        # Codex's /model only opens a picker; a Cursor editor chat switches through the bridge (Cursor's own
+        # "Switch to Model Slug", found 2026-11-16 after its "cycle model" proved out of reach)
+        switchable = ((agent in ("claude", "cursor") and bool(target.tab))
+                      or bool(cursor_bridge.chat_of(target.session)))
         now = await loop.run_in_executor(None, model_in_use, target)
     else:
         now = ""
@@ -657,8 +658,8 @@ def model_in_use(target: Speaker) -> str:
 
 def switch_model(target: Speaker, model: dict) -> str:
     """Types the agent's own /model into its terminal; "" when done, else why not."""
-    if target.in_editor:  # see crew_models: Cursor offers extensions no way to change a chat's model
-        return "Cursor doesn't let Henchline change an IDE chat's model: change it in Cursor."
+    if target.in_editor:  # a Cursor editor chat: through the bridge, read back from Cursor's store
+        return cursor_bridge.switch_model(cursor_bridge.chat_of(target.session), model["id"])
     terminals = desktop().terminals
     if not terminals.agent_running(target.tab):
         return "That agent isn't running."
@@ -725,7 +726,7 @@ async def crew_model(request: web.Request) -> web.Response:
     except (ValueError, AttributeError):
         raise web.HTTPBadRequest(text="expected JSON")
     target = next((s for s in recent_speakers() if s.session == session), None)
-    if target is None or not target.tab:
+    if target is None or not (target.tab or cursor_bridge.chat_of(target.session)):
         return web.json_response({"note": "Only an agent in a terminal or a Cursor chat can switch models from here."},
                                  status=400)
     loop = asyncio.get_running_loop()
