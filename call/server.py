@@ -479,11 +479,13 @@ def notice(title: str, words: str) -> None:
     topic = topic_file.read_text().strip() if topic_file.exists() else ""
     if not topic:
         return
+    # Header values go as latin-1: the title folded to ASCII, or a folder named outside it loses the notice
+    title = title.encode("ascii", "replace").decode()
     try:
         urllib.request.urlopen(urllib.request.Request(f"https://ntfy.sh/{topic}", data=words.encode(),
                                                       headers={"Title": title, "Tags": "lock"}), timeout=10).close()
     except (OSError, ValueError):
-        log(HANDSFREE_LOG, "trust notice not sent")
+        log(HANDSFREE_LOG, f"phone notice not sent: {title}")
 
 
 def typed_folder(given: str) -> Path | None:
@@ -538,14 +540,14 @@ async def crew_new(request: web.Request) -> web.Response:
         if accepted or typed:
             log(HANDSFREE_LOG, f"{name}'s trust for {match} {'accepted' if accepted else 'left to answer in tmux'}")
         if accepted:  # said on the phone too: a request from anything else on the tailnet can't do this unseen
-            await loop.run_in_executor(None, notice, f"{name} now trusts a folder",
-                                       f"Started from a new chat, {name}'s trust question was answered yes for "
-                                       f"{match}.")
+            loop.run_in_executor(None, notice, f"{name} now trusts a folder",
+                                 f"Started from a new chat, {name}'s trust question was answered yes for {match.name}.")
     # Every start is told to the phone: the agent runs commands without asking (auto mode, Run Everything, Codex's
     # reviewer), so one started by anything else on the tailnet can't go unseen
-    await loop.run_in_executor(None, notice, f"{agent.capitalize()} started in {match.name}",
-                               f"From a new chat ({match}). It runs commands without asking; "
-                               "`tmux attach -t henchline` to watch.")
+    # Not awaited: a slow ntfy mustn't hold up the chat. Only the folder's name goes to ntfy.sh, never its path
+    loop.run_in_executor(None, notice, f"{agent.capitalize()} started in {match.name}",
+                         f"From a new chat, in {match.name}. It runs commands without asking; "
+                         "`tmux attach -t henchline` to watch.")
     pid = await loop.run_in_executor(None, tmux.pane_pid, tab)
     await loop.run_in_executor(None, spawned, lambda alive: [*alive[-49:], {"pane": tab.address, "pid": pid}])
     log(HANDSFREE_LOG, f"started {agent} in {match} (tmux {tab.address}) from the phone")
