@@ -387,6 +387,9 @@ def switch(words: list[str]) -> int:
 
 
 def main() -> int:
+    if {"-h", "--help"} & set(sys.argv[1:]):  # anywhere: never a ring or a text with "--help" as its words
+        print(__doc__)
+        return 0
     command, args = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("status", [])
     if command == "type-into-cursor":  # internal: routing.deliver runs it in a child process
         return 0 if routing.type_into_cursor(*args) else 1

@@ -1,6 +1,8 @@
 #!/usr/bin/env -S sh -c 'exec "$HOME/.local/share/henchline/venv/bin/python3" -E -s "$0" "$@"'
 """Hold a configured key or chord on any keyboard to record, then paste and Enter.
 
+    ptt            the push-to-talk listener itself (ptt.service runs it); no other arguments
+
 The laptop Copilot key is F23. An external keyboard uses the chord in
 ~/.config/ptt/config.json (default: right Ctrl + right Shift).
 Default mic route only: pw-record with no --target.
@@ -119,6 +121,9 @@ class PushToTalk:
 
 
 if __name__ == "__main__":
+    if {"-h", "--help"} & set(sys.argv[1:]):  # not a second listener (it was, before 2026-11-16)
+        print(__doc__)
+        sys.exit(0)
     try:
         desktop().prepare_threads()
         cfg = Config.load(PTT_LOG)

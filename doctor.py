@@ -221,6 +221,9 @@ PIECES = {"ptt": ptt, "talkback": talkback, "handsfree": handsfree, "call": call
 
 
 def main() -> int:
+    if {"-h", "--help"} & set(sys.argv[1:]):
+        print(__doc__)
+        return 0
     wanted = sys.argv[1:] or list(PIECES)
     unknown = [w for w in wanted if w not in PIECES]
     if unknown:
