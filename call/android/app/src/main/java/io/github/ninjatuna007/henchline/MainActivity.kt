@@ -125,7 +125,7 @@ class MainActivity : Activity() {
             // Back to the speaker after the earpiece took clear sound away: clear sound again, as it was (the user's
             // catch, 2026-11-16); clear sound is the loudspeaker, so that one switch does both
             if (on && prefs().getBoolean("clear_back", false)) {
-                clear.isChecked = true  // its listener switches the sound, lights the speaker and forgets clear_back
+                setClearSound(true)
                 return@setOnClickListener
             }
             val wasClear = service.clear
@@ -1014,7 +1014,7 @@ class MainActivity : Activity() {
                 showCallBar()
             },
             onSpeaker = { on -> if (service.speaker != on) speakerButton.performClick() },
-            onClear = { on -> if (clear.isChecked != on) clear.isChecked = on },  // the settings switch does the rest
+            onClear = { on -> setClearSound(on) },
             onButtonOnly = { only ->
                 if (buttonOnly != only) {
                     buttonOnly = only
@@ -1055,6 +1055,16 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Clear or call sound, by the call's own state, not the switch on screen: that one lags a switch still under
+     *  way, and a choice that matched it did nothing (the user couldn't get clear sound back, 2026-11-16). Through
+     *  the switch's listener, so the sound, the speaker and the saved choice all follow. */
+    private fun setClearSound(on: Boolean) {
+        val service = CallService.Bus.service
+        if (service != null && service.clear == on) { showClear(on); return }
+        showClear(!on)  // shown as the opposite without a flip, so the next line is one
+        clear.isChecked = on
+    }
+
     /** Earbuds, speaker or earpiece, picked from the list (earbuds connected): the call's sound goes there. Speaker
      *  or earpiece over the earbuds leave clear sound (it would follow the earbuds), as the earpiece always does. */
     private fun route(to: String) {
@@ -1062,14 +1072,16 @@ class MainActivity : Activity() {
         // Back to the earbuds after speaker or earpiece took clear sound away: clear sound again (it follows them)
         if (to == "headset" && prefs().getBoolean("clear_back", false)) {
             service.setRoute("headset")
-            clear.isChecked = true  // its listener switches the sound and forgets clear_back
+            setClearSound(true)
             main.postDelayed({ showSpeaker(service.speaker) }, 300)
             return
         }
-        val wasClear = service.clear
+        // Known before the switch (it finishes on its own thread): the earpiece always leaves clear sound, the
+        // speaker only over earbuds (clear sound would follow them)
+        val leaves = service.clear && to != "headset" && (to == "earpiece" || service.headsetAvailable())
         if (!service.setRoute(to)) return  // still switching from the last tap
         if (to != "headset") prefs().edit().putBoolean("speaker", to == "speaker").apply()
-        if (wasClear && !service.clear) {
+        if (leaves) {
             prefs().edit().putBoolean("clear", false).putBoolean("clear_back", true).apply()
             showClear(false)
         }
