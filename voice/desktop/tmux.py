@@ -8,6 +8,7 @@ WithTmux puts this in front of the desktop's own terminals: tmux panes here, eve
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -54,6 +55,40 @@ def agent_in(pane_pid: int) -> int:
     return next((int(c) for c in children if (p := process(int(c))) and p.agent), 0)
 
 
+# Claude Code's aliases for the newest of each model (`claude --model`, `/model`)
+CLAUDE_MODELS = [("opus", "Opus"), ("sonnet", "Sonnet"), ("fable", "Fable"), ("haiku", "Haiku")]
+MODEL_FLAG = {"claude": "--model", "codex": "-m", "cursor": "--model"}
+_cursor_models: tuple[float, list[dict]] = (0.0, [])
+
+
+def models(agent: str) -> list[dict]:
+    """The models a new chat (or a switch) can pick for that agent: [{id, name}], as each CLI lists them."""
+    global _cursor_models
+    if agent == "claude":
+        return [{"id": i, "name": n} for i, n in CLAUDE_MODELS]
+    if agent == "codex":  # Codex's own cache of the account's models; the hidden ones (its reviewer) left out
+        try:
+            listed = json.loads((Path.home() / ".codex/models_cache.json").read_text()).get("models", [])
+        except (OSError, ValueError, AttributeError):
+            return []
+        return [{"id": m["slug"], "name": m.get("display_name", m["slug"])} for m in listed
+                if isinstance(m, dict) and m.get("slug") and m.get("visibility") == "list"]
+    if agent == "cursor":  # `cursor-agent models`: "slug - Name" lines; asked at most every ten minutes
+        at, found = _cursor_models
+        if time.monotonic() - at > 600 or not found:
+            try:
+                listing = subprocess.run([shutil.which("cursor-agent") or "cursor-agent", "models"],
+                                         capture_output=True, text=True, timeout=20).stdout
+            except (OSError, subprocess.TimeoutExpired):
+                listing = ""
+            lines = (line.partition(" - ") for line in listing.splitlines())
+            found = [{"id": slug.strip(), "name": " ".join(name.split())}
+                     for slug, _, name in lines if name and " " not in slug.strip()]
+            _cursor_models = (time.monotonic(), found)
+        return found
+    return []
+
+
 def available() -> list[str]:
     """The agents a new chat can start: those installed, with tmux."""
     if not shutil.which("tmux"):
@@ -61,13 +96,15 @@ def available() -> list[str]:
     return [agent for agent, command in COMMANDS.items() if shutil.which(command[0])]
 
 
-def start(agent: str, folder: Path) -> Tab:
+def start(agent: str, folder: Path, model: str = "") -> Tab:
     """A new agent in its own tmux window in that folder; its tab, or an empty one when it couldn't start."""
     command = COMMANDS.get(agent, [""])
     program = shutil.which(command[0])
     if not program:
         return Tab()
-    where = ["-c", str(folder), "-n", f"{agent}:{folder.name}", "-P", "-F", "#{pane_id}", program, *command[1:]]
+    chosen = [MODEL_FLAG[agent], model] if model and agent in MODEL_FLAG else []  # checked by the caller
+    where = ["-c", str(folder), "-n", f"{agent}:{folder.name}", "-P", "-F", "#{pane_id}",
+             program, *command[1:], *chosen]
     running = tmux("has-session", "-t", SESSION)
     if running and running.returncode == 0:
         pane = out("new-window", "-d", "-t", f"{SESSION}:", *where)

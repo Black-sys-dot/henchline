@@ -875,6 +875,12 @@ class MainActivity : Activity() {
         bubble.maxWidth = (resources.displayMetrics.widthPixels * 0.7).toInt()
         chat.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
             LinearLayout.LayoutParams.WRAP_CONTENT))
+        // A new chat opens empty, showing the henchman instead of the lines: its first line brings the lines back
+        // (a first text was sent but never shown, 2026-11-16)
+        if (chatScroll.visibility != View.VISIBLE && row.visibility == View.VISIBLE) {
+            chatScroll.visibility = View.VISIBLE
+            findViewById<View>(R.id.idle).visibility = View.GONE
+        }
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
         return bubble
     }

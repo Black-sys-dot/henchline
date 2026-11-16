@@ -17,8 +17,8 @@ from pathlib import Path
 
 from voice.agents import SPOKEN_TO, identity, process
 from voice.desktop import current as desktop
-from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, LAST, LISTEN, SPEAKERS, Sent, Speaker, in_call, last_speaker, log,
-                         recent_speakers)
+from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent, Speaker, in_call,
+                         last_speaker, log, read_json, recent_speakers, write_json)
 
 SAY = Path(__file__).resolve().parents[2] / "talkback/scripts/say.py"
 AFTER_SWITCH = 30.0  # seconds to start talking after "Now talking to …"
@@ -284,10 +284,32 @@ def type_into_cursor(wid: str, message: str) -> bool:
     return False
 
 
+SNIPPET = Path(__file__).resolve().parents[2] / "agents/AGENTS-snippet.md"
+PHONE = (Heard.TEXTED, Heard.VOICE_NOTE, Heard.SHARED)
+INTRO = ("(Henchline, said once: I'm writing from my phone and can't see this screen. Answer [phone …] messages with "
+         '`handsfree text "…"` (short; detail can stay here). `handsfree ring "why"` calls me when you need me, '
+         f"`handsfree send FILE` sends me a file. How it all works: {SNIPPET}) ")
+
+
+def introduce(speaker: Speaker | None, heard: Heard) -> str:
+    """The first phone message an agent session gets says how to answer it (the user's idea, 2026-11-16: a Cursor
+    CLI started from the phone answered only in its terminal, not knowing the phone can't see it)."""
+    if speaker is None or heard not in PHONE or speaker.session in read_json(INTRODUCED).get("sessions", []):
+        return ""
+    return INTRO
+
+
+def introduced(speaker: Speaker, heard: Heard) -> None:
+    if heard in PHONE:
+        seen = read_json(INTRODUCED).get("sessions", [])
+        if speaker.session not in seen:
+            write_json(INTRODUCED, {"sessions": [*seen[-499:], speaker.session]})
+
+
 def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
     """Type the words, tagged with how they were heard, to `to`, or else to the agent that spoke last."""
-    message = f"{heard.tag} {text}"
     speaker = to or last_speaker()
+    message = f"{heard.tag} {introduce(speaker, heard)}{text}"
     if speaker is None:
         log(HANDSFREE_LOG, "nobody to send to")
         say("I heard you, but no agent has spoken yet.")
@@ -304,6 +326,7 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
         log(HANDSFREE_LOG, f"sent to cursor window {speaker.where}" if ok else "Cursor delivery failed")
         if ok:
             Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
+            introduced(speaker, heard)
         if not ok and desktop().locked():
             say("The laptop's screen is locked, so I can't type into Cursor. "
                 "Agents in a terminal still get your words.")
@@ -325,5 +348,6 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
         return False
     log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.address}")
     Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
+    introduced(speaker, heard)
     return True
 

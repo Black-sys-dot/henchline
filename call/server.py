@@ -516,6 +516,7 @@ async def crew_new(request: web.Request) -> web.Response:
     try:
         body = await request.json()
         folder, agent, typed = str(body.get("folder", "")), str(body.get("agent", "claude")), bool(body.get("typed"))
+        model = str(body.get("model", ""))
     except (ValueError, AttributeError):
         raise web.HTTPBadRequest(text="expected JSON")
     loop = asyncio.get_running_loop()
@@ -526,7 +527,9 @@ async def crew_new(request: web.Request) -> web.Response:
             return web.json_response({"note": f"Not a folder of yours on the laptop: {folder}"}, status=400)
     if match is None or agent not in tmux.available():
         return web.json_response({"note": "Not a folder or agent the laptop offers."}, status=400)
-    tab = await loop.run_in_executor(None, tmux.start, agent, match)
+    if model and model not in {m["id"] for m in await loop.run_in_executor(None, tmux.models, agent)}:
+        return web.json_response({"note": f"{agent} has no model {model}."}, status=400)
+    tab = await loop.run_in_executor(None, tmux.start, agent, match, model)
     if not tab:
         return web.json_response({"note": f"{agent} didn't start."}, status=500)
     # Claude's question only comes for a typed folder (the listed ones are those it trusts); Codex keeps its own
@@ -560,6 +563,95 @@ async def crew_new(request: web.Request) -> web.Response:
     if found:
         return web.json_response({"session": found.session, **await loop.run_in_executor(None, agents)})
     return web.json_response({"note": f"{agent} started, but didn't show up: pull down to refresh."}, status=504)
+
+
+# Words a Cursor model's listed name ends with that its /model picker doesn't use ("Claude Opus 5 1M Thinking" is
+# "Claude Opus 5" there)
+CURSOR_TRIM = {"low", "medium", "high", "extra", "fast", "thinking", "max", "1m", "500k", "300k", "(no", "zdr)"}
+
+
+async def crew_models(request: web.Request) -> web.Response:
+    """The models an agent can start with (?agent=) or switch to (?session=), and whether a running one can switch."""
+    trusted(request)
+    loop = asyncio.get_running_loop()
+    agent = request.query.get("agent", "")
+    session = request.query.get("session", "")
+    switchable = False
+    if session:
+        target = next((s for s in recent_speakers() if s.session == session), None)
+        if target is None:
+            return web.json_response({"note": "That agent isn't known to the laptop."}, status=404)
+        agent = target.agent
+        switchable = agent in ("claude", "cursor") and bool(target.tab)  # Codex's /model only opens a picker
+    return web.json_response({"agent": agent, "switch": switchable,
+                              "models": await loop.run_in_executor(None, tmux.models, agent)})
+
+
+def switch_model(target: Speaker, model: dict) -> str:
+    """Types the agent's own /model into its terminal; "" when done, else why not."""
+    terminals = desktop().terminals
+    if not terminals.agent_running(target.tab):
+        return "That agent isn't running."
+    if target.agent == "claude":
+        # Claude's /model also makes it the default for new sessions: the user's default is put back after
+        settings = Path.home() / ".claude/settings.json"
+        before = read_json(settings).get("model")
+        if not terminals.type_line(target.tab, f"/model {model['id']}"):
+            return "Couldn't type into it."
+        for _ in range(8):  # it writes the new default within a second or two
+            time.sleep(0.5)
+            now = read_json(settings)
+            if now.get("model") != before:
+                break
+        if now and now.get("model") != before:
+            text = settings.read_text()
+            written = f'"model": {json.dumps(now.get("model"))}'
+            if before is not None and text.count(written) == 1:  # just that line, the rest as the user had it
+                settings.write_text(text.replace(written, f'"model": {json.dumps(before)}'))
+            else:
+                if before is None:
+                    now.pop("model", None)
+                else:
+                    now["model"] = before
+                settings.write_text(json.dumps(now, indent=2) + "\n")
+        return ""
+    if target.agent == "cursor":  # its picker, filtered by the model's own name, then Enter on the first match
+        words = []
+        for word in model["name"].split():
+            if word.lower() in CURSOR_TRIM:
+                break
+            words.append(word)
+        if not words or not terminals.type_line(target.tab, "/model " + " ".join(words)):
+            return "Couldn't type into it."
+        time.sleep(1.0)
+        if target.tab.owner == tmux.OWNER:
+            tmux.tmux("send-keys", "-t", target.tab.address, "Enter")
+        else:
+            return "Picked in its list: press Enter there to confirm."
+        return ""
+    return "Codex switches models only in its own picker: start a new chat with the model instead."
+
+
+async def crew_model(request: web.Request) -> web.Response:
+    """Switching a running agent's model mid-chat (the user's wish, 2026-11-16): {session, model}."""
+    trusted(request)
+    try:
+        body = await request.json()
+        session, wanted = str(body.get("session", "")), str(body.get("model", ""))
+    except (ValueError, AttributeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    if target is None or not target.tab:
+        return web.json_response({"note": "Only an agent in a terminal can switch models from here."}, status=400)
+    loop = asyncio.get_running_loop()
+    model = next((m for m in await loop.run_in_executor(None, tmux.models, target.agent) if m["id"] == wanted), None)
+    if model is None:
+        return web.json_response({"note": f"{target.agent} has no model {wanted}."}, status=400)
+    why = await loop.run_in_executor(None, switch_model, target, model)
+    if why:
+        return web.json_response({"note": why}, status=409)
+    log(HANDSFREE_LOG, f"{target.spoken()} switched to {model['name']} from the phone")
+    return web.json_response({"ok": True, "name": model["name"]})
 
 
 async def crew_end(request: web.Request) -> web.Response:
@@ -807,6 +899,8 @@ def main() -> int:
     app.router.add_get("/crew/folders", crew_folders)
     app.router.add_post("/crew/new", crew_new)
     app.router.add_post("/crew/end", crew_end)
+    app.router.add_get("/crew/models", crew_models)
+    app.router.add_post("/crew/model", crew_model)
     app.router.add_get("/files/{secret}/{name}", sent_file)
     proxied = False
     if args.host in ("serve", "tailscale"):
