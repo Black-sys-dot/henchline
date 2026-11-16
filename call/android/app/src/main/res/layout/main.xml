@@ -222,41 +222,33 @@
                     android:textSize="18sp"
                     android:textStyle="bold" />
 
-                <!-- What is happening, and the agent's model (tap it to switch mid-chat): under the name, so a long
-                     model name can't push the call button off the bar (it did, 2026-11-16) -->
-                <LinearLayout
-                    android:layout_width="match_parent"
+                <TextView
+                    android:id="@+id/state"
+                    android:layout_width="wrap_content"
                     android:layout_height="wrap_content"
-                    android:gravity="center_vertical"
-                    android:orientation="horizontal">
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:text="Not on a call"
+                    android:textColor="@color/muted"
+                    android:textSize="13sp" />
 
-                    <TextView
-                        android:id="@+id/state"
-                        android:layout_width="0dp"
-                        android:layout_weight="1"
-                        android:layout_height="wrap_content"
-                        android:ellipsize="end"
-                        android:maxLines="1"
-                        android:text="Not on a call"
-                        android:textColor="@color/muted"
-                        android:textSize="13sp" />
-
-                    <TextView
-                        android:id="@+id/modelChip"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_marginStart="8dp"
-                        android:background="@drawable/pill"
-                        android:contentDescription="Switch this agent's model"
-                        android:ellipsize="end"
-                        android:maxLines="1"
-                        android:maxWidth="120dp"
-                        android:paddingHorizontal="8dp"
-                        android:paddingVertical="2dp"
-                        android:text="✦ Model"
-                        android:textColor="@color/cyan"
-                        android:textSize="12sp" />
-                </LinearLayout>
+                <!-- The agent's model, on a row of its own (which model works matters: the user's wish,
+                     2026-11-16); tap it to switch mid-chat -->
+                <TextView
+                    android:id="@+id/modelChip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/pill"
+                    android:contentDescription="Switch this agent's model"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:maxWidth="240dp"
+                    android:paddingHorizontal="10dp"
+                    android:paddingVertical="3dp"
+                    android:text="✦ Model"
+                    android:textColor="@color/cyan"
+                    android:textSize="13sp" />
             </LinearLayout>
 
             <ImageButton
