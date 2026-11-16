@@ -613,9 +613,9 @@ async def crew_models(request: web.Request) -> web.Response:
     if agent_menu and (not session or agent == "claude"):  # Claude and Codex: the same menu as Cursor's
         current = {"model": claude_model_id(target) if session else "", "params": {}}
         if session and agent == "claude":  # its effort from its log; its context as the label guesses it
-            label = await loop.run_in_executor(None, model_label, target)
-            current["params"] = {k: v for k, v in (("effort", claude_effort(target)),
-                                                     ("context", "1m" if "1M" in label else "standard")) if v}
+            context = claude_context(target)
+            plain = {"1M": "1m"}.get(context, "standard" if context else "")
+            current["params"] = {k: v for k, v in (("effort", claude_effort(target)), ("context", plain)) if v}
         return web.json_response({"agent": agent, "switch": switchable or not session, "now": now,
                                   "menu": agent_menu, "current": current})
     chat = cursor_bridge.chat_of(session) if session else ""
@@ -629,15 +629,36 @@ async def crew_models(request: web.Request) -> web.Response:
                               "models": await loop.run_in_executor(None, tmux.models, agent)})
 
 
+def claude_context(target: Speaker) -> str:
+    """The context a Claude session runs with, as Claude reported it to its status line ("1M", "200K"); "" when
+    it hasn't (no status line set up, or not refreshed yet)."""
+    uuid = target.session.removeprefix("claude-")
+    if not re.fullmatch(r"[0-9a-f-]{36}", uuid):
+        return ""
+    status = read_json(Path.home() / ".local/state/ptt/claude-status" / f"{uuid}.json")
+    model = status.get("model") if isinstance(status, dict) else None
+    shown = str((model or {}).get("display_name", "")) if isinstance(model, dict) else ""
+    found = re.search(r"\((\d+[KM]) context\)", shown, re.I)
+    if found:
+        return found.group(1).upper()
+    size = (status.get("context_window") or {}).get("context_window_size") if isinstance(status, dict) else None
+    if not isinstance(size, int):
+        return ""
+    return f"{size // 1000}K" if size < 1_000_000 else "1M"
+
+
 def claude_effort(target: Speaker) -> str:
     """The effort a Claude session last answered at ("medium"), from its session log's request settings."""
     uuid = target.session.removeprefix("claude-")
     if not re.fullmatch(r"[0-9a-f-]{36}", uuid):
         return ""
     for log_file in (Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"):
-        with log_file.open("rb") as f:
-            f.seek(max(0, log_file.stat().st_size - 300_000))
-            found = re.findall(rb'"output_config":\{"effort":"([a-z]+)"', f.read())
+        try:
+            with log_file.open("rb") as f:
+                f.seek(max(0, log_file.stat().st_size - 300_000))
+                found = re.findall(rb'"output_config":\{"effort":"([a-z]+)"', f.read())
+        except OSError:
+            continue
         if found:
             return found[-1].decode()
     return ""
@@ -650,11 +671,9 @@ def model_label(target: Speaker) -> str:
         if not model:
             return ""
         name = next((m["name"] for m in tmux.menu("claude") if m["id"] == model), model)
-        # Its context isn't in the log: 1M when the user's own default is that model at 1M (a likely guess, marked)
-        default = str(read_json(Path.home() / ".claude/settings.json").get("model", ""))
-        family = model.removeprefix("claude-").split("-")[0]
-        wide = default.endswith("[1m]") and (family in default or default.startswith(model))
-        return " · ".join(x for x in (name, claude_effort(target), "1M?" if wide else "") if x)
+        # Its context only as Claude itself reports it (its status line's model name says "(1M context)"; see
+        # agents/claude-status.py): never guessed (the user's rule, 2026-11-16)
+        return " · ".join(x for x in (name, claude_effort(target), claude_context(target)) if x)
     chat = cursor_bridge.chat_of(target.session) if target.in_editor else ""
     if chat:
         used = cursor_bridge.chat_model(chat)
@@ -674,7 +693,7 @@ def claude_model_id(target: Speaker) -> str:
         return ""
     for log_file in (Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"):
         with log_file.open("rb") as f:
-            f.seek(max(0, log_file.stat().st_size - 200_000))
+            f.seek(max(0, log_file.stat().st_size - 2_000_000))
             tail = f.read().splitlines()
         for raw in reversed(tail):
             try:
@@ -701,7 +720,7 @@ def model_in_use(target: Speaker) -> str:
         if re.fullmatch(r"[0-9a-f-]{36}", uuid):
             for log_file in (Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"):
                 with log_file.open("rb") as f:
-                    f.seek(max(0, log_file.stat().st_size - 200_000))
+                    f.seek(max(0, log_file.stat().st_size - 2_000_000))
                     tail = f.read().splitlines()
                 for raw in reversed(tail):  # the conversation's own last answer: not a side call (titles, subagents)
                     try:
