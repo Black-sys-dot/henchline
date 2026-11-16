@@ -607,10 +607,15 @@ async def crew_models(request: web.Request) -> web.Response:
     else:
         now = ""
     if request.query.get("only") == "now":  # a chat opening: just what it is using, not the whole list
-        return web.json_response({"agent": agent, "switch": switchable, "now": now})
+        label = await loop.run_in_executor(None, model_label, target) if session else ""
+        return web.json_response({"agent": agent, "switch": switchable, "now": now, "label": label})
     agent_menu = await loop.run_in_executor(None, tmux.menu, agent)
     if agent_menu and (not session or agent == "claude"):  # Claude and Codex: the same menu as Cursor's
         current = {"model": claude_model_id(target) if session else "", "params": {}}
+        if session and agent == "claude":  # its effort from its log; its context as the label guesses it
+            label = await loop.run_in_executor(None, model_label, target)
+            current["params"] = {k: v for k, v in (("effort", claude_effort(target)),
+                                                     ("context", "1m" if "1M" in label else "standard")) if v}
         return web.json_response({"agent": agent, "switch": switchable or not session, "now": now,
                                   "menu": agent_menu, "current": current})
     chat = cursor_bridge.chat_of(session) if session else ""
@@ -622,6 +627,44 @@ async def crew_models(request: web.Request) -> web.Response:
         return web.json_response({"agent": agent, "switch": True, "now": now, "menu": shown, "current": current})
     return web.json_response({"agent": agent, "switch": switchable, "now": now,
                               "models": await loop.run_in_executor(None, tmux.models, agent)})
+
+
+def claude_effort(target: Speaker) -> str:
+    """The effort a Claude session last answered at ("medium"), from its session log's request settings."""
+    uuid = target.session.removeprefix("claude-")
+    if not re.fullmatch(r"[0-9a-f-]{36}", uuid):
+        return ""
+    for log_file in (Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"):
+        with log_file.open("rb") as f:
+            f.seek(max(0, log_file.stat().st_size - 300_000))
+            found = re.findall(rb'"output_config":\{"effort":"([a-z]+)"', f.read())
+        if found:
+            return found[-1].decode()
+    return ""
+
+
+def model_label(target: Speaker) -> str:
+    """The model pill's words: the model, its effort and its context, short ("Opus 5.5 · medium · 1M")."""
+    if target.agent == "claude":
+        model = claude_model_id(target)
+        if not model:
+            return ""
+        name = next((m["name"] for m in tmux.menu("claude") if m["id"] == model), model)
+        # Its context isn't in the log: 1M when the user's own default is that model at 1M (a likely guess, marked)
+        default = str(read_json(Path.home() / ".claude/settings.json").get("model", ""))
+        family = model.removeprefix("claude-").split("-")[0]
+        wide = default.endswith("[1m]") and (family in default or default.startswith(model))
+        return " · ".join(x for x in (name, claude_effort(target), "1M?" if wide else "") if x)
+    chat = cursor_bridge.chat_of(target.session) if target.in_editor else ""
+    if chat:
+        used = cursor_bridge.chat_model(chat)
+        entry = next((m for m in cursor_bridge.catalog() if m["id"] == used), None)
+        settings = {p["id"]: str(p.get("value")) for p in cursor_bridge.params_of(chat)}
+        effort = settings.get("reasoning_effort") or settings.get("reasoning") or ""
+        context = settings.get("context", "").upper()
+        fast = "fast" if settings.get("fast") == "true" else ""
+        return " · ".join(x for x in ((entry or {}).get("name", used), effort, context, fast) if x)
+    return ""
 
 
 def claude_model_id(target: Speaker) -> str:

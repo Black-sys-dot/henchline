@@ -1289,9 +1289,9 @@ class MainActivity : Activity() {
         chip.text = prefs().getString("model_$session", null)?.let { "✦ " + shortModel(it) } ?: "✦ Model"
         if (session.isEmpty() || Files.origin(this) == null) return
         ask("/crew/models?only=now&session=" + android.net.Uri.encode(session), null) { answer ->
-            val now = answer.optString("now")
+            val now = answer.optString("label").ifEmpty { answer.optString("now") }  // model · effort · context
             if (now.isNotEmpty() && session == current) {
-                chip.text = "✦ " + shortModel(now)
+                chip.text = "✦ " + (answer.optString("label").ifEmpty { shortModel(now) })
                 prefs().edit().putString("model_$session", now).apply()
             }
         }
