@@ -541,6 +541,11 @@ async def crew_new(request: web.Request) -> web.Response:
             await loop.run_in_executor(None, notice, f"{name} now trusts a folder",
                                        f"Started from a new chat, {name}'s trust question was answered yes for "
                                        f"{match}.")
+    # Every start is told to the phone: the agent runs commands without asking (auto mode, Run Everything, Codex's
+    # reviewer), so one started by anything else on the tailnet can't go unseen
+    await loop.run_in_executor(None, notice, f"{agent.capitalize()} started in {match.name}",
+                               f"From a new chat ({match}). It runs commands without asking; "
+                               "`tmux attach -t henchline` to watch.")
     pid = await loop.run_in_executor(None, tmux.pane_pid, tab)
     await loop.run_in_executor(None, spawned, lambda alive: [*alive[-49:], {"pane": tab.address, "pid": pid}])
     log(HANDSFREE_LOG, f"started {agent} in {match} (tmux {tab.address}) from the phone")
