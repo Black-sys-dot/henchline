@@ -43,8 +43,9 @@ def triggers(cfg: Config) -> tuple[set[int], list[frozenset[int]]]:
 
 
 def is_keyboard(dev: InputDevice) -> bool:
-    if "input-remapper" in dev.name.lower():
-        return False
+    # input-remapper's own keyboard counts too: a keyboard with a preset (the Dell receiver's mouse buttons) is
+    # grabbed whole, and its keys come only from there (right Ctrl+Shift did nothing, the user's catch, 2026-11-16).
+    # The grabbed original gives nothing meanwhile, so no key is seen twice. Its mouse-only devices aren't keyboards.
     keys = set(dev.capabilities().get(ecodes.EV_KEY, []))
     return ecodes.KEY_A in keys and ecodes.KEY_ENTER in keys and len(keys) > 40
 
@@ -134,9 +135,21 @@ class Keyboards:
 
     def read(self, dev: InputDevice, on_hold) -> None:
         """Handle a keyboard's events; on_hold(dev, event, hold) for each hotkey press."""
+        if dev not in self.boards.values():  # dropped by a rescan earlier in this round
+            return
         try:
             pending = list(dev.read())
         except OSError:
+            # Unplugged: its file stays "ready" with nothing to read, so the wait never went quiet and no rescan
+            # ran again; a keyboard plugged in later was never heard (the Dell receiver, 2026-11-16). Dropped first:
+            # a quick re-plug can bring back the same path, which rescan would otherwise keep as this dead one
+            path = next((p for p, d in self.boards.items() if d is dev), None)
+            if path:
+                self.boards.pop(path)
+                self.held.pop(dev.fd, None)
+                dev.close()
+                log(f"removed {path}")
+            self.rescan()
             return
         down = self.held[dev.fd]
         index = 0
