@@ -30,6 +30,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 from pathlib import Path
 
 from aiohttp import WSMsgType, web
@@ -470,6 +471,19 @@ def trusted_folders() -> list[Path]:
     return sorted((f for f in found if f.is_dir()), key=used, reverse=True)[:30]
 
 
+def notice(title: str, words: str) -> None:
+    """A notification on the user's phone through their own ntfy topic (handsfree's; never printed or logged)."""
+    topic_file = Path.home() / ".config/ptt/ntfy-topic"
+    topic = topic_file.read_text().strip() if topic_file.exists() else ""
+    if not topic:
+        return
+    try:
+        urllib.request.urlopen(urllib.request.Request(f"https://ntfy.sh/{topic}", data=words.encode(),
+                                                      headers={"Title": title, "Tags": "lock"}), timeout=10).close()
+    except (OSError, ValueError):
+        log(HANDSFREE_LOG, "trust notice not sent")
+
+
 def typed_folder(given: str) -> Path | None:
     """A folder typed on the phone for a new chat: an existing folder of the user's (under home, or a drive mounted
     under /media/<user>), never home's credential folders (files.PRIVATE) and never home itself, which holds them."""
@@ -515,6 +529,9 @@ async def crew_new(request: web.Request) -> web.Response:
         accepted = await loop.run_in_executor(None, tmux.accept_trust, tab, match)
         answer = "accepted" if accepted else "left to answer in tmux"
         log(HANDSFREE_LOG, f"trust for {match} {answer} (typed on the phone)")
+        if accepted:  # said on the phone too: a request from anything else on the tailnet can't do this unseen
+            await loop.run_in_executor(None, notice, "Claude now trusts a folder",
+                                       f"Started from a new chat, trust was answered yes for {match}.")
     pid = await loop.run_in_executor(None, tmux.pane_pid, tab)
     await loop.run_in_executor(None, spawned, lambda alive: [*alive[-49:], {"pane": tab.address, "pid": pid}])
     log(HANDSFREE_LOG, f"started {agent} in {match} (tmux {tab.address}) from the phone")
