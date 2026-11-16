@@ -24,8 +24,10 @@ Talk to them at your desk without touching the keyboard, call them from your pho
 - 📞 **Call your crew** over your own Tailscale network. Your computer stays quiet; your phone is its mic and speaker. Open line, hold-to-talk, or typed; your words show in the chat exactly as they were heard.
 - 🔔 **They ring you.** `handsfree ring "the build finished, want me to deploy?"` rings your phone: full screen when it's locked, a ringing banner while you use it, with the henchman's own tone and phrase (hear [Claude](call/android/app/src/main/res/raw/banner_claude.wav), [Cursor](call/android/app/src/main/res/raw/banner_cursor.wav) and [Codex](call/android/app/src/main/res/raw/banner_codex.wav): the sound files open on GitHub with a play button). Answer, and you're talking to the one who rang. The agent learns whether you answered, declined, missed it, or were out of reach. Your own agents get through Do Not Disturb; nobody else does.
 - 💬 **They text you.** `handsfree text "tests are green"`: a message with a reply box. Your reply is typed into that agent's terminal, and only that one's. Start a text from any agent's chat in the app, too.
+- 🎤 **Voice messages.** No call needed: hold the mic in a chat and speak, slide up to lock it, slide left to drop it. Whisper on your computer writes it down, the agent gets the words, and your bubble shows what was heard.
+- ➕ **New chat starts an agent.** Pick a folder your agent already trusts: Claude, Codex or the Cursor CLI starts there in tmux (`tmux attach -t henchline` to watch) and its chat opens. Long-press a chat to clear it, or to end an agent the phone started.
 - 📎 **Files both ways.** Share a photo, a voice memo, a zip, a video from any app, or tap the paperclip: it lands on your computer and the agent is told where. An agent runs `handsfree send report.pdf "here you go"` and it shows in its chat.
-- 🗂 **A chat per henchman**, kept on the phone, your terminal conversation mirrored into it during a call.
+- 🗂 **A chat per henchman**, kept on the phone with times and read ticks, your terminal conversation mirrored into it during a call. A call history shows who rang, why, and how long you talked.
 - 🎧 **Earbuds as push-to-talk**: tap to talk, tap to send, the phone stays in your pocket. Talk/Send and Hang up on the lock screen, and a Quick Settings tile if you want one.
 
 **For your agents**
