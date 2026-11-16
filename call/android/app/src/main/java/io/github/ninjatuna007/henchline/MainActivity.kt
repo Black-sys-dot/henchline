@@ -774,8 +774,8 @@ class MainActivity : Activity() {
         if (!keep) send.postDelayed({
             android.animation.ObjectAnimator.ofFloat(send, "rotation", 0f, -14f, 14f, -8f, 8f, 0f).setDuration(320).start()
         }, 220)
-        attach.setImageResource(R.drawable.ic_attach)
-        attach.contentDescription = "Attach pictures or files"
+        attach.setImageResource(R.drawable.ic_add)
+        attach.contentDescription = "Add a photo, a picture or files"
         showConnected(onCall())  // the hint and the mic back
         val short = System.currentTimeMillis() - note.started < 700
         val wav = note.stop(keep && !short)
