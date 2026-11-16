@@ -20,7 +20,11 @@ from voice.desktop import Tab, Terminals, Window
 OWNER = "tmux"
 SESSION = "henchline"  # where the phone's new chats run: `tmux attach -t henchline`
 TYPE_PAUSE = 0.15  # seconds between the text and its Enter, as for Konsole
-COMMANDS = {"claude": "claude", "codex": "codex", "cursor": "cursor-agent"}  # what a new chat starts, per agent
+# What a new chat starts, per agent, never stopping to ask for a keypress the phone can't give (the user's point,
+# 2026-11-16): Claude in auto mode (a classifier decides; what it refuses is refused, not asked), the Cursor CLI on
+# Run Everything; Codex sends its approvals to its own reviewer (approvals_reviewer = "auto_review" in its config)
+COMMANDS = {"claude": ["claude", "--permission-mode", "auto"], "codex": ["codex"],
+            "cursor": ["cursor-agent", "--force"]}
 
 
 def tmux(*args: str, own_scope: bool = False, given: str | None = None) -> subprocess.CompletedProcess | None:
@@ -54,15 +58,16 @@ def available() -> list[str]:
     """The agents a new chat can start: those installed, with tmux."""
     if not shutil.which("tmux"):
         return []
-    return [agent for agent, command in COMMANDS.items() if shutil.which(command)]
+    return [agent for agent, command in COMMANDS.items() if shutil.which(command[0])]
 
 
 def start(agent: str, folder: Path) -> Tab:
     """A new agent in its own tmux window in that folder; its tab, or an empty one when it couldn't start."""
-    command = shutil.which(COMMANDS.get(agent, ""))
-    if not command:
+    command = COMMANDS.get(agent, [""])
+    program = shutil.which(command[0])
+    if not program:
         return Tab()
-    where = ["-c", str(folder), "-n", f"{agent}:{folder.name}", "-P", "-F", "#{pane_id}", command]
+    where = ["-c", str(folder), "-n", f"{agent}:{folder.name}", "-P", "-F", "#{pane_id}", program, *command[1:]]
     running = tmux("has-session", "-t", SESSION)
     if running and running.returncode == 0:
         pane = out("new-window", "-d", "-t", f"{SESSION}:", *where)
@@ -91,13 +96,23 @@ def pane_pids() -> dict[str, int] | None:
     return {pane: int(pid) for pane, pid in pairs if pid.isdigit()}
 
 
-def accept_trust(tab: Tab, folder: Path, wait: float = 12.0) -> bool:
-    """Claude Code started in a folder it hasn't trusted yet asks first, and its default is to exit ("❯ No, exit"
-    above "Yes, I trust this folder"). Answered yes only when that very question is on screen: its wording and the
-    folder's own path, in the pane's last lines, the highlighted answer (❯) among them reading "yes, I trust this
-    folder". Anything else is left for the user (`tmux attach -t henchline`). Only for Claude, and only for a
-    folder the user typed on the phone and confirmed: their first message must not be the answer (it was, in a
+# Each agent's own question about a folder it hasn't trusted, and the answer that says yes: (words of the question,
+# the cursor mark, the chosen line that is yes). Claude Code's default answer is to exit; Codex's is yes.
+TRUST_QUESTIONS = {
+    "claude": (("trust this folder", "quick safety check"), "❯", "❯ yes, i trust this folder"),
+    "codex": (("do you trust the contents of this directory",), "›", "› 1. yes, continue"),
+}
+
+
+def accept_trust(tab: Tab, folder: Path, agent: str = "claude", wait: float = 12.0) -> bool:
+    """An agent started in a folder it hasn't trusted yet asks first. Answered yes only when that very question is
+    on screen: its wording and the folder's own path, in the pane's last lines, and the highlighted answer (moved
+    down to it if need be) being the yes. Anything else is left for the user (`tmux attach -t henchline`). Only for
+    a folder the user picked or typed on the phone: their first message must not be the answer (it was, in a
     test, 2026-11-16, and the agent exited)."""
+    if agent not in TRUST_QUESTIONS:
+        return False
+    words, mark, yes = TRUST_QUESTIONS[agent]
     shown = str(folder).replace(str(Path.home()), "~", 1)
 
     def screen() -> list[str]:  # the bottom of the pane: where the question and its answers are
@@ -105,21 +120,20 @@ def accept_trust(tab: Tab, folder: Path, wait: float = 12.0) -> bool:
 
     def asking(lines: list[str]) -> bool:
         text = " ".join(lines).lower()
-        return "trust this folder" in text and ("quick safety check" in text or "do you trust" in text) \
-            and any(shown in line or str(folder) in line for line in lines)
+        return any(w in text for w in words) and any(shown in line or str(folder) in line for line in lines)
 
     def chosen(lines: list[str]) -> str:
-        return next((line.strip().lower() for line in lines if line.lstrip().startswith("❯")), "")
+        return next((line.strip().lower() for line in lines if line.lstrip().startswith(mark)), "")
 
     until = time.monotonic() + wait
     while time.monotonic() < until:
         lines = screen()
         if asking(lines) and chosen(lines):
-            for _ in range(3):  # down the answers until "yes, i trust this folder" is the chosen one
+            for _ in range(3):  # down the answers until the yes is the chosen one
                 lines = screen()
                 if not asking(lines):
                     return False
-                if chosen(lines).startswith("❯ yes, i trust this folder"):
+                if chosen(lines).startswith(yes):
                     done = tmux("send-keys", "-t", tab.address, "Enter")
                     return bool(done and done.returncode == 0)
                 tmux("send-keys", "-t", tab.address, "Down")

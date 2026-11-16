@@ -527,13 +527,20 @@ async def crew_new(request: web.Request) -> web.Response:
     tab = await loop.run_in_executor(None, tmux.start, agent, match)
     if not tab:
         return web.json_response({"note": f"{agent} didn't start."}, status=500)
-    if typed and agent == "claude" and match not in await loop.run_in_executor(None, trusted_folders):
-        accepted = await loop.run_in_executor(None, tmux.accept_trust, tab, match)
-        answer = "accepted" if accepted else "left to answer in tmux"
-        log(HANDSFREE_LOG, f"trust for {match} {answer} (typed on the phone)")
+    # Claude's question only comes for a typed folder (the listed ones are those it trusts); Codex keeps its own
+    # list, so it may ask about any folder: answered once that exact question is on screen (it may not come at all)
+    asks = agent == "codex" or (typed and agent == "claude"
+                                and match not in await loop.run_in_executor(None, trusted_folders))
+    if asks:
+        name = agent.capitalize()
+        wait = 8.0 if agent == "codex" else 12.0
+        accepted = await loop.run_in_executor(None, tmux.accept_trust, tab, match, agent, wait)
+        if accepted or typed:
+            log(HANDSFREE_LOG, f"{name}'s trust for {match} {'accepted' if accepted else 'left to answer in tmux'}")
         if accepted:  # said on the phone too: a request from anything else on the tailnet can't do this unseen
-            await loop.run_in_executor(None, notice, "Claude now trusts a folder",
-                                       f"Started from a new chat, trust was answered yes for {match}.")
+            await loop.run_in_executor(None, notice, f"{name} now trusts a folder",
+                                       f"Started from a new chat, {name}'s trust question was answered yes for "
+                                       f"{match}.")
     pid = await loop.run_in_executor(None, tmux.pane_pid, tab)
     await loop.run_in_executor(None, spawned, lambda alive: [*alive[-49:], {"pane": tab.address, "pid": pid}])
     log(HANDSFREE_LOG, f"started {agent} in {match} (tmux {tab.address}) from the phone")
