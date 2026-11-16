@@ -1278,7 +1278,7 @@ class MainActivity : Activity() {
     /** Long-press on a chat: clear it on this phone, or (for an agent started from here) end that agent, asked again
      *  first. Agents the user started on the laptop are never ended from the phone. */
     private fun chatMenu(session: String, project: String, agent: String) {
-        panel = ChatActionsSheet(this, agent, project.replace("_", " "), startedHere(session),
+        panel = ChatActionsSheet(this, agent, project.replace("_", " "), startedHere(session), gone = session !in names,
             onClear = {
                 Chats.clear(this, session)
                 if (session == current) showHistory()

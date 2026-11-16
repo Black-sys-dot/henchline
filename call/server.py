@@ -738,7 +738,11 @@ async def crew_end(request: web.Request) -> web.Response:
     await asyncio.get_running_loop().run_in_executor(None, tmux.end, target.tab)
     await asyncio.get_running_loop().run_in_executor(
         None, spawned, lambda alive: [e for e in alive if e.get("pane") != target.tab.address])
-    (SPEAKERS / f"{session}.json").unlink(missing_ok=True)  # an exact match from recent_speakers: never a made-up path
+    # Every name it went by: the same agent in the same pane may be known under its older key too (a Cursor CLI
+    # before its chat id was used: ending one name left the other in the list, 2026-11-16)
+    for other in recent_speakers():
+        if other.session == session or (other.tab == target.tab and other.agent == target.agent):
+            (SPEAKERS / f"{other.session}.json").unlink(missing_ok=True)
     log(HANDSFREE_LOG, f"ended {target.spoken()} (tmux {target.tab.address}) from the phone")
     return web.json_response({"ok": True})
 

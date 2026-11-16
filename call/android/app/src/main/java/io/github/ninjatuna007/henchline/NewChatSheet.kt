@@ -289,6 +289,7 @@ class ChatActionsSheet(
     private val title: String,
     private val subtitle: String,
     private val canEnd: Boolean,
+    private val gone: Boolean,  // its agent is no longer on the laptop's crew list
     private val onClear: () -> Unit,
     private val onEnd: (done: (String?) -> Unit) -> Unit,
 ) : BottomPanel(activity) {
@@ -296,9 +297,13 @@ class ChatActionsSheet(
         val sheet = open(title, subtitle)
         val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         sheet.addView(rows, wide(16))
-        rows.addView(row("🧹", "Clear chat", "On this phone only: the agent keeps its conversation", R.color.text) { onClear(); close() })
-        if (canEnd) rows.addView(row("⏹", "End agent", "Closes its tmux window on the laptop", R.color.hang) { confirm(rows) })
-        else rows.addView(TextView(activity).apply {
+        if (gone) rows.addView(row("🗑", "Remove chat", "Its agent has gone from the laptop: the chat leaves the list", R.color.text) {
+            onClear(); close()
+        }) else rows.addView(row("🧹", "Clear chat", "On this phone only: the agent keeps its conversation", R.color.text) {
+            onClear(); close()
+        })
+        if (canEnd && !gone) rows.addView(row("⏹", "End agent", "Closes its tmux window on the laptop", R.color.hang) { confirm(rows) })
+        else if (!gone) rows.addView(TextView(activity).apply {
             text = "Started on the laptop, so it can't be ended from here."
             setTextColor(colour(R.color.muted)); textSize = 12f; setPadding(px(4), px(8), px(4), 0)
         })
