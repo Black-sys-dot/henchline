@@ -42,8 +42,8 @@ class Routes(AioHTTPTestCase):
         with mock.patch.object(server, "to_agent", return_value=("Claude", "")) as to_agent:
             answer = await self.client.post("/text", json={"text": " hi  there ", "session": "claude-1"},
                                             headers=self.origin())
-            self.assertEqual(await answer.json(), {"to": "Claude"})
-            to_agent.assert_called_once_with("hi there", "claude-1", server.Heard.TEXTED, False)
+            self.assertEqual(await answer.json(), {"to": "Claude", "queued": False})
+            to_agent.assert_called_once_with("hi there", "claude-1", server.Heard.TEXTED, False, False)
 
     async def test_a_share_off_a_call_without_an_agent_is_refused(self):
         with mock.patch.object(server, "in_call", return_value=False), mock.patch.object(server, "to_agent") as to_agent:
@@ -73,7 +73,7 @@ class ToAgent(unittest.TestCase):
                 mock.patch.object(server.routing, "switch_to") as switch, \
                 mock.patch.object(server.routing, "deliver", return_value=True) as deliver:
             self.assertEqual(server.to_agent("hi", "claude-1", server.Heard.TEXTED, False), ("Claude", ""))
-            deliver.assert_called_once_with("hi", server.Heard.TEXTED, to=target)
+            deliver.assert_called_once_with("hi", server.Heard.TEXTED, to=target, urgent=False)
             switch.assert_not_called()
 
 

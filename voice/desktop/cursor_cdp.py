@@ -192,7 +192,7 @@ class _Page:
             await self.call("Input.insertText", {"text": before.strip()})
 
 
-async def _send(url: str, chat: str, message: str) -> str:
+async def _send(url: str, chat: str, message: str, urgent: bool = False) -> str:
     import aiohttp
 
     async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=WHOLE_SEND)) as session:
@@ -216,6 +216,9 @@ async def _send(url: str, chat: str, message: str) -> str:
                 for _ in range(int(SUBMIT_WAIT / 0.1)):
                     await asyncio.sleep(0.1)
                     if not str(await page.js(_text(chat)) or "").strip():  # emptied (or redrawn): Cursor took it
+                        if urgent:  # queued behind the agent's work: Enter again sends it now (Cursor's own way)
+                            await asyncio.sleep(0.2)
+                            await page.keys(_key("Enter", 13, text="\r"))
                         return ""
                 await page.put_back(chat, before)
                 return "Cursor didn't take the Enter, so nothing was sent"
@@ -223,7 +226,7 @@ async def _send(url: str, chat: str, message: str) -> str:
                 await page.js(_REFOCUS)
 
 
-def send(where: str, chat: str, message: str) -> str:
+def send(where: str, chat: str, message: str, urgent: bool = False) -> str:
     """Types the words into that chat's box and sends them, through the debugging port: "" when Cursor took them,
     else why not (and then the box is as it was). The chat must already be open in its window (the bridge's
     open_chat). Never raises: a delivery that fails says why."""
@@ -234,6 +237,6 @@ def send(where: str, chat: str, message: str) -> str:
         return "Cursor's debugging port isn't open for that window"
     try:
         with FOCUS:
-            return asyncio.run(asyncio.wait_for(_send(url, chat, message), WHOLE_SEND))
+            return asyncio.run(asyncio.wait_for(_send(url, chat, message, urgent), WHOLE_SEND))
     except Exception as e:  # a page closed or reloaded mid-send, a timeout, a closed socket: refused, never raised
         return f"Cursor's debugging port: {str(e) or type(e).__name__}"

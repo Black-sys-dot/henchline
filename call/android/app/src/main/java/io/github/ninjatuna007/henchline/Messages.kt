@@ -78,16 +78,19 @@ object Messages {
     }
 
     /** Words to an agent session over Tailscale, within 8 s: "" when an agent took them, else why not. */
-    fun text(context: Context, session: String, words: String): String = try {
+    /** (a note why it wasn't sent, or ""; whether it waits in the agent's queue: one tick until it takes it in).
+     *  urgent: the held send button: the agent's work is interrupted so it gets the words now. */
+    fun text(context: Context, session: String, words: String, id: String = "", urgent: Boolean = false): Pair<String, Boolean> = try {
         val origin = Files.origin(context) ?: throw IllegalStateException("no laptop address set")
         QUICK.newCall(Request.Builder().url("$origin/text").header("Origin", origin)
-            .post(JSONObject().put("text", words).put("session", session).toString()
+            .post(JSONObject().put("text", words).put("session", session).put("id", id).put("urgent", urgent).toString()
                 .toRequestBody("application/json".toMediaType())).build()).execute().use { answer ->
             val body = try { JSONObject(answer.body?.string() ?: "") } catch (_: Exception) { JSONObject() }
-            if (body.has("to")) "" else body.optString("note", "the laptop said ${answer.code}")
+            if (body.has("to")) "" to body.optBoolean("queued")
+            else body.optString("note", "the laptop said ${answer.code}") to false
         }
     } catch (e: Exception) {
-        "Not sent: ${e.message ?: "the laptop couldn't be reached"} (is Tailscale on?)"
+        "Not sent: ${e.message ?: "the laptop couldn't be reached"} (is Tailscale on?)" to false
     }
 
     private val QUICK = okhttp3.OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
@@ -147,9 +150,12 @@ object Messages {
         /** Within the receiver's ten seconds: an unreachable laptop is "not sent", not a hang. */
         private fun send(context: Context, agent: String, session: String, words: String) {
             seen(context, session)  // replying means reading
-            val note = text(context, session, words)
-            Chats.add(context, session, JSONObject().put("from", "you").put("mine", true)
-                .put("text", if (note.isEmpty()) words else "$words  ($note)").put("status", if (note.isEmpty()) "delivered" else "sent"))
+            val id = java.util.UUID.randomUUID().toString()
+            val (note, queued) = text(context, session, words, id)
+            // Queued behind the agent's work: one tick until it takes it in (the chat's poll turns it to two)
+            Chats.add(context, session, JSONObject().put("from", "you").put("mine", true).put("id", id)
+                .put("text", if (note.isEmpty()) words else "$words  ($note)")
+                .put("status", if (note.isEmpty() && !queued) "delivered" else "sent"))
             post(context, agent, session, sending = true)
         }
     }

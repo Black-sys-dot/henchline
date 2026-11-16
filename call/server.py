@@ -39,7 +39,7 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
-from voice import commands, files  # noqa: E402
+from voice import commands, files, pickup  # noqa: E402
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
 from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
@@ -287,11 +287,15 @@ async def from_page(message: dict, ear: Ear) -> str:
     elif "switch" in message:
         await asyncio.get_running_loop().run_in_executor(None, switch, message["switch"])
     elif words := message.get("chat", "").strip():
-        sent, note = await asyncio.get_running_loop().run_in_executor(None, typed, words, message.get("session", ""))
+        session = message.get("session", "")
+        sent, note = await asyncio.get_running_loop().run_in_executor(
+            None, typed, words, session, bool(message.get("urgent")))
         if note:
             return json.dumps({"note": note, "unsent": message.get("id", "")})
+        if sent and watch_pickup(message.get("id", ""), session, words):  # one tick until the agent takes it in
+            return json.dumps({"queued": message.get("id", ""), "session": session})
         if sent:  # typed into the agent: the phone's two ticks, in the chat it was typed in
-            return json.dumps({"delivered": message.get("id", ""), "session": message.get("session", "")})
+            return json.dumps({"delivered": message.get("id", ""), "session": session})
         return ""
     return ""
 
@@ -325,17 +329,53 @@ def switch(session: str) -> None:
         routing.switch_to(target)
 
 
-def typed(words: str, session: str) -> tuple[bool, str]:
+# Messages typed into an agent that logs what it takes in (Claude, Codex), not yet taken in: id → (session, agent,
+# words, when). Taken in: id → (session, when). The phone asks with its working poll (two ticks), and keeps one
+# tick meanwhile (the agent may be busy: the message waits in its queue, the user's catch, 2026-11-16)
+WAITING: dict[str, tuple[str, str, str, float]] = {}
+TAKEN: dict[str, tuple[str, float]] = {}
+PICKUP_LOCK = threading.Lock()  # both, from the loop and executor threads
+
+
+def watch_pickup(mid: str, session: str, words: str) -> bool:
+    """Watched until the agent takes it in, when its agent can say so: whether it is watched."""
+    target = (next((s for s in recent_speakers() if s.session == session), None) if session else last_speaker())
+    if not mid or not target or target.agent not in ("claude", "codex") or not pickup.key(words):
+        return False
+    now = time.time()
+    with PICKUP_LOCK:
+        for old in [k for k, v in WAITING.items() if now - v[3] > 6 * 3600]:  # never taken in: forgotten after 6 h
+            WAITING.pop(old, None)
+        WAITING[mid] = (target.session, target.agent, words, now)
+    return True
+
+
+def taken_in(session: str) -> list[str]:
+    """The phone's messages to that agent it has taken in since: checked now, kept an hour."""
+    now = time.time()
+    with PICKUP_LOCK:
+        mine = [(mid, v) for mid, v in WAITING.items() if v[0] == session]
+    taken = [mid for mid, (s, agent, words, since) in mine if pickup.took(agent, s, words, since)]  # unlocked: slow
+    with PICKUP_LOCK:
+        for mid in taken:
+            WAITING.pop(mid, None)
+            TAKEN[mid] = (session, now)
+        for old in [k for k, v in TAKEN.items() if now - v[1] > 3600]:
+            TAKEN.pop(old, None)
+        return [mid for mid, (s, _) in TAKEN.items() if s == session]
+
+
+def typed(words: str, session: str, urgent: bool = False) -> tuple[bool, str]:
     """A typed line, to the agent whose chat it was typed in; a switch ("switch me to Cursor") works as spoken.
     (typed into an agent, a note why not): a switch is neither."""
     if routing.meaning(words) is routing.Meaning.ROUTING:
         routing.route(words, None)
         return False, ""
-    got, note = to_agent(words, session, Heard.TYPED)
+    got, note = to_agent(words, session, Heard.TYPED, urgent=urgent)
     return bool(got), note
 
 
-def to_agent(words: str, session: str, heard: Heard, switch: bool = True) -> tuple[str, str]:
+def to_agent(words: str, session: str, heard: Heard, switch: bool = True, urgent: bool = False) -> tuple[str, str]:
     """Words for the agent whose chat the phone shows: (who got them, "") or ("", a note why nobody did).
 
     Another agent may have spoken since the phone last heard who is current: the chat shown wins, so the words
@@ -351,7 +391,7 @@ def to_agent(words: str, session: str, heard: Heard, switch: bool = True) -> tup
         current = last_speaker()
         if switch and (not current or current.session != session):
             routing.switch_to(target)
-    if not routing.deliver(words, heard, to=target):  # it says why out loud on the laptop, and keeps it
+    if not routing.deliver(words, heard, to=target, urgent=urgent):  # it says why out loud on the laptop, and keeps it
         return "", "Not sent: " + (routing.why_not() or "the laptop couldn't type it into the agent.")
     got = target or last_speaker()
     return (got.spoken() if got else "your agent"), ""
@@ -442,9 +482,13 @@ async def texted(request: web.Request) -> web.Response:
     # A text always names its agent, never whoever spoke last; only a call's own chat may go to the last speaker
     if not words or not session:
         return web.json_response({"note": "Nothing to send, or no agent named."}, status=400)
+    urgent = bool(message.get("urgent"))
     got, why = await asyncio.get_running_loop().run_in_executor(
-        None, to_agent, " ".join(words.split()), session, Heard.TEXTED, False)
-    return web.json_response({"to": got} if got else {"note": why})
+        None, to_agent, " ".join(words.split()), session, Heard.TEXTED, False, urgent)
+    if not got:
+        return web.json_response({"note": why})
+    queued = watch_pickup(str(message.get("id", "")), session, words)  # one tick until the agent takes it in
+    return web.json_response({"to": got, "queued": queued})
 
 
 async def crew(request: web.Request) -> web.Response:
@@ -1181,7 +1225,11 @@ async def chat_working(request: web.Request) -> web.Response:
         working, doing, label = await loop.run_in_executor(None, claude_activity, target)
     elif target and target.agent == "codex":
         working = await loop.run_in_executor(None, codex_working, target)
-    return web.json_response({"working": working, "doing": doing if working else "", "label": label if working else ""})
+    with PICKUP_LOCK:
+        watched = any(v[0] == session for v in WAITING.values()) or any(v[0] == session for v in TAKEN.values())
+    taken = await loop.run_in_executor(None, taken_in, session) if watched else []
+    return web.json_response({"working": working, "doing": doing if working else "", "label": label if working else "",
+                              "taken": taken})
 
 
 async def crew_stop(request: web.Request) -> web.Response:

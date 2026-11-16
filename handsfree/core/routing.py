@@ -305,7 +305,8 @@ def introduce(speaker: Speaker | None, heard: Heard) -> str:
 
 CALL_NOTE = ("(Henchline, once per call: we're on a phone call, so stay responsive. Say out loud at once that you've "
              "got it and what you'll do, then do it, and while you work tell me in a sentence what you're up to "
-             "every minute or so, until it's done. If I say not to talk, stay quiet; if I hang up, carry on and text "
+             "every minute or so, until it's done. Run anything longer than half a minute in the background, so my next words "
+             "reach you at once. If I say not to talk, stay quiet; if I hang up, carry on and text "
              "me or ring me back when it's done.) ")
 CALLED = (Heard.CALL, Heard.PUSHED, Heard.TYPED)
 
@@ -347,9 +348,14 @@ def refuse(words: str) -> None:
     say(words)
 
 
-def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
+_interrupted: dict[str, float] = {}  # tab → when "send now" last interrupted its agent
+
+
+def deliver(text: str, heard: Heard, to: Speaker | None = None, urgent: bool = False) -> bool:
     """Type the words, tagged with how they were heard, to `to`, or else to the agent that spoke last. When it
-    can't, says why out loud and leaves the reason in why_not(), for the phone to show too."""
+    can't, says why out loud and leaves the reason in why_not(), for the phone to show too. urgent: the phone's
+    "send now" (held send button): the agent's work is interrupted first, so the words reach it at once instead of
+    waiting in its queue (Escape in a terminal; in a Cursor chat, Enter again, which sends a queued message now)."""
     _why.words = ""
     speaker = to or last_speaker()
     message = f"{heard.tag} {introduce(speaker, heard)}{on_a_call(speaker, heard)}{text}"
@@ -366,7 +372,7 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
             # Through Cursor's debugging port: that chat's box by its id, a real Enter, no keys on the desktop and
             # no window raised, so it works with the screen locked. Never then typed with keys: no second copy.
             why = "" if cursor_bridge.open_chat(speaker.where, chat) else "the bridge couldn't open that chat"
-            why = why or cursor_cdp.send(speaker.where, chat, message)
+            why = why or cursor_cdp.send(speaker.where, chat, message, urgent=urgent)
             log(HANDSFREE_LOG, f"sent to cursor chat {chat[:8]} in {speaker.where} (debugging port)" if not why
                 else f"Cursor chat {chat[:8]} in {speaker.where}: {why}; nothing typed with keys")
             if why:
@@ -409,6 +415,12 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
         log(HANDSFREE_LOG, f"no agent running in {tab.address}")
         refuse("I heard you, but the agent I was talking to isn't running any more, so I didn't type it anywhere.")
         return False
+    # Not twice within 2 s: a second Escape opens the agent's history picker (Claude) or edits the last message
+    # (Codex), and the words would land there
+    if urgent and time.time() - _interrupted.get(tab.address, 0.0) > 2 and desktop().terminals.interrupt(tab):
+        _interrupted[tab.address] = time.time()
+        log(HANDSFREE_LOG, f"send now: interrupted {speaker.agent} {tab.address} first")
+        time.sleep(0.5)  # its prompt back before the words
     if not desktop().terminals.type_line(tab, message):
         log(HANDSFREE_LOG, f"typing into {tab.address} failed")
         refuse("I heard you, but that terminal is gone.")

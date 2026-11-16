@@ -570,8 +570,9 @@ class MainActivity : Activity() {
                     // Added at the end, your ticks before it turned blue in place: no redraw, so the chat
                     // doesn't jump (a full redraw shifted it, 2026-11-16)
                     say(from, line.getString("text"), session = current, keep = false)
-                    for ((bubble, words) in myBubbles) bubble.text = stamp(bubble, words, "read")
-                    myBubbles.clear()
+                    // Blue only for what it had taken in: one still waiting in its queue keeps its one tick
+                    for ((bubble, words) in myBubbles) if (bubble !in waitingBubbles) bubble.text = stamp(bubble, words, "read")
+                    myBubbles.removeAll { it.first !in waitingBubbles }
                     main.post { refreshStop() }  // it answered: nothing to stop
                     if (chatScreen.visibility == View.VISIBLE) {
                         if (line.has("tid")) Messages.seen(this, current)
@@ -770,7 +771,7 @@ class MainActivity : Activity() {
         })
         swap()
         send.setOnTouchListener { _, event ->
-            if (!micMode() && voiceNote == null) return@setOnTouchListener false  // a send: the click does it
+            if (!micMode() && voiceNote == null) return@setOnTouchListener sendTouch(event)  // a tap sends; held, sends now
             if (locked) {  // the button is "send" now, for a new tap: the finger that locked it lifting is not one
                 if (event.actionMasked == MotionEvent.ACTION_DOWN) tapped = true
                 if (event.actionMasked == MotionEvent.ACTION_UP && tapped) endVoiceNote(keep = true)
@@ -914,7 +915,81 @@ class MainActivity : Activity() {
         }.start()
     }
 
-    private fun sendTyped() {
+    // Your lines on screen still waiting in the agent's queue (one tick): they don't turn blue with its next answer
+    private val waitingBubbles = java.util.Collections.newSetFromMap(java.util.WeakHashMap<TextView, Boolean>())
+
+    // --- send now: the send button held (the user's design, 2026-11-16) ----------------------------------------
+    // Held, it buzzes, turns amber and pulses: let go, and the message interrupts the agent's work, so it gets the
+    // words at once instead of after what it is doing. Slid left while held: cancelled, the words stay in the box.
+    private var urgentArmed = false
+    private var urgentCancelled = false
+    private var urgentDownX = 0f
+    private var urgentDownY = 0f
+    private var urgentPulse: android.animation.Animator? = null
+    private var urgentTint: android.content.res.ColorStateList? = null
+    private val armUrgent = Runnable {
+        urgentArmed = true
+        urgentTint = send.backgroundTintList
+        send.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS)
+        try {  // a double buzz: unlike a plain hold
+            getSystemService(android.os.Vibrator::class.java)?.vibrate(
+                android.os.VibrationEffect.createWaveform(longArrayOf(0, 35, 70, 35), -1))
+        } catch (_: Exception) {}
+        send.backgroundTintList = android.content.res.ColorStateList.valueOf(0xFFF5A623.toInt())  // amber
+        send.animate().scaleX(1.3f).scaleY(1.3f).setDuration(160).setInterpolator(android.view.animation.OvershootInterpolator()).start()
+        urgentPulse = android.animation.ObjectAnimator.ofPropertyValuesHolder(send,
+            android.animation.PropertyValuesHolder.ofFloat(View.SCALE_X, 1.3f, 1.42f),
+            android.animation.PropertyValuesHolder.ofFloat(View.SCALE_Y, 1.3f, 1.42f)).apply {
+            duration = 420; repeatCount = android.animation.ValueAnimator.INFINITE
+            repeatMode = android.animation.ValueAnimator.REVERSE; startDelay = 160; start()
+        }
+        android.widget.Toast.makeText(this, "Let go: send now, interrupting · Slide left: cancel", android.widget.Toast.LENGTH_SHORT).show()
+    }
+
+    private fun relaxSend() {
+        urgentPulse?.cancel(); urgentPulse = null
+        urgentTint?.let { send.backgroundTintList = it }
+        send.animate().scaleX(1f).scaleY(1f).translationX(0f).setDuration(160).start()
+    }
+
+    /** The send button with words in the box: a tap sends, a hold sends now (see armUrgent). */
+    private fun sendTouch(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> {
+                urgentArmed = false; urgentCancelled = false; urgentDownX = event.rawX; urgentDownY = event.rawY
+                send.postDelayed(armUrgent, 450)
+            }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.rawX - urgentDownX
+                val dy = event.rawY - urgentDownY
+                if (urgentArmed && !urgentCancelled) {
+                    send.translationX = dx.coerceIn(-dp(110).toFloat(), 0f)
+                    // Slid away, left or off the button any way: not sent, the words stay
+                    if (dx < -dp(90) || kotlin.math.abs(dy) > dp(80) || dx > dp(80)) {
+                        urgentCancelled = true
+                        send.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+                        relaxSend()
+                        android.widget.Toast.makeText(this, "Cancelled", android.widget.Toast.LENGTH_SHORT).show()
+                    }
+                } else if (!urgentArmed && (kotlin.math.abs(dx) > dp(24) || kotlin.math.abs(dy) > dp(24))) {
+                    send.removeCallbacks(armUrgent)  // a swipe, not a hold
+                    urgentCancelled = true
+                }
+            }
+            MotionEvent.ACTION_UP -> {
+                send.removeCallbacks(armUrgent)
+                when {
+                    urgentCancelled -> {}
+                    urgentArmed -> { relaxSend(); sendTyped(urgent = true) }
+                    else -> sendTyped()
+                }
+            }
+            MotionEvent.ACTION_CANCEL -> { send.removeCallbacks(armUrgent); if (urgentArmed) relaxSend() }
+        }
+        return true
+    }
+
+    private fun sendTyped(urgent: Boolean = false) {
         val entered = text.text.toString().trim()
         if (entered.isEmpty()) return
         if (entered.startsWith("/") && entered.drop(1) in PHONE_COMMANDS) {  // the phone's own: done here, not typed in
@@ -934,8 +1009,9 @@ class MainActivity : Activity() {
             text.setText("")
             val to = current
             Thread {
-                val note = Messages.text(this, to, words)
-                if (note.isEmpty()) {
+                val (note, queued) = Messages.text(this, to, words, id, urgent)
+                if (note.isEmpty() && queued) main.post { waitingBubbles.add(bubble) }  // one tick until it takes it in
+                if (note.isEmpty() && !queued) {
                     Chats.setStatus(this, to, id, "delivered")
                     main.post { tick(id, "delivered") }  // in place: no redraw under you
                 }
@@ -948,9 +1024,11 @@ class MainActivity : Activity() {
             return
         }
         CallService.Bus.service?.lastSession = current
-        CallService.Bus.service?.send(JSONObject().put("chat", words).put("session", current).put("id", id).toString())
+        CallService.Bus.service?.send(JSONObject().put("chat", words).put("session", current).put("id", id)
+            .put("urgent", urgent).toString())
         Chats.add(this, current, JSONObject().put("from", "you").put("text", words).put("mine", true).put("id", id).put("status", "sent"))
         val bubble = say("you", words, mine = true, session = current, keep = false, status = "sent")
+        waitingBubbles.add(bubble)  // one tick until the laptop says it was taken in
         bubble.tag = "typed-$id"
         sentBubbles[id] = bubble to words
         text.setText("")
@@ -1234,6 +1312,7 @@ class MainActivity : Activity() {
     private fun tick(id: String, status: String) {
         refreshStop()
         val (bubble, words) = sentBubbles[id] ?: return
+        waitingBubbles.remove(bubble)
         bubble.text = stamp(bubble, words, status)
     }
 
@@ -1256,6 +1335,13 @@ class MainActivity : Activity() {
         ask("/chat/working?session=" + android.net.Uri.encode(session), null) { answer ->
             if (session != current || chatScreen.visibility != View.VISIBLE) return@ask
             showWorking(if (answer.isNull("working")) null else answer.optBoolean("working"))
+            answer.optJSONArray("taken")?.let { taken ->  // the agent took these in: two ticks
+                for (i in 0 until taken.length()) {
+                    val id = taken.getString(i)
+                    Chats.setStatus(this, session, id, "delivered")
+                    tick(id, "delivered")
+                }
+            }
             showWorkingBubble(answer.optString("doing"), answer.optString("label"))
         }
     }
