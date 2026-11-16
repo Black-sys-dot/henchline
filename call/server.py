@@ -42,7 +42,7 @@ from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
-                         CALL_PINNED,
+                         CALL_PINNED, CALL_RANG_BACK, PHASE,
                          SPAWNED, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
                          CALL_PORT, CALL_PUSH,
                          CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
@@ -61,6 +61,12 @@ RING_HOSTS = ("ntfy.sh",)  # where Henchline's UnifiedPush addresses may live: t
 RINGER_FRESH = 180  # seconds a ring stays the one a call answers (it rings 30; Answer may wait for an unlock)
 MAX_UPLOAD = 16 * 1024 ** 3  # bytes in one shared file: a long video fits
 KEEP_FREE = 2 * 1024 ** 3  # bytes an upload leaves free on the laptop's disk: past that it is refused
+# A call where it's the user's turn and they say nothing: the agent asks after them, then hangs up and calls back
+# (the user's wish, 2026-11-16: "that's the whole point of a call"). Their turn: nothing playing or waiting to be
+# said, and the agent not working (an agent that gives no sign of working gets the longer wait).
+NUDGE_AFTER, NUDGE_UNSURE = 45.0, 120.0  # seconds of quiet before each nudge
+NUDGES = ("Are you still there? I'm waiting for you.",
+          "Hello? Say something, or I'll hang up and call you back.")
 HANGUP_SAY, HANGUP_MAX = 0.5, 10.0  # a hang-up waits for talkback to finish (its queue empty, nothing playing),
 # at least this long for the goodbye to be queued, and at most this: past it the call ends even mid-sentence
 
@@ -1115,6 +1121,17 @@ def codex_working(target: Speaker) -> bool | None:
     return False
 
 
+def agent_working(target: Speaker) -> bool | None:
+    """Is that agent working right now (Cursor's page or store, Claude's or Codex's log); None: it gives no sign."""
+    if target.in_editor and cursor_bridge.chat_of(target.session):
+        return cursor_bridge.working(cursor_bridge.chat_of(target.session), careful=False)
+    if target.agent == "claude":
+        return claude_working(target)
+    if target.agent == "codex":
+        return codex_working(target)
+    return None
+
+
 async def chat_working(request: web.Request) -> web.Response:
     """Is the agent of the chat on the phone working right now, for its "working…" line (the user's wish,
     2026-11-16: the terminal shows it at once, the phone showed nothing): ?session=; {"working": true | false |
@@ -1315,6 +1332,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                     quiet = Playing.now() is None and not any(SPOOL.glob("*.json"))  # said and nothing waiting
                     if (waited > HANGUP_SAY and quiet) or waited > HANGUP_MAX:
                         CALL_HANGUP.unlink(missing_ok=True)
+                        hung_up_here.append(True)
                         log(HANDSFREE_LOG, "call: hung up from the laptop")
                         await ws.close(message=b"Hung up from the laptop")
                         return
@@ -1332,9 +1350,62 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                     shown = now
                 await asyncio.sleep(STATUS_EVERY)
 
+        call_back: list[Speaker] = []  # set when a quiet call is hung up: rung again once it has ended
+        hung_up_here: list[bool] = []  # the laptop closed it (not the user hanging up first)
+        try:  # this call answers a ring-back: if it goes quiet too, it just ends (one ring-back per chain)
+            answering_ring_back = time.time() - CALL_RANG_BACK.stat().st_mtime < 600
+        except OSError:
+            answering_ring_back = False
+
+        async def nudge() -> None:
+            """The user's turn and silence: asked after, twice, in the agent's own voice; then hung up and rung
+            back (once: a ring-back's own call just ends). Anything of theirs (words, typing) starts it all again;
+            a clip (the nudge's own too) or the agent at work only restarts the wait."""
+            loop = asyncio.get_running_loop()
+
+            def theirs() -> tuple:  # moves with every turn of their speech and every message of theirs delivered
+                return read_json(PHASE).get("at", 0), read_json(SENT).get("at", 0)
+
+            quiet_since, nudged, heard = time.monotonic(), 0, theirs()
+            while not ws.closed:
+                await asyncio.sleep(2)
+                target = last_speaker()
+                now_heard = theirs()
+                if now_heard != heard or phase_now()[0] is not Phase.IDLE:
+                    heard, quiet_since, nudged = now_heard, time.monotonic(), 0
+                    continue
+                if Playing.now() is not None or any(SPOOL.glob("*.json")):
+                    quiet_since = time.monotonic()
+                    continue
+                if target is None or time.monotonic() - quiet_since < NUDGE_AFTER:
+                    continue  # not yet: the agent isn't even asked whether it works (Cursor's page costs a visit)
+                working = await loop.run_in_executor(None, agent_working, target)
+                if working:
+                    quiet_since = time.monotonic()
+                    continue
+                if working is None and time.monotonic() - quiet_since < NUDGE_UNSURE:
+                    continue
+                if nudged < len(NUDGES):
+                    log(HANDSFREE_LOG, f"call: quiet, nudging ({nudged + 1})")
+                    words = NUDGES[nudged]
+                    await loop.run_in_executor(None, lambda: subprocess.run(
+                        [str(routing.SAY), "--agent", target.agent, "--session", target.session, words],
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10))
+                    nudged += 1
+                    quiet_since = time.monotonic()
+                    continue
+                if answering_ring_back:
+                    log(HANDSFREE_LOG, "call: quiet again after a ring-back: hanging up, no ring-back")
+                else:
+                    log(HANDSFREE_LOG, "call: quiet after two nudges: hanging up to call back")
+                    call_back.append(target)
+                CALL_HANGUP.touch()
+                return
+
         sender = asyncio.create_task(to_phone())
         shower = asyncio.create_task(show_status())
         unmuter = asyncio.create_task(keep_unmuted())
+        nudger = asyncio.create_task(nudge())
         heard = 0  # bytes of the phone's mic, for the log
         ear = Ear()
         try:
@@ -1354,7 +1425,14 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             sender.cancel()
             shower.cancel()
             unmuter.cancel()
+            nudger.cancel()
             CALL.unlink(missing_ok=True)  # hands-free and talkback go back to the laptop first
+            for target in call_back if hung_up_here else []:  # hung up for quiet (by us, not them): once
+                CALL_RANG_BACK.touch()
+                subprocess.Popen([sys.executable, str(HERE.parent / "handsfree/handsfree.py"), "ring", "--now", "--as",
+                                  target.session,
+                                  "You went quiet on our call. Calling you back."],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
             blank_words()  # the call's words don't outlast it
             for proc in (mic, speaker):
                 if proc.returncode is None:

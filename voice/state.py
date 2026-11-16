@@ -54,6 +54,7 @@ CALL_PUSH = STATE / "call.push"  # exists while the call page's talk button is h
 CALL_BUTTON_ONLY = STATE / "call.button-only"  # in a noisy place: only the talk button gets in, nothing else
 CALL_RING = STATE / "call.ring-endpoint"  # where Henchline can be rung (its UnifiedPush address): private, never logged
 CALL_RINGER = STATE / "call.ringer"  # who rang the user last (session, when): the call server routes the answer there
+CALL_RANG_BACK = STATE / "call.rang_back"  # a quiet call last rung back then: one per chain
 CALL_HANGUP = STATE / "call.hangup"  # end the phone call once talkback is done: the user said so, or an agent
 VOICE_NOTES = STATE / "voicenotes"
 INTRODUCED = STATE / "introduced"  # a file per agent session already told, once, how phone messages work
@@ -98,6 +99,16 @@ class Sent:
 
     def save(self) -> None:
         write_json(SENT, asdict(self), private=True)
+        if self.session:
+            mark_replied(self.session)  # whatever way it came (desk, phone, call): an answer to its texts
+
+
+def mark_replied(session: str) -> None:
+    """The user wrote to that agent: its texts so far are answered (`handsfree text --until-replied`)."""
+    for path in TEXTS.glob("*.json"):
+        text = read_json(path)
+        if text.get("session") == session and not text.get("replied"):
+            write_json(path, {**text, "replied": True, "replied_at": time.time()}, private=True)
 
 
 HANDSFREE_UNIT = "handsfree.service"

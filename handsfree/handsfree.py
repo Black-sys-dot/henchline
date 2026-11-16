@@ -6,7 +6,7 @@
     handsfree listen [SECONDS]         keep listening that long (default 180)
     handsfree close                    stop listening until the wake word
     handsfree hangup                   end the phone call (call/), once talkback has finished speaking
-    handsfree ring [--done] [--now] [--no-wait] [WHY]
+    handsfree ring [--done] [--now] [--no-wait] [--as SESSION] [WHY]
                                        ring the user's phone (Henchline full-screen, else an ntfy notification
                                        whose Answer opens Henchline) and wait up to a minute for what happened:
                                        exit 0 answered, 2 rang but not answered, 3 declined, 4 answered but the
@@ -15,13 +15,16 @@
                                        read from ~/.config/ptt/ntfy-topic). --now: past the 2-minute limit,
                                        for a ring the user asked for. --no-wait: ring and return. --done: the
                                        ring reports finished work (the henchman's "done" line), rather than
-                                       asking for a decision (its "I need you" line)
-    handsfree text [--until-read MIN] WORDS
+                                       asking for a decision (its "I need you" line). --as SESSION: ring as
+                                       that agent (the call server calling back after a quiet call)
+    handsfree text [--until-read MIN | --until-replied MIN] WORDS
                                        a message to the user's phone, not a call: a notification they can
                                        reply to from the notification itself (the reply comes back tagged
                                        [phone · text]); on a call it goes to the chat.
                                        Prints its id. --until-read MIN: wait that long for the user to read
-                                       it, then ring if they haven't. Exit 0 sent (or read), 1 not
+                                       it, then ring if they haven't; --until-replied MIN: the same, until
+                                       they answer it (any message of theirs to this agent after it). Exit 0
+                                       sent (or read, or answered), 1 not
     handsfree text-status ID            sent, delivered (on the phone) or read (opened, or replied to)
     handsfree send FILE [FILE ...] [WORDS]
                                        show the user files on their phone: in the call's chat while a call
@@ -38,6 +41,7 @@ how it was heard, into the agent that spoke last.
 from __future__ import annotations
 
 import json
+import re
 import secrets
 import signal
 import subprocess
@@ -73,7 +77,7 @@ RING_WAIT = 60  # seconds a ring waits for the answer: it rings for 30, and on a
 RANG = Path.home() / ".local/state/ptt/call.rang"  # when the user was last rung
 
 
-def ring(why: str, now: bool = False, wait: bool = True, done: bool = False) -> int:
+def ring(why: str, now: bool = False, wait: bool = True, done: bool = False, as_session: str = "") -> int:
     """An agent wants to talk: the phone rings (Henchline full-screen, or an ntfy notification whose Answer
     opens Henchline's call), then this waits for what happened. Henchline reports back on a one-time ntfy
     address carried in the ring (it works off Tailscale too):
@@ -94,7 +98,10 @@ def ring(why: str, now: bool = False, wait: bool = True, done: bool = False) -> 
         topic = RING_TOPIC.read_text().strip()
     except OSError:
         topic = ""
-    speaker = caller(register=True)
+    speaker = Speaker.load(SPEAKERS / f"{as_session}.json") if as_session else caller(register=True)
+    if as_session and speaker is None:
+        print(f"no agent {as_session} known to ring as")
+        return 1
     who = (speaker.agent.capitalize() if speaker else "Your crew").encode("ascii", "ignore").decode()  # headers
     reply = f"henchline-{secrets.token_urlsafe(16)}"  # this ring's own, used once
     since = int(time.time()) - 1  # before the push: the phone may say "rang" before the push call returns
@@ -206,13 +213,15 @@ def send(args: list[str]) -> int:
     return 0 if pushed == len(metas) else 2
 
 
-def text(words: str, until_read: float = 0) -> int:
+def text(words: str, until_read: float = 0, until: str = "read") -> int:
     """A message for the user's phone from the agent running this: a notification with a reply box, or a line
     in the call's chat when a call is up. Its id is printed: `handsfree text-status ID` says how far it got,
     the way messaging apps do it (sent, delivered: on the phone, read: the user opened that chat or replied). until_read:
-    minutes to wait for it to be read, and then ring if it wasn't (the user's idea, 2026-11-16)."""
+    minutes to wait for it to be read (until="read"), or answered (until="replied": any message of the user's to
+    this agent after it), and then ring if it wasn't: a text first, a call when it goes unanswered (the user's
+    idea, 2026-11-16)."""
     if not words.strip():
-        print("usage: handsfree text [--until-read MINUTES] WORDS")
+        print("usage: handsfree text [--until-read MINUTES | --until-replied MINUTES] WORDS")
         return 1
     speaker = caller()
     agent, session = (speaker.agent, speaker.session) if speaker else identity()
@@ -235,11 +244,11 @@ def text(words: str, until_read: float = 0) -> int:
             return 0
         deadline = time.time() + until_read * 60
         while time.time() < deadline:
-            if text_status(tid) == "read":
-                print("read")
+            if until == "read" and text_status(tid) == "read" or until == "replied" and text_replied(tid):
+                print(until)
                 return 0
             time.sleep(5)
-        print(f"not read in {until_read:g} min: ringing")
+        print(f"not {until} in {until_read:g} min: ringing")
         return ring(words, now=False, wait=True)
     topic = RING_TOPIC.read_text().strip() if RING_TOPIC.exists() else ""
     if topic and ntfy(topic, f"{agent.capitalize()}", words, {"Tags": "speech_balloon"}):
@@ -247,6 +256,11 @@ def text(words: str, until_read: float = 0) -> int:
         return 0
     print("couldn't reach the phone")
     return 1
+
+
+def text_replied(tid: str) -> bool:
+    """Has the user answered that text: any message of theirs to its agent since (the call server marks it)."""
+    return bool(read_json(TEXTS / f"{tid}.json").get("replied")) if tid else False
 
 
 def text_status(tid: str) -> str:
@@ -409,20 +423,33 @@ def main() -> int:
         now = "--now" in args  # the user asked for this ring: past the limit meant for agents
         wait = "--no-wait" not in args
         done = "--done" in args
-        return ring(" ".join(a for a in args if a not in ("--now", "--no-wait", "--done")), now, wait, done)
+        as_session = ""
+        if "--as" in args:
+            at = args.index("--as")
+            if at + 1 >= len(args):
+                print("--as needs an agent's session")
+                return 1
+            as_session = args[at + 1]
+            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", as_session) or ".." in as_session:
+                print("--as needs an agent's session (letters, digits, - _ .)")
+                return 1
+            args = args[:at] + args[at + 2:]
+        return ring(" ".join(a for a in args if a not in ("--now", "--no-wait", "--done")), now, wait, done, as_session)
     if command == "send":
         return send(args)
     if command == "text":
-        minutes = 0.0
-        if "--until-read" in args:
-            at = args.index("--until-read")
-            try:
-                minutes = float(args[at + 1])
-            except (IndexError, ValueError):
-                print("--until-read needs minutes")
-                return 1
-            args = args[:at] + args[at + 2:]
-        return text(" ".join(args), minutes)
+        minutes, until = 0.0, "read"
+        for flag in ("--until-read", "--until-replied"):
+            if flag in args:
+                at = args.index(flag)
+                try:
+                    minutes = float(args[at + 1])
+                except (IndexError, ValueError):
+                    print(f"{flag} needs minutes")
+                    return 1
+                args = args[:at] + args[at + 2:]
+                until = flag.removeprefix("--until-")
+        return text(" ".join(args), minutes, until)
     if command == "text-status":
         status = text_status(args[0] if args else "")
         down = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "call.service"]).returncode != 0
