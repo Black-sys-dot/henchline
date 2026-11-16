@@ -20,8 +20,8 @@ android {
         applicationId = "io.github.ninjatuna007.henchline"
         minSdk = 29
         targetSdk = 35
-        versionCode = 4
-        versionName = "2.0"
+        versionCode = 5
+        versionName = "2.2"
     }
     signingConfigs {
         if (signing.getProperty("storeFile") != null) create("release") {

@@ -976,6 +976,165 @@ async def chat_thoughts(request: web.Request) -> web.Response:
     return web.json_response({"thoughts": found})
 
 
+STALE = 15 * 60  # seconds without a word in its log: an unfinished turn may be a long quiet command, or killed
+
+
+def backwards(log_file: Path, most: int = 64 * 1024 * 1024):
+    """A log's JSON lines, newest first, read from its end a block at a time (Claude's lines can be megabytes:
+    a request blob each), up to `most` bytes."""
+    with log_file.open("rb") as f:
+        end = f.seek(0, 2)
+        tail, read = b"", 0
+        while end > 0 and read < most:
+            size = min(1024 * 1024, end)
+            end -= size
+            f.seek(end)
+            block = f.read(size) + tail
+            read += size
+            lines = block.split(b"\n")
+            tail = lines[0] if end > 0 else b""  # maybe cut: completed by the next block
+            for raw in reversed(lines[1:] if end > 0 else lines):
+                try:
+                    entry = json.loads(raw)
+                except ValueError:
+                    continue
+                if isinstance(entry, dict):
+                    yield entry
+
+
+def claude_working(target: Speaker) -> bool | None:
+    return claude_activity(target)[0]
+
+
+TOOL_WORDS = {"Read": "reading", "Edit": "editing", "Write": "writing", "MultiEdit": "editing",
+              "NotebookEdit": "editing", "Grep": "searching", "Glob": "looking for files",
+              "WebFetch": "reading the web", "WebSearch": "searching the web", "Agent": "working with a helper",
+              "Task": "working with a helper", "Skill": "using a skill", "TodoWrite": "planning"}
+
+
+def tool_label(call: dict) -> str:
+    """A few words for the phone on what a tool call does: a command's own description ("Run the unit tests"),
+    else the tool's verb and the file's name ("editing routing.py"). Never the command itself, nor a path's
+    folders: the phone shows it as it is."""
+    name = str(call.get("name", ""))
+    given = call.get("input") if isinstance(call.get("input"), dict) else {}
+    if name in ("Bash", "PowerShell"):
+        words = str(given.get("description") or "running a command")
+    else:
+        words = TOOL_WORDS.get(name, f"using {name}" if re.fullmatch(r"[A-Za-z_]{1,30}", name) else "using a tool")
+        path = given.get("file_path") or given.get("notebook_path")
+        if isinstance(path, str) and path and name in TOOL_WORDS:
+            words += " " + Path(path).name
+    words = " ".join(words.split())
+    return words[:60] + ("…" if len(words) > 60 else "")
+
+
+def claude_activity(target: Speaker) -> tuple[bool | None, str, str]:
+    """Is that Claude session in the middle of a turn? Its session log, newest line first, up to the first that
+    tells: a turn's end (Claude writes turn_duration), a reply that ended, an interruption: no; a prompt, a tool
+    call or its result: yes. None when its log isn't found, or mid-turn but quiet for STALE (a long command, or
+    killed: the phone then guesses). A permission prompt or a question to you reads as working: the log can't
+    tell them apart. With it, what it is doing: "tool" (a tool it called is running) or "thinking" (the model is
+    thinking or writing: after your prompt or a tool's result), and for a tool, a few words on it."""
+    uuid = target.session.removeprefix("claude-")
+    if not re.fullmatch(r"[0-9a-f-]{36}", uuid):
+        return None, "", ""
+    logs = list((Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"))
+    if len(logs) != 1:
+        return None, "", ""
+    try:
+        quiet = time.time() - logs[0].stat().st_mtime > STALE
+        for entry in backwards(logs[0]):
+            if entry.get("isSidechain"):
+                continue
+            kind, message = entry.get("type"), entry.get("message")
+            if kind == "system" and entry.get("subtype") in ("turn_duration", "stop_hook_summary"):
+                return False, "", ""
+            if kind == "assistant" and isinstance(message, dict) and message.get("stop_reason"):
+                # A tool call waiting on its result: working (or waiting on you, at a permission prompt or a
+                # question: the log can't tell); after a long silence, not known
+                if message.get("stop_reason") != "tool_use":
+                    return False, "", ""
+                calls = [p for p in message.get("content") or [] if isinstance(p, dict) and p.get("type") == "tool_use"]
+                label = tool_label(calls[0]) if calls else ""
+                if len(calls) > 1:
+                    label += f" (+{len(calls) - 1} more)"
+                return (None, "", "") if quiet else (True, "tool", label)
+            if kind == "user" and isinstance(message, dict) and not entry.get("isMeta") \
+                    and not entry.get("isCompactSummary"):
+                content = message.get("content")
+                text = content if isinstance(content, str) else " ".join(
+                    str(p.get("text", "")) for p in content or [] if isinstance(p, dict) and p.get("type") == "text")
+                if "[Request interrupted by user" in text:
+                    return False, "", ""
+                # A slash command's or the shell mode's own lines are no turn of the model
+                if not text.lstrip().startswith(("<local-command", "<command-name>", "<bash-")):
+                    return (None, "", "") if quiet else (True, "thinking", "")
+    except OSError:
+        return None, "", ""
+    return False, "", ""
+
+
+def codex_working(target: Speaker) -> bool | None:
+    """Is that Codex session working? Its newest session log for that folder (~/.codex/sessions), newest line
+    first: a task started (yes) or completed or aborted (no). None when no log is found, or a task started but
+    the log has been quiet for STALE (a long command, or killed: the phone then guesses). Two sessions in one
+    folder: the newest log speaks for both."""
+    folder = target.session.removeprefix("codex-")
+    found = None
+
+    def mtime(path: Path) -> float:
+        try:
+            return path.stat().st_mtime
+        except OSError:  # gone since it was listed
+            return 0.0
+
+    for log_file in sorted((Path.home() / ".codex/sessions").glob("*/*/*/rollout-*.jsonl"),
+                           key=mtime, reverse=True)[:30]:
+        try:
+            with log_file.open("rb") as f:
+                meta = json.loads(f.readline(1024 * 1024) or b"{}")  # its first line carries all its instructions
+        except (OSError, ValueError):
+            continue
+        cwd = str((meta.get("payload") or {}).get("cwd", "")) if isinstance(meta, dict) else ""
+        if cwd and re.sub(r"[^A-Za-z0-9_.-]+", "_", cwd)[-120:] == folder[-120:]:
+            found = log_file
+            break
+    if found is None:
+        return None
+    try:
+        quiet = time.time() - found.stat().st_mtime > STALE
+        for entry in backwards(found):
+            event = (entry.get("payload") or {}).get("type") if entry.get("type") == "event_msg" else None
+            if event == "task_started":
+                return None if quiet else True
+            if event in ("task_complete", "turn_aborted"):
+                return False
+    except OSError:
+        return None
+    return False
+
+
+async def chat_working(request: web.Request) -> web.Response:
+    """Is the agent of the chat on the phone working right now, for its "working…" line (the user's wish,
+    2026-11-16: the terminal shows it at once, the phone showed nothing): ?session=; {"working": true | false |
+    null, "doing": "tool" | "thinking" | "", "label": "editing routing.py" | ""}, null when that agent gives no
+    sign (the phone then guesses as before). "tool": a tool it called is running, with a few words on it (Claude
+    only; the others say "thinking" throughout)."""
+    trusted(request)
+    session = request.query.get("session", "")
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    loop = asyncio.get_running_loop()
+    working, doing, label = None, "thinking", ""
+    if target and target.in_editor and cursor_bridge.chat_of(session):
+        working = await loop.run_in_executor(None, cursor_bridge.working, cursor_bridge.chat_of(session), False)
+    elif target and target.agent == "claude":
+        working, doing, label = await loop.run_in_executor(None, claude_activity, target)
+    elif target and target.agent == "codex":
+        working = await loop.run_in_executor(None, codex_working, target)
+    return web.json_response({"working": working, "doing": doing if working else "", "label": label if working else ""})
+
+
 async def crew_stop(request: web.Request) -> web.Response:
     """The phone's stop button: the agent stops what it's doing, as Escape in its terminal (or Cursor's own stop for
     an editor chat, through the bridge). {session}"""
@@ -1266,6 +1425,7 @@ def main() -> int:
     app.router.add_post("/crew/end", crew_end)
     app.router.add_post("/crew/stop", crew_stop)
     app.router.add_get("/chat/thoughts", chat_thoughts)
+    app.router.add_get("/chat/working", chat_working)
     app.router.add_get("/crew/models", crew_models)
     app.router.add_post("/crew/model", crew_model)
     app.router.add_get("/files/{secret}/{name}", sent_file)

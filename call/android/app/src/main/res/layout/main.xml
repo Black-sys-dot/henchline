@@ -536,6 +536,28 @@
                 android:contentDescription="Show agents' thinking as thought bubbles" />
         </LinearLayout>
 
+        <!-- While an agent's tool runs: its avatar dancing at the bottom of the chat, or a turning gear -->
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="52dp"
+            android:gravity="center_vertical"
+            android:orientation="horizontal">
+
+            <TextView
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Agents dance while they work"
+                android:textColor="@color/text"
+                android:textSize="16sp" />
+
+            <Switch
+                android:id="@+id/danceSwitch"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:contentDescription="Agents' avatars dance while a tool runs; off: a turning gear" />
+        </LinearLayout>
+
         <LinearLayout
             android:id="@+id/serverRow"
             android:layout_width="match_parent"

@@ -109,17 +109,19 @@ def workspace_of(chat: str) -> str:
     return str(windows[0][1].get("workspace") or "") if len(windows) == 1 else ""
 
 
-def working(chat: str) -> bool:
+def working(chat: str, careful: bool = True) -> bool:
     """Is that chat generating now? By its part of Cursor's page when the port is open (live), else by Cursor's
-    store (written a little late). Its stop on an idle chat would reject all its pending edits instead."""
+    store (written a little late). Careful (before a stop, whose stop on an idle chat would reject all its pending
+    edits): the store must say so twice, a second apart; the phone's "working…" line asks without care."""
     where = workspace_of(chat)
     status = cursor_cdp.chat_status(where, chat) if where else ""
     if status:
         return status == "generating"
-    # Cursor's store, written late: a chat that just finished can still read "generating" there, so it must say
-    # so twice, a second apart
+    # Cursor's store, written late: a chat that just finished can still read "generating" there
     if str(composer(chat).get("status") or "") != "generating":
         return False
+    if not careful:
+        return True
     time.sleep(1)
     return str(composer(chat).get("status") or "") == "generating"
 

@@ -16,6 +16,7 @@ import android.view.View
 import android.view.inputmethod.EditorInfo
 import android.widget.Button
 import android.widget.EditText
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -129,6 +130,10 @@ class MainActivity : Activity() {
 
         findViewById<ImageButton>(R.id.menu).setOnClickListener { show(listScreen) }
         findViewById<View>(R.id.compose).setOnClickListener { newChat() }
+        findViewById<Switch>(R.id.danceSwitch).apply {
+            isChecked = prefs().getBoolean("dance", true)
+            setOnCheckedChangeListener { _, on -> prefs().edit().putBoolean("dance", on).apply(); workingKind = "" }
+        }
         findViewById<Switch>(R.id.thoughtsSwitch).apply {
             isChecked = prefs().getBoolean("thoughts", true)
             setOnCheckedChangeListener { _, on -> prefs().edit().putBoolean("thoughts", on).apply() }
@@ -353,6 +358,8 @@ class MainActivity : Activity() {
         if (chatScreen.visibility == View.VISIBLE) {
             Messages.viewing = current
             showModel(current)  // the model may have been changed on the laptop meanwhile (in Cursor itself)
+            main.removeCallbacks(thoughtsPoll); main.post(thoughtsPoll)  // the laptop asked again, as when it left
+            main.removeCallbacks(workingPoll); main.post(workingPoll)
         }
         showHistory()  // what came meanwhile (a call's lines, a text): from the kept chat, on a call or off it
         showServer()
@@ -383,6 +390,9 @@ class MainActivity : Activity() {
 
     override fun onPause() {
         Messages.viewing = ""  // not on screen: texts get their banner again
+        main.removeCallbacks(thoughtsPoll)  // nobody looking: the laptop isn't asked every few seconds
+        main.removeCallbacks(workingPoll)
+        stopWorkingBubble()  // nor anything left dancing: the next ask brings it back
         CallService.Bus.listener = null  // the call goes on; this screen just stops drawing it
         // Leaving mid-recording: the mic is never left open with nothing on screen. Held, it is dropped (the
         // finger left with the app); locked, it was meant to be sent
@@ -915,13 +925,13 @@ class MainActivity : Activity() {
         talk.visibility = shown
         findViewById<View>(R.id.inputRow).visibility = if (typing) View.VISIBLE else View.GONE
         // Off a call: the kept chat with the last agent, read-only, or the henchman and how to call
-        val readable = on || chat.childCount > 0
+        val readable = on || chat.childCount > (if (workingRow?.parent === chat) 1 else 0)  // not the bubble alone
         chatScroll.visibility = if (readable) View.VISIBLE else View.GONE
         findViewById<View>(R.id.idle).visibility = if (readable) View.GONE else View.VISIBLE
         showClear(CallService.Bus.service?.clear ?: prefs().getBoolean("clear", true))
         if (!on) {
             state.text = subtitle(if (CallService.Bus.connected) "Texting · on a call with ${names[callSession]?.substringBefore(",") ?: "your crew"}"
-                         else "Not on a call")  // texts and voice messages still reach the agent (not "not connected", 2026-11-16)
+                         else "")  // off a call: just the project (the user's wish, 2026-11-16: "not on a call" said nothing)
             showMode("waiting")
         }
         showCrew()
@@ -1005,8 +1015,166 @@ class MainActivity : Activity() {
         bubble.text = stamp(bubble, words, status)
     }
 
-    /** The stop square: shown while the agent works on what you sent, i.e. your last line there was typed into it
-     *  (delivered) and it hasn't answered since (the Claude app's stop button, the user's wish, 2026-11-16). */
+    /** Whether the agent of the chat on screen is working right now, as the laptop sees it (Cursor's page, Claude's
+     *  and Codex's logs): a bubble at the bottom of its chat, as a messaging app shows someone typing (the user's
+     *  wish, 2026-11-16: the terminal shows it at once, the phone showed nothing). null: that agent gives no sign. */
+    private var agentWorking: Boolean? = null
+    private var workingOf = ""  // the chat it belongs to
+    private val workingPoll = object : Runnable {
+        override fun run() {
+            pollWorking()
+            if (chatScreen.visibility == View.VISIBLE) main.postDelayed(this, 2500)
+        }
+    }
+
+    private fun pollWorking() {
+        val session = current
+        if (session.isEmpty() || Files.origin(this) == null) return
+        if (workingOf != session) { workingOf = session; showWorking(null); showWorkingBubble("", "") }
+        ask("/chat/working?session=" + android.net.Uri.encode(session), null) { answer ->
+            if (session != current || chatScreen.visibility != View.VISIBLE) return@ask
+            showWorking(if (answer.isNull("working")) null else answer.optBoolean("working"))
+            showWorkingBubble(answer.optString("doing"), answer.optString("label"))
+        }
+    }
+
+    private var workingRow: View? = null  // the bubble at the bottom of the chat while the agent works
+    private var workingKind = ""  // "thinking", "tool", or none
+
+    /** At the bottom of the chat while the agent works, as a messaging app shows someone typing (the user's wish,
+     *  2026-11-16): three dots bobbing in a bubble while it thinks or writes; its own small avatar beside a
+     *  turning gear while a tool it called runs. Always the last thing in the chat. */
+    private var workingLabel: TextView? = null  // what the tool running is, under the dancing avatar
+
+    /** The bubble gone and its animations with it, while nobody sees the chat (they would run on unseen). */
+    private fun stopWorkingBubble() {
+        agentWorking = null
+        showWorkingBubble("", "")
+        workingKind = ""
+    }
+
+    private fun showWorkingBubble(doing: String, label: String = "") {
+        val want = if (agentWorking == true) doing.ifEmpty { "thinking" } else ""
+        val row = workingRow
+        if (want == workingKind && (want.isEmpty() || row?.parent === chat)) {
+            workingLabel?.text = label.ifEmpty { "at work" }  // the next tool, same dance
+            if (row != null && chat.indexOfChild(row) != chat.childCount - 1) {  // a new line came below it
+                chat.removeView(row); chat.addView(row)
+            }
+            return
+        }
+        row?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+        workingRow = null; workingKind = want; workingLabel = null
+        if (want.isEmpty()) return
+        val made = if (want == "tool") gearRow(label) else dotsRow()
+        workingRow = made
+        chat.addView(made, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+    }
+
+    private fun workingBubble(): LinearLayout = LinearLayout(this).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        setPadding(dp(16), dp(12), dp(16), dp(12))
+        clipToPadding = false; clipChildren = false  // what bobs and hops shows in full (the dots' tops were cut)
+        background = GradientDrawable().apply { setColor(getColor(R.color.surface_high)); cornerRadius = dp(20).toFloat() }
+    }
+
+    /** A property animation that runs while the view is on screen: started when it is attached, ended when it is
+     *  detached (keeping the bubble last moves it, and a view animation would stop for good). */
+    private fun whileShown(view: View, make: () -> android.animation.Animator) {
+        var running: android.animation.Animator? = null
+        view.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) { running?.cancel(); running = make().also { it.start() } }
+            override fun onViewDetachedFromWindow(v: View) { running?.cancel(); running = null }
+        })
+    }
+
+    private fun bob(view: View, delay: Long, height: Float) = whileShown(view) {
+        android.animation.ObjectAnimator.ofFloat(view, View.TRANSLATION_Y, 0f, -height, 0f).apply {
+            duration = 1800; startDelay = delay; repeatCount = android.animation.ValueAnimator.INFINITE
+            interpolator = android.view.animation.AccelerateDecelerateInterpolator()  // soft, not jittery (the user)
+        }
+    }
+
+    private fun dotsRow(): View {
+        val bubble = workingBubble()
+        for (i in 0 until 3) {
+            val dot = View(this).apply {
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(getColor(R.color.muted)) }
+            }
+            bubble.addView(dot, LinearLayout.LayoutParams(dp(8), dp(8)).apply { if (i > 0) marginStart = dp(5) })
+            bob(dot, i * 300L, dp(4).toFloat())
+        }
+        return LinearLayout(this).apply {
+            setPadding(dp(4), dp(8), 0, dp(4)); addView(bubble)
+            contentDescription = "${names[current]?.substringBefore(",") ?: "The agent"} is thinking"
+        }
+    }
+
+    /** While a tool it called runs: its avatar dancing (it rocks, bounces and now and then spins, sparks flying),
+     *  or, with "Agents dance while they work" off, beside a turning gear; with a few words on the tool. */
+    private fun gearRow(label: String): View {
+        val bubble = workingBubble()
+        val avatar = ImageView(this).apply { setImageResource(avatarOf(current)) }
+        bubble.addView(avatar, LinearLayout.LayoutParams(dp(30), dp(30)))
+        if (prefs().getBoolean("dance", true)) {
+            whileShown(avatar) {
+                val rock = android.animation.ObjectAnimator.ofFloat(avatar, View.ROTATION, 0f, -8f, 8f, -8f, 8f, 0f, 360f)
+                    .apply { duration = 6000; interpolator = android.view.animation.AccelerateDecelerateInterpolator() }
+                val hop = android.animation.ObjectAnimator.ofFloat(avatar, View.TRANSLATION_Y, 0f, -dp(3).toFloat(), 0f,
+                    -dp(3).toFloat(), 0f, -dp(7).toFloat(), 0f)
+                    .apply { duration = 6000; interpolator = android.view.animation.AccelerateDecelerateInterpolator() }
+                android.animation.AnimatorSet().apply {
+                    playTogether(rock, hop)
+                    addListener(object : android.animation.AnimatorListenerAdapter() {
+                        private var cancelled = false
+                        override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
+                        override fun onAnimationEnd(animation: android.animation.Animator) { if (!cancelled) start() }
+                    })
+                }
+            }
+            for ((i, spark) in listOf("✦", "✧", "✦").withIndex()) {
+                val star = TextView(this).apply { text = spark; textSize = 11f; setTextColor(getColor(R.color.cyan)) }
+                bubble.addView(star, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(if (i == 0) 8 else 3) })
+                whileShown(star) {
+                    android.animation.ObjectAnimator.ofFloat(star, View.ALPHA, 0.2f, 1f, 0.2f).apply {
+                        duration = 2400; startDelay = i * 600L; repeatCount = android.animation.ValueAnimator.INFINITE
+                    }
+                }
+                bob(star, i * 600L, dp(3).toFloat())
+            }
+        } else {
+            val gear = TextView(this).apply { text = "⚙"; textSize = 20f; setTextColor(getColor(R.color.cyan)); gravity = Gravity.CENTER }
+            bubble.addView(gear, LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(8) })
+            whileShown(gear) {
+                android.animation.ObjectAnimator.ofFloat(gear, View.ROTATION, 0f, 360f).apply {
+                    duration = 3600; interpolator = android.view.animation.LinearInterpolator()
+                    repeatCount = android.animation.ValueAnimator.INFINITE
+                }
+            }
+        }
+        val words = TextView(this).apply {
+            text = label.ifEmpty { "at work" }; textSize = 13f; setTextColor(getColor(R.color.muted))
+            maxLines = 2; ellipsize = android.text.TextUtils.TruncateAt.END
+            maxWidth = (resources.displayMetrics.widthPixels * 0.55).toInt()
+        }
+        workingLabel = words
+        bubble.addView(words, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT).apply { marginStart = dp(8) })
+        return LinearLayout(this).apply {
+            setPadding(dp(4), dp(8), 0, dp(4)); addView(bubble)
+            contentDescription = "${names[current]?.substringBefore(",") ?: "The agent"} is running a tool"
+        }
+    }
+
+    private fun showWorking(working: Boolean?) {
+        if (working == agentWorking) return
+        agentWorking = working
+        refreshStop()
+    }
+
+    private val shownThoughts = HashSet<String>()  // the thoughts on screen (session, time): each shown once
     private var thoughtsSince = ""  // the newest thought shown, for the next ask
     private var thoughtsOf = ""  // the chat they belong to
     private val thoughtsPoll = object : Runnable {
@@ -1021,6 +1189,7 @@ class MainActivity : Activity() {
     private fun pollThoughts() {
         val session = current
         if (!session.matches(Regex("(cursor|claude)-[0-9a-f-]{36}")) || !prefs().getBoolean("thoughts", true)) return
+        if (Files.origin(this) == null) return
         if (thoughtsOf != session) {
             thoughtsOf = session
             val at = Chats.last(this, session)?.optLong("at") ?: 0L
@@ -1033,6 +1202,9 @@ class MainActivity : Activity() {
             for (i in 0 until list.length()) {
                 val thought = list.getJSONObject(i)
                 thoughtsSince = maxOf(thoughtsSince, thought.optString("at"))
+                // Reopening a chat asks again from its last kept line, and two asks can cross: never twice (the
+                // user saw them repeated, 2026-11-16)
+                if (!shownThoughts.add(session + " " + thought.optString("at"))) continue
                 thoughtBubble(thought.optString("text"))
             }
         }
@@ -1074,9 +1246,13 @@ class MainActivity : Activity() {
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
+    /** The stop square: shown while the agent works, by the laptop's word when that agent gives one, else while
+     *  your last line there was typed into it (delivered) and it hasn't answered since (the user's wish,
+     *  2026-11-16). */
     private fun refreshStop() {
         val last = if (current.isEmpty()) null else Chats.last(this, current)
-        val working = last != null && last.optBoolean("mine") && last.optString("status") == "delivered"
+        // The laptop's word when the agent gives one; else a guess: your last line delivered and no answer yet
+        val working = agentWorking ?: (last != null && last.optBoolean("mine") && last.optString("status") == "delivered")
         findViewById<View>(R.id.stop).visibility = if (working) View.VISIBLE else View.GONE
     }
 
@@ -1355,6 +1531,8 @@ class MainActivity : Activity() {
         if (screen === chatScreen) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
         main.removeCallbacks(thoughtsPoll)
         if (screen === chatScreen) { thoughtsOf = ""; main.post(thoughtsPoll) }
+        main.removeCallbacks(workingPoll)
+        if (screen === chatScreen) { workingOf = ""; main.post(workingPoll) } else stopWorkingBubble()
         Messages.viewing = if (screen === chatScreen) current else ""
         if (screen !== chatScreen) { sentBubbles.clear(); myBubbles.clear() }  // only bubbles on screen are kept
     }
@@ -1625,6 +1803,7 @@ class MainActivity : Activity() {
     /** The current agent's kept chat, from the start: on opening the app, and on switching agents. */
     private fun showHistory() {
         chat.removeAllViews()
+        shownThoughts.clear()  // they went with the views: shown again when asked again
         lastDay = ""
         myBubbles.clear()
         sentBubbles.clear()  // their views are gone with the old rows
@@ -1782,18 +1961,45 @@ class MainActivity : Activity() {
         soundButton = null
     }
 
-    /** A picture whole, over the call screen; the button saves it and opens it in another app. */
+    /** A picture whole, as a messaging app's viewer (the user's wish, 2026-11-16: it was a grey box): black, the
+     *  whole screen, pinch and drag to look into it, double tap to zoom; a slim bar on top with back, its name and
+     *  Save (saves it and opens it in another app), a tap hiding or showing the bar. */
     private fun showPicture(url: String, name: String, type: String) {
-        val picture = ImageView(this).apply { adjustViewBounds = true; setBackgroundColor(0xFF000000.toInt()) }
-        val dialog = AlertDialog.Builder(this)
-            .setTitle(name)
-            .setView(picture)
-            .setPositiveButton("Save and open") { _, _ -> Files.open(this, url, name, type) { say("", it, note = true) } }
-            .setNegativeButton("Close", null)
-            .show()
-        Thread {
-            val bitmap = Files.preview(this, url, resources.displayMetrics.widthPixels)
-            main.post { if (dialog.isShowing && bitmap != null) picture.setImageBitmap(bitmap) }
+        val dialog = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
+        val screen = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
+        val picture = ZoomImage(this)
+        screen.addView(picture, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        val waiting = android.widget.ProgressBar(this)
+        screen.addView(waiting, FrameLayout.LayoutParams(dp(48), dp(48), Gravity.CENTER))
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(4), dp(28), dp(12), dp(8))
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0xCC000000.toInt(), 0x00000000))
+        }
+        bar.addView(ImageView(this).apply {
+            setImageResource(R.drawable.ic_back); setColorFilter(0xFFFFFFFF.toInt())
+            setPadding(dp(12), dp(12), dp(12), dp(12)); contentDescription = "Back"
+            setOnClickListener { dialog.dismiss() }
+        }, LinearLayout.LayoutParams(dp(48), dp(48)))
+        bar.addView(TextView(this).apply {
+            text = name; setTextColor(0xFFFFFFFF.toInt()); textSize = 16f; maxLines = 1
+            ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        bar.addView(TextView(this).apply {
+            text = "Save"; setTextColor(getColor(R.color.cyan)); textSize = 16f; setPadding(dp(12), dp(10), dp(4), dp(10))
+            setOnClickListener { Files.open(this@MainActivity, url, name, type) { say("", it, note = true) } }
+        })
+        screen.addView(bar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP))
+        picture.onTap = { bar.visibility = if (bar.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
+        dialog.setContentView(screen)
+        dialog.show()
+        Thread {  // twice the screen's width: room to zoom before it blurs
+            val bitmap = Files.preview(this, url, resources.displayMetrics.widthPixels * 2)
+            main.post {
+                if (!dialog.isShowing) return@post
+                waiting.visibility = View.GONE
+                if (bitmap != null) picture.setImageBitmap(bitmap) else say("", "Couldn't load $name.", note = true)
+            }
         }.start()
     }
 

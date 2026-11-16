@@ -116,8 +116,13 @@ object Files {
             BitmapFactory.decodeFile(cached.path, bounds)
             var sample = 1
             while (bounds.outWidth / (sample * 2) >= widthPx) sample *= 2
+            // Not only by width: a tall page (1920 × 20000) would decode to 150 MB, more than a screen can draw
+            while (bounds.outWidth / sample > 4096 || bounds.outHeight / sample > 4096 ||
+                   (bounds.outWidth.toLong() / sample) * (bounds.outHeight.toLong() / sample) > 16_000_000L) sample *= 2
             return BitmapFactory.decodeFile(cached.path, BitmapFactory.Options().apply { inSampleSize = sample })
         } catch (_: Exception) {
+            return null
+        } catch (_: OutOfMemoryError) {  // a picture too big even so: not shown, never a crash
             return null
         }
     }
