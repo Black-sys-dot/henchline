@@ -607,10 +607,19 @@ def model_in_use(target: Speaker) -> str:
             for log_file in (Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"):
                 with log_file.open("rb") as f:
                     f.seek(max(0, log_file.stat().st_size - 200_000))
-                    found = re.findall(rb'"model":"(claude-[a-z0-9-]+)"', f.read())
-                if found:  # claude-opus-5-5 → Opus 5.5
-                    family, *version = found[-1].decode().removeprefix("claude-").split("-")
-                    return f"{family.capitalize()} {'.'.join(version)}".strip()
+                    tail = f.read().splitlines()
+                for raw in reversed(tail):  # the conversation's own last answer: not a side call (titles, subagents)
+                    try:
+                        entry = json.loads(raw)
+                    except ValueError:
+                        continue
+                    model = (entry.get("message") or {}).get("model", "") if isinstance(entry, dict) else ""
+                    main_answer = entry.get("type") == "assistant" and not entry.get("isSidechain")
+                    if main_answer and model.startswith("claude-"):
+                        # claude-opus-5-5 → Opus 5.5; a dated id's date (…-20250929) left out
+                        family, *version = [p for p in model.removeprefix("claude-").split("-")
+                                            if not re.fullmatch(r"\d{8}", p)]
+                        return f"{family.capitalize()} {'.'.join(version)}".strip()
         return ""
     if target.tab.owner != tmux.OWNER:
         return ""
@@ -649,7 +658,8 @@ def switch_model(target: Speaker, model: dict) -> str:
         if before is None or text.count(line) != 1:
             return (f"Switched, but Claude also made {model['name']} your default for new sessions "
                     "(change it with /model).")
-        aside = settings.with_name(settings.name + ".henchline")  # written aside, then swapped in: never half a file
+        # Written aside (a name of its own), then swapped in: never half a file, never another restore's
+        aside = settings.with_name(f"{settings.name}.henchline-{os.getpid()}-{time.monotonic_ns()}")
         aside.write_text(text.replace(line, f'"model": {json.dumps(before)}'))
         os.chmod(aside, settings.stat().st_mode & 0o777)
         aside.replace(settings)

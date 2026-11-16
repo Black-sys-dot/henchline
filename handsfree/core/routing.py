@@ -294,7 +294,8 @@ INTRO = ("(Henchline, said once: I'm writing from my phone and can't see this sc
 def introduce(speaker: Speaker | None, heard: Heard) -> str:
     """The first phone message an agent session gets says how to answer it (the user's idea, 2026-11-16: a Cursor
     CLI started from the phone answered only in its terminal, not knowing the phone can't see it)."""
-    if speaker is None or heard not in PHONE or "/" in speaker.session or (INTRODUCED / speaker.session).exists():
+    if speaker is None or heard not in PHONE or not speaker.session or "/" in speaker.session \
+            or (INTRODUCED / speaker.session).exists():
         return ""
     return INTRO
 
