@@ -9,6 +9,7 @@ WithTmux puts this in front of the desktop's own terminals: tmux panes here, eve
 from __future__ import annotations
 
 import json
+import re
 import os
 import shutil
 import subprocess
@@ -145,6 +146,24 @@ def available() -> list[str]:
     return [agent for agent, command in COMMANDS.items() if shutil.which(command[0])]
 
 
+# Another agent's marks: a tmux server first started by an agent (a Cursor chat's terminal) hands them to every new
+# window, and a Claude started there introduced itself as that Cursor chat's workspace (smarc2 for sonar_rig, the
+# user's catch, 2026-11-16)
+INHERITED = re.compile(r"^(CURSOR_(?!API_KEY$)|__CURSOR|AGENT_TRANSCRIPTS$|CLAUDECODE$|CLAUDE_CODE_ENTRYPOINT$|"
+                       r"CLAUDE_CODE_SESSION_ID$|CODEX_THREAD_ID$|CODEX_SANDBOX|TALKBACK_AGENT$)")
+
+
+def clean_env() -> list[str]:
+    """`env -u NAME …` for each agent's mark in tmux's own environment or ours: the new agent starts as itself."""
+    names = {name for name in os.environ if INHERITED.match(name)}
+    for line in out("show-environment", "-g").splitlines():
+        name = line.split("=", 1)[0].lstrip("-")
+        if INHERITED.match(name):
+            names.add(name)
+    env = shutil.which("env")
+    return [env, *(f"-u{name}" for name in sorted(names))] if env and names else []
+
+
 def start(agent: str, folder: Path, model: str = "", params: dict | None = None) -> Tab:
     """A new agent in its own tmux window in that folder; its tab, or an empty one when it couldn't start."""
     command = COMMANDS.get(agent, [""])
@@ -153,7 +172,7 @@ def start(agent: str, folder: Path, model: str = "", params: dict | None = None)
         return Tab()
     chosen = model_args(agent, model, params or {}) if model else []  # checked by the caller
     where = ["-c", str(folder), "-n", f"{agent}:{folder.name}", "-P", "-F", "#{pane_id}",
-             program, *command[1:], *chosen]
+             *clean_env(), program, *command[1:], *chosen]
     running = tmux("has-session", "-t", SESSION)
     if running and running.returncode == 0:
         pane = out("new-window", "-d", "-t", f"{SESSION}:", *where)

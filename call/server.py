@@ -42,7 +42,7 @@ from routing import Heard  # noqa: E402
 from voice import commands, files  # noqa: E402
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
-from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
+from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
                          CALL_PINNED, CALL_RANG_BACK, CALL_TOLD, PHASE,
                          SPAWNED, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
                          CALL_PORT, CALL_PUSH,
@@ -312,7 +312,8 @@ def agents() -> dict:
                "spawned": s.tab.owner == tmux.OWNER and s.tab.address in started}
               for s in recent_speakers() if routing.reachable(s)]
     return {"agents": listed,
-            "current": current.session if current else ""}
+            "current": current.session if current else "",
+            "renamed": read_json(RENAMED)}  # chats the phone moves to an agent's own key
 
 
 def switch(session: str) -> None:

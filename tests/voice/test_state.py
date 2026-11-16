@@ -50,3 +50,50 @@ class SentWords(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class FoundThenHeard(unittest.TestCase):
+    """An agent started from a new chat is found running under one key, then speaks or texts under its own."""
+
+    def setUp(self):
+        state.SPEAKERS.mkdir(parents=True, exist_ok=True)
+        for path in state.SPEAKERS.glob("*.json"):
+            path.unlink()
+        state.RENAMED.unlink(missing_ok=True)
+
+    def test_the_found_record_goes_and_the_phone_is_told(self):
+        tab = state.Tab("tmux", "%1")
+        state.Speaker("claude-_home_me_sonar_rig", "claude", "sonar_rig", tab).save(state.SPEAKERS / "claude-_home_me_sonar_rig.json")
+        heard = state.Speaker("claude-0c84", "claude", "sonar_rig", tab)
+        heard.save(state.SPEAKERS / "claude-0c84.json")
+        heard.replaces_found()
+        self.assertEqual(sorted(p.stem for p in state.SPEAKERS.glob("*.json")), ["claude-0c84"])
+        self.assertEqual(state.read_json(state.RENAMED), {"claude-_home_me_sonar_rig": "claude-0c84"})
+
+    def test_a_chain_of_renames_points_at_the_newest(self):
+        state.renamed("a", "b")
+        state.renamed("b", "c")
+        self.assertEqual(state.read_json(state.RENAMED), {"a": "c", "b": "c"})
+
+    def test_a_new_session_in_that_tab_is_not_a_rename(self):
+        tab = state.Tab("tmux", "%1")
+        state.Speaker("claude-11111111-2222-3333-4444-555555555555", "claude", "x", tab).save(
+            state.SPEAKERS / "claude-11111111-2222-3333-4444-555555555555.json")
+        heard = state.Speaker("claude-0c84", "claude", "x", tab)
+        heard.save(state.SPEAKERS / "claude-0c84.json")
+        heard.replaces_found()
+        self.assertEqual(state.read_json(state.RENAMED), {})  # the old record goes, its chat stays its own
+
+    def test_a_found_key_in_use_again_is_no_longer_renamed(self):
+        state.renamed("claude-_home_me_sonar_rig", "claude-0c84")
+        state.Speaker("claude-_home_me_sonar_rig", "claude", "sonar_rig").save(
+            state.SPEAKERS / "claude-_home_me_sonar_rig.json")
+        self.assertEqual(state.read_json(state.RENAMED), {})
+
+    def test_another_tab_stays(self):
+        state.Speaker("claude-other", "claude", "x", state.Tab("tmux", "%2")).save(state.SPEAKERS / "claude-other.json")
+        heard = state.Speaker("claude-0c84", "claude", "y", state.Tab("tmux", "%1"))
+        heard.save(state.SPEAKERS / "claude-0c84.json")
+        heard.replaces_found()
+        self.assertTrue((state.SPEAKERS / "claude-other.json").exists())
+        self.assertEqual(state.read_json(state.RENAMED), {})

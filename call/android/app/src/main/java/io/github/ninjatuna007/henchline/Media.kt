@@ -107,6 +107,18 @@ object Media {
         for (address in gone - still) Files.cacheFile(context, address).delete()
     }
 
+    /** A chat moved to the agent's own key: its saved files go with it. */
+    @Synchronized
+    fun rename(context: Context, old: String, new: String) {
+        val all = read(context)
+        for (key in all.keys().asSequence().toList()) {
+            val sessions = all.getJSONObject(key).getJSONArray("sessions")
+            val kept = (0 until sessions.length()).map { sessions.getString(it) }.map { if (it == old) new else it }.distinct()
+            all.getJSONObject(key).put("sessions", JSONArray(kept))
+        }
+        write(context, all)
+    }
+
     /** The chat cleared: it no longer counts for any saved copy (the copies themselves stay unless deleted). */
     @Synchronized
     fun forget(context: Context, session: String) {

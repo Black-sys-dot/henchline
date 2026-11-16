@@ -84,6 +84,24 @@ object Chats {
         sweep(context)
     }
 
+    /** A chat moved to the agent's own key (it was found running before it spoke, under another): its lines join
+     *  any already there, in time order. Whether there was anything to move. */
+    @Synchronized
+    fun merge(context: Context, old: String, new: String): Boolean {
+        val from = file(context, old)
+        if (old.isEmpty() || new.isEmpty() || old == new || !from.exists()) return false
+        val to = file(context, new)
+        val lines = (from.readLines() + (if (to.exists()) to.readLines() else emptyList())).filter { it.isNotBlank() }
+            .sortedBy { try { JSONObject(it).optLong("at") } catch (_: Exception) { 0L } }
+        val aside = File(to.path + ".new")
+        aside.writeText(lines.joinToString("\n", postfix = "\n"))
+        aside.renameTo(to)
+        from.delete()
+        lasts.remove(old); lasts.remove(new)
+        lastAt[new] = maxOf(lastAt[new] ?: 0L, lastAt.remove(old) ?: 0L)
+        return true
+    }
+
     /** Lines deleted on this phone ("Delete for me"), by when they were added: the removed ones. */
     @Synchronized
     fun remove(context: Context, session: String, ats: Set<Long>): List<JSONObject> {

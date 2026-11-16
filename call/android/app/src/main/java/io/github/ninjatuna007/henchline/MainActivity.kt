@@ -619,6 +619,7 @@ class MainActivity : Activity() {
 
     /** The agents a call can switch to; the chat shows the current one's lines. */
     private fun showAgents(status: JSONObject) {
+        followRenames(status)
         val list = status.getJSONArray("agents")
         names = (0 until list.length()).associate {
             list.getJSONObject(it).getString("session") to list.getJSONObject(it).getString("name")
@@ -668,6 +669,11 @@ class MainActivity : Activity() {
             val agent = session.substringBefore("-").replaceFirstChar { it.uppercase() }
             Chat(session, agent, "not on the crew list", Chats.last(this, session), "")  // its key can't say its folder
         }
+        // One that texted since the crew was last asked: likely an agent just started from a new chat, under its own
+        // key now (the user's catch, 2026-11-16: "not on the crew list" until the app was reopened): asked at once,
+        // which also moves the new chat to it
+        val strays = chats.filter { it.project == "not on the crew list" }
+        if (strays.any { (it.last?.optLong("at") ?: 0L) > crewAsked }) { crewAsked = 0L; refreshCrewQuietly() }
         if (query.isNotEmpty()) {
             val q = query.lowercase()
             val byName = chats.filter { q in it.project.lowercase() || q in it.agent.lowercase() }
@@ -1841,7 +1847,7 @@ class MainActivity : Activity() {
             val found = try {
                 Files.client.newCall(okhttp3.Request.Builder().url("$origin/crew").header("Origin", origin)
                     .post(ByteArray(0).toRequestBody(null)).build())
-                    .execute().use { org.json.JSONObject(it.body?.string() ?: "{}").optJSONArray("agents") }
+                    .execute().use { org.json.JSONObject(it.body?.string() ?: "{}") }
             } catch (_: Exception) { null }
             main.post {
                 refresh.isRefreshing = false
@@ -1849,8 +1855,11 @@ class MainActivity : Activity() {
                     android.widget.Toast.makeText(this, "Couldn't reach the laptop (is Tailscale on?)", android.widget.Toast.LENGTH_SHORT).show()
                     return@post
                 }
-                names = (0 until found.length()).associate { found.getJSONObject(it).getString("session") to found.getJSONObject(it).getString("name") }
-                prefs().edit().putString("crew", found.toString()).apply()
+                if (!found.has("agents")) {
+                    android.widget.Toast.makeText(this, "Couldn't reach the laptop (is Tailscale on?)", android.widget.Toast.LENGTH_SHORT).show()
+                    return@post
+                }
+                takeCrew(found)
                 showCrew()
             }
         }.start()
@@ -1870,7 +1879,24 @@ class MainActivity : Activity() {
     }
 
     /** The crew as the laptop listed it: names, and which agents were started from here (those can be ended). */
+    /** An agent started from a new chat speaks first under its own key, not the one it was found under: its chat
+     *  here, with the open chat and the call, follows it (the user's catch, 2026-11-16: the reply came in another
+     *  chat). */
+    private fun followRenames(answer: JSONObject) {
+        val moves = answer.optJSONObject("renamed") ?: return
+        var moved = false
+        for (old in moves.keys()) {
+            val new = moves.optString(old)
+            if (new.isEmpty() || new == old) continue
+            if (Chats.merge(this, old, new)) { Media.rename(this, old, new); moved = true }
+            if (current == old) { current = new; prefs().edit().putString("current", new).apply(); moved = true }
+            if (callSession == old) callSession = new
+        }
+        if (moved && chatScreen.visibility == View.VISIBLE) showHistory()
+    }
+
     private fun takeCrew(answer: JSONObject) {
+        followRenames(answer)
         val found = answer.optJSONArray("agents") ?: return
         names = (0 until found.length()).associate { found.getJSONObject(it).getString("session") to found.getJSONObject(it).getString("name") }
         prefs().edit().putString("crew", found.toString()).apply()

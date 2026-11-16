@@ -37,6 +37,7 @@ WORKER_PID = STATE / "talkback.pid"
 PLAYING = STATE / "talkback.playing"
 LAST = STATE / "talkback.last"  # the agent a hands-free reply goes to
 SPEAKERS = STATE / "talkback.speakers"  # every agent heard lately, one file each
+RENAMED = STATE / "talkback.renamed.json"  # {old key: new key}: an agent found running, then heard under its own
 TALKBACK_LOG = STATE / "talkback.log"
 
 # Hands-free
@@ -290,6 +291,8 @@ class Speaker:
 
     def save(self, path: Path) -> None:
         write_json(path, {**asdict(self), "tab": [self.tab.owner, self.tab.address]})
+        if path.parent == SPEAKERS:  # known under this key again (a found key comes back for the next agent there)
+            forget_renamed(self.session)
 
     @property
     def in_editor(self) -> bool:
@@ -307,6 +310,11 @@ class Speaker:
         if not (pinned and pinned != self.session and in_call()):
             self.save(LAST)
         self.save(SPEAKERS / f"{self.session}.json")
+        self.replaces_found()
+
+    def replaces_found(self) -> None:
+        """A record of the same agent in the same tab (or, in the Cursor editor, the same workspace) under another
+        key goes: found running before it spoke or texted (routing.discover)."""
         for path in SPEAKERS.glob("*.json"):
             other = Speaker.load(path)
             if not other or other.session == self.session or other.agent != self.agent:
@@ -318,6 +326,11 @@ class Speaker:
                          and not CHAT_KEY.search(other.session))
             if in_tab or in_editor:
                 path.unlink(missing_ok=True)
+                # The phone's chat with it follows it to its own key: only from a key it was found under (its
+                # folder, never another session's own id: a new session in that tab is another conversation), in
+                # the same folder (a tmux pane id reused after a restart is someone else)
+                if in_tab and not CHAT_KEY.search(other.session) and other.where == self.where:
+                    renamed(other.session, self.session)
 
     def spoken(self) -> str:
         """How the agent is named out loud: "Claude, in pc diagnostics"."""
@@ -359,6 +372,22 @@ class Playing:
 
 def last_speaker() -> Speaker | None:
     return Speaker.load(LAST)
+
+
+def renamed(old: str, new: str) -> None:
+    """An agent known as `old` (found running, before it spoke) is `new` now: kept for the phone, which moves its
+    chat across (the user's catch, 2026-11-16: a new chat's replies came in another chat). The newest 100."""
+    data = {k: (new if v == old else v) for k, v in read_json(RENAMED).items() if k != new}
+    data[old] = new
+    write_json(RENAMED, dict(list(data.items())[-100:]))
+
+
+def forget_renamed(key: str) -> None:
+    """A key in use again: no longer a rename to follow (the next agent found in that folder gets the same key)."""
+    data = read_json(RENAMED)
+    if key in data:
+        del data[key]
+        write_json(RENAMED, data)
 
 
 def recent_speakers() -> list[Speaker]:

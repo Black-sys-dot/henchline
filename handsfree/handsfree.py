@@ -158,6 +158,7 @@ def caller(register: bool = False) -> Speaker | None:
     from voice.desktop import current as desktop
     speaker = Speaker(session, agent, agent_where(), desktop().terminals.tab_of_caller())
     speaker.save(SPEAKERS / f"{session}.json")
+    speaker.replaces_found()  # found running from a new chat before it texted: that chat follows it
     return speaker
 
 
