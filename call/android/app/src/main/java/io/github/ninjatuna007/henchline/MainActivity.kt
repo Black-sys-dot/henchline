@@ -1257,8 +1257,9 @@ class MainActivity : Activity() {
         ask("/crew/models?session=" + android.net.Uri.encode(session), null) { answer ->
             val toast = { words: String -> android.widget.Toast.makeText(this, words, android.widget.Toast.LENGTH_LONG).show() }
             if (answer.has("note")) return@ask toast(answer.optString("note"))
-            if (!answer.optBoolean("switch")) return@ask toast(when (answer.optString("agent")) {
-                "codex" -> "Codex switches models only in its own picker: start a new chat with the model."
+            if (!answer.optBoolean("switch")) return@ask toast(when {
+                answer.optString("agent") == "codex" -> "Codex switches models only in its own picker: start a new chat with the model."
+                session.matches(Regex("cursor-[0-9a-f-]{36}")) -> "On ${answer.optString("now").ifEmpty { "its own model" }}. A Cursor IDE chat's model is changed in Cursor, for now."
                 else -> "This agent can't switch models from the phone."
             })
             val now = answer.optString("now")

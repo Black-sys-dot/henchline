@@ -86,7 +86,9 @@ class Status:
             self.since = sent.at
             self.waiting_for = sent.agent.capitalize()
             if sent.heard != Heard.TYPED.value:  # a typed one is in the chat already, as the page sent it
-                if sent.heard == Heard.SHARED.value:  # the phone put the share in the chat itself
+                # From the phone off the call (a text, a voice message, a share): the phone's chat has it already
+                # (a text to Cursor showed twice while on a call with Claude, 2026-11-16)
+                if sent.heard in (Heard.SHARED.value, Heard.TEXTED.value, Heard.VOICE_NOTE.value):
                     said = ""
                 else:  # what it heard you say, so a mishearing shows
                     said = f"🎙 {sent.words}" if sent.words else f"(spoken, sent to {self.waiting_for})"
@@ -591,8 +593,9 @@ async def crew_models(request: web.Request) -> web.Response:
         if target is None:
             return web.json_response({"note": "That agent isn't known to the laptop."}, status=404)
         agent = target.agent
-        # Codex's /model only opens a picker; a Cursor editor chat switches through its window (the bridge)
-        switchable = (agent in ("claude", "cursor") and bool(target.tab)) or bool(cursor_bridge.chat_of(target.session))
+        # Codex's /model only opens a picker. A Cursor editor chat: its model is shown, not switched yet (only its
+        # picker in the window can, and a keystroke gone astray would send the name as a message: switch_editor_model)
+        switchable = agent in ("claude", "cursor") and bool(target.tab)
         now = await loop.run_in_executor(None, model_in_use, target)
     else:
         now = ""
@@ -650,7 +653,9 @@ def model_in_use(target: Speaker) -> str:
 
 def switch_editor_model(target: Speaker, model: dict) -> str:
     """A Cursor editor chat: opened through the bridge, its model picker typed into in its window, and the model it
-    then uses read back from Cursor's store."""
+    then uses read back from Cursor's store. Not wired in yet (review, 2026-11-16): nothing checks the picker is
+    open before Return, so a missed ctrl+/ would send the name as a message; the clipboard isn't restored; an
+    unreadable store reads as success. Needs a way to see the picker (or a Cursor command that sets the model)."""
     chat = cursor_bridge.chat_of(target.session)
     if not chat or not cursor_bridge.open_chat(target.where, chat):
         return "I couldn't open that Cursor chat (is its window open?)."
@@ -683,7 +688,7 @@ def switch_editor_model(target: Speaker, model: dict) -> str:
 def switch_model(target: Speaker, model: dict) -> str:
     """Types the agent's own /model into its terminal; "" when done, else why not."""
     if target.in_editor:
-        return switch_editor_model(target, model)
+        return "Switching a Cursor IDE chat's model from the phone isn't safe yet: change it in Cursor."
     terminals = desktop().terminals
     if not terminals.agent_running(target.tab):
         return "That agent isn't running."
@@ -750,7 +755,7 @@ async def crew_model(request: web.Request) -> web.Response:
     except (ValueError, AttributeError):
         raise web.HTTPBadRequest(text="expected JSON")
     target = next((s for s in recent_speakers() if s.session == session), None)
-    if target is None or not (target.tab or cursor_bridge.chat_of(target.session)):
+    if target is None or not target.tab:
         return web.json_response({"note": "Only an agent in a terminal or a Cursor chat can switch models from here."},
                                  status=400)
     loop = asyncio.get_running_loop()
