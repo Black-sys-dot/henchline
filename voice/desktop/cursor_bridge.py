@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import socket
+import time
 from pathlib import Path
 
 from voice.state import STATE
@@ -24,24 +25,37 @@ def chat_of(session: str) -> str:
     return found.group(0) if found else ""
 
 
+def project_of(folder: str) -> str:
+    """Cursor's name for a workspace folder's project under ~/.cursor/projects: its path, dashed."""
+    return re.sub(r"[^A-Za-z0-9]+", "-", folder).strip("-")
+
+
+def owner_of(chat: str) -> str:
+    """The project (~/.cursor/projects/<project>) whose transcripts hold that chat; "" when none does."""
+    found = list((Path.home() / ".cursor/projects").glob(f"*/agent-transcripts/{chat}"))
+    return found[0].parent.parent.name if len(found) == 1 else ""
+
+
 def open_chat(workspace: str, chat: str) -> bool:
-    """Asks Cursor's windows to bring that chat to the front: the window showing that workspace first, then any
-    other (a label can differ from the window's name); only the window that has the chat says yes. False when none
-    did: then nothing may be typed, or the words would land in whatever chat is on screen."""
+    """Brings that chat to the front in the one Cursor window that has it: the window whose workspace folder is
+    the project holding the chat's transcript (Cursor's own commands say yes to any id, 2026-11-16). False when no
+    window has it: then nothing may be typed, or the words would land in whatever chat is on screen."""
     if not CHAT_ID.fullmatch(chat):
         return False
-    windows = []
+    project = owner_of(chat)
+    if not project:
+        return False
     for note in DIR.glob("*.json"):
         try:
-            windows.append((json.loads(note.read_text()), note.with_suffix(".sock")))
+            window = json.loads(note.read_text())
         except (OSError, ValueError):
             continue
-    windows.sort(key=lambda w: w[0].get("workspace") != workspace)  # its own window first
-    for _, sock in windows:
+        if project not in {project_of(f) for f in window.get("folders", []) if isinstance(f, str)}:
+            continue
         try:
             with socket.socket(socket.AF_UNIX) as conn:
                 conn.settimeout(5)
-                conn.connect(str(sock))
+                conn.connect(str(note.with_suffix(".sock")))
                 conn.sendall(json.dumps({"open": chat}).encode() + b"\n")
                 answer = b""
                 while b"\n" not in answer and len(answer) < 4096:  # the whole answer line, however it arrives
@@ -50,6 +64,7 @@ def open_chat(workspace: str, chat: str) -> bool:
                         break
                     answer += part
             if json.loads(answer.decode() or "{}").get("ok"):
+                time.sleep(0.4)  # Cursor moving its focus to that chat, before anything is typed
                 return True
         except (OSError, ValueError):
             continue  # a window that has gone: its note stays until Cursor cleans it up
