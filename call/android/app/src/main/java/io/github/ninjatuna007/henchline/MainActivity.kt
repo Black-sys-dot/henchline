@@ -115,9 +115,19 @@ class MainActivity : Activity() {
         speakerButton.setOnClickListener {  // loudspeaker ⇄ earpiece, mid-call
             val service = CallService.Bus.service ?: return@setOnClickListener
             val on = !service.speaker
+            // Back to the speaker after the earpiece took clear sound away: clear sound again, as it was (the user's
+            // catch, 2026-11-16); clear sound is the loudspeaker, so that one switch does both
+            if (on && prefs().getBoolean("clear_back", false)) {
+                clear.isChecked = true  // its listener switches the sound, lights the speaker and forgets clear_back
+                return@setOnClickListener
+            }
+            val wasClear = service.clear
             if (!service.setSpeaker(on)) return@setOnClickListener  // still switching from the last tap
             prefs().edit().putBoolean("speaker", on).apply()
-            if (!on) { prefs().edit().putBoolean("clear", false).apply(); showClear(false) }  // the earpiece is the call path
+            if (!on) {  // the earpiece is the call path
+                prefs().edit().putBoolean("clear", false).putBoolean("clear_back", wasClear).apply()
+                showClear(false)
+            }
             showSpeaker(on)
         }
         talk = findViewById(R.id.talk)
@@ -1012,6 +1022,7 @@ class MainActivity : Activity() {
                 return@setOnCheckedChangeListener
             }
             prefs().edit().putBoolean("clear", flipped).apply()
+            prefs().edit().putBoolean("clear_back", false).apply()  // a choice of yours: nothing to restore later
             if (flipped) { prefs().edit().putBoolean("speaker", true).apply(); showSpeaker(true) }  // clear is media: the speaker
             if (service != null) android.widget.Toast.makeText(this, if (flipped) "Clear sound" else "Call sound",
                 android.widget.Toast.LENGTH_SHORT).show()
