@@ -26,6 +26,7 @@ class CallMenu(
     private val earbuds: Boolean = false,  // earbuds connected: they're a third choice
     private val onRoute: (String) -> Unit = {},
     private val clear: Boolean,
+    private val clearAllowed: Boolean = true,  // on the earpiece: call sound only, the choice greyed out
     private val buttonOnly: Boolean,
     private val onSwitch: (String) -> Unit,
     private val onSpeaker: (Boolean) -> Unit,
@@ -45,7 +46,9 @@ class CallMenu(
         if (earbuds) sheet.addView(choices(listOf("🎧  Earbuds" to "headset", "🔊  Speaker" to "speaker",
             "👂  Earpiece" to "earpiece"), where) { onRoute(it); close() }, wide(10, px(48)))
         else sheet.addView(choice("🔊  Speaker", "👂  Earpiece", speaker) { onSpeaker(it); close() }, wide(10, px(48)))
-        sheet.addView(choice("Clear sound", "Call sound", clear) { onClear(it); close() }, wide(8, px(48)))
+        sheet.addView(choice("Clear sound", "Call sound", clear) { onClear(it); close() }.apply {
+            if (!clearAllowed) { alpha = 0.4f; for (i in 0 until childCount) getChildAt(i).isEnabled = false }
+        }, wide(8, px(48)))
         sheet.addView(choice("Open line", "Hold to talk", !buttonOnly) { onButtonOnly(!it); close() }, wide(8, px(48)))
         val hang = primary("Hang up", colour(R.color.hang), Color.WHITE).apply { setOnClickListener { close(); onHangUp() } }
         sheet.addView(hang, wide(20, px(52)))

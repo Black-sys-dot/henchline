@@ -76,31 +76,47 @@ class CallService : Service() {
     else audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in HEADSETS || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
 
     /** Where the call's sound is now, as the button shows it: "headset", "speaker" or "earpiece". */
-    val where get() = if (useHeadset && headsetAvailable()) "headset" else if (speaker) "speaker" else "earpiece"
+    val where get() = if (useHeadset && headsetAvailable()) "headset" else if (speaker || clear) "speaker" else "earpiece"  // clear sound is never on the earpiece
 
-    /** The route picked with earbuds connected (the user's wish, 2026-11-16: the button flipped its look while the
-     *  sound stayed in the earbuds). Speaker or earpiece over the earbuds need the call path: clear sound is media,
-     *  which follows the earbuds. false: still switching from a tap before. */
-    fun setRoute(to: String): Boolean {
-        if (to == "headset") {
-            useHeadset = true
-            Thread { synchronized(audioLock) { if (running && !clear) route() } }.start()
-            return true
-        }
-        val wasHeadset = useHeadset
-        useHeadset = false
-        val on = to == "speaker"
-        if (clear && headsetAvailable()) {  // media would stay in the earbuds: to the call path, routed there
-            val wasSpeaker = speaker
-            speaker = on
+    /** The route picked with earbuds connected: earbuds, speaker or earpiece. */
+    fun setRoute(to: String): Boolean =
+        if (to == "headset") moveTo(true, speaker) else moveTo(false, to == "speaker")
+
+    /** The speaker button: loudspeaker or earpiece. */
+    fun setSpeaker(on: Boolean): Boolean = moveTo(useHeadset, on)
+
+    /** Clear or call sound stays as it is on the earbuds and the speaker; the earpiece is call sound only (the
+     *  user's wish, 2026-11-16), so moving there from clear sound switches (false: still switching from a tap). */
+    private fun moveTo(headset: Boolean, onSpeaker: Boolean): Boolean {
+        val (wasHeadset, wasSpeaker) = useHeadset to speaker
+        useHeadset = headset; speaker = onSpeaker
+        if (clear && where == "earpiece") {
             if (switchSound(false)) return true
-            speaker = wasSpeaker; useHeadset = wasHeadset
+            useHeadset = wasHeadset; speaker = wasSpeaker
             return false
         }
-        if (setSpeaker(on)) return true
-        useHeadset = wasHeadset
-        return false
+        reroute()
+        return true
     }
+
+    /** The call path is routed again; clear sound's playing track is aimed again. */
+    private fun reroute() {
+        Thread { synchronized(audioLock) { if (running && !clear) route() } }.start()
+        aimTrack()
+    }
+
+    @Volatile private var playing: AudioTrack? = null  // the sound playing now, to aim at a device
+
+    /** Clear sound is media, which follows connected earbuds: when the user picked the speaker over them, it is
+     *  aimed at the phone's loudspeaker instead (the user's report, 2026-11-16: speaker, then clear sound, and the
+     *  sound stayed in the earbuds). Otherwise the phone picks, as for any media. The call path: route(). */
+    private fun aimTrack() {
+        val track = playing ?: return
+        val loudspeaker = if (clear && !useHeadset) audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS)
+            .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER } else null
+        try { track.setPreferredDevice(loudspeaker) } catch (e: Exception) {}  // a released track: the next one aims
+    }
+
     private var proximity: PowerManager.WakeLock? = null  // the screen off at the ear, on the earpiece
     private val generation = java.util.concurrent.atomic.AtomicInteger()  // the audio threads' round
     private val switching = java.util.concurrent.atomic.AtomicBoolean()  // a sound switch under way: taps wait
@@ -232,13 +248,13 @@ class CallService : Service() {
 
     /** Clear or call sound, mid-call: the audio starts again in the other mode, the connection stays. */
     fun switchSound(toClear: Boolean): Boolean {
+        if (toClear && where == "earpiece") return false  // the earpiece is call sound only
         if (!switching.compareAndSet(false, true)) return false  // a second quick tap: the first is still switching
         Thread {
             try {
                 synchronized(audioLock) {
                     val (mic, track) = recorder to player
                     clear = toClear
-                    if (toClear) speaker = true  // clear sound is media: always the loudspeaker (or earbuds)
                     generation.incrementAndGet()  // the running threads see this and stop
                     mic?.join(1000)
                     track?.join(1000)
@@ -254,19 +270,6 @@ class CallService : Service() {
         return true
     }
 
-    /** The speaker button: loudspeaker or earpiece. The earpiece from clear sound switches to the call path first
-     *  (false: still switching from a tap before). */
-    fun setSpeaker(on: Boolean): Boolean {
-        if (!on && clear) {
-            speaker = false
-            if (switchSound(false)) return true
-            speaker = true
-            return false
-        }
-        speaker = on
-        Thread { synchronized(audioLock) { if (running && !clear) route() } }.start()
-        return true
-    }
 
     /** The phone's audio for this sound: call mode and routing, or plain media; focus to match. */
     private fun applySound() {
@@ -412,6 +415,8 @@ class CallService : Service() {
                     .setTransferMode(AudioTrack.MODE_STREAM)
                     .setBufferSizeInBytes(SPEAKER_RATE / 5 * 2)
                     .build()
+                playing = track
+                aimTrack()
                 try {
                     track.play()
                     var reported = System.currentTimeMillis()
@@ -431,6 +436,7 @@ class CallService : Service() {
                 } finally {
                     if (track.playState == AudioTrack.PLAYSTATE_PLAYING) track.stop()
                     track.release()
+                    if (playing === track) playing = null
                 }
             } catch (_: InterruptedException) {
             } catch (e: Exception) {
