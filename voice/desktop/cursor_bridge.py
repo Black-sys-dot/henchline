@@ -45,13 +45,17 @@ def open_chat(workspace: str, chat: str) -> bool:
     project = owner_of(chat)
     if not project:
         return False
+    owners = []
     for note in DIR.glob("*.json"):
         try:
             window = json.loads(note.read_text())
         except (OSError, ValueError):
             continue
-        if project not in {project_of(f) for f in window.get("folders", []) if isinstance(f, str)}:
-            continue
+        if project in {project_of(f) for f in window.get("folders", []) if isinstance(f, str)}:
+            owners.append(note)
+    if len(owners) != 1:  # none, or two windows on that project: which has the chat can't be told, so neither
+        return False
+    for note in owners:
         try:
             with socket.socket(socket.AF_UNIX) as conn:
                 conn.settimeout(5)
