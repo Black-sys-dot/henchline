@@ -107,7 +107,7 @@ def switch_model(chat: str, wanted: str) -> str:
         if not ask_window(chat, {"cycle": chat}):
             if last_why == "not a chat id":  # a bridge from before "cycle" was there
                 return ("Cursor is still running an older Henchline bridge: in Cursor, Ctrl+Shift+P, "
-                        "Restart Extension Host, then try again.")
+                        "Reload Window (when no chat is busy), then try again.")
             return ("Cursor's bridge wouldn't step that chat (is another chat selected there?)"
                     + (f": after {steps} steps it's on {now}." if steps else ": not switched."))
         steps += 1
@@ -168,6 +168,17 @@ def chat_model(chat: str) -> str:
         return ""
     config = composer(chat).get("modelConfig")
     return str(config.get("modelName") or "") if isinstance(config, dict) else ""
+
+
+def chat_effort(chat: str) -> str:
+    """The reasoning effort a Cursor editor chat's model runs at ("xhigh"), kept apart from the model in Cursor's
+    store; "" when it has none."""
+    config = composer(chat).get("modelConfig") if CHAT_ID.fullmatch(chat) else None
+    for picked in (config or {}).get("selectedModels") or []:
+        for parameter in (picked.get("parameters") or []) if isinstance(picked, dict) else []:
+            if isinstance(parameter, dict) and parameter.get("id") == "reasoning_effort":
+                return str(parameter.get("value") or "")
+    return ""
 
 
 def chat_title(chat: str) -> str:

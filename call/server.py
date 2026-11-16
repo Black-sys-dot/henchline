@@ -635,11 +635,15 @@ def model_in_use(target: Speaker) -> str:
                         return f"{family.capitalize()} {'.'.join(version)}".strip()
         return ""
     if target.in_editor and (chat := cursor_bridge.chat_of(target.session)):  # Cursor's store: its id, named
-        used = cursor_bridge.chat_model(chat)
-        listed = tmux.models("cursor")  # its store has the family ("grok-4.7"); the list, each effort of it
-        named = next((m["name"] for m in listed if m["id"] == used), "") or \
-            next((m["name"] for m in listed if m["id"].startswith(used + "-")), "")
-        return named or used
+        # Its store has the model ("grok-4.7") and, apart, its effort ("xhigh"); the list names each pair. Not the
+        # first of the family: that showed "Low" for a chat on extra high (the user's catch, 2026-11-16)
+        used, effort = cursor_bridge.chat_model(chat), cursor_bridge.chat_effort(chat)
+        listed = {m["id"]: m["name"] for m in tmux.models("cursor")}
+        family = next((n for i, n in listed.items() if i.startswith(used + "-")), used)
+        family = " ".join(w for w in family.split() if w.lower() not in CURSOR_TRIM)
+        effort_words = {"xhigh": "Extra High", "high": "High", "medium": "Medium", "low": "Low"}
+        named = listed.get(f"{used}-{effort}")
+        return named or (f"{family} {effort_words.get(effort, effort)}".strip() if used else "")
     if target.tab.owner != tmux.OWNER:
         return ""
     lines = tmux.out("capture-pane", "-p", "-t", target.tab.address).splitlines()

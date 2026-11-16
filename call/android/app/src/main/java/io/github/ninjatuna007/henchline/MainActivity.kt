@@ -1155,7 +1155,18 @@ class MainActivity : Activity() {
     private fun shortModel(name: String): String {
         val words = name.split(" ").filter { it.isNotEmpty() }
             .takeWhile { !Regex("(?i)\\d+[KM]|low|medium|high|xhigh|extra|max|fast|thinking|\\(.*").matches(it) }
-        return words.dropWhile { it.equals("Claude", ignoreCase = true) && words.size > 1 }.joinToString(" ").ifEmpty { name }
+        val short = words.dropWhile { it.equals("Claude", ignoreCase = true) && words.size > 1 }.joinToString(" ").ifEmpty { name }
+        // The effort, short, when the name has one: "Grok 4.7 Extra High" is "Grok 4.7 · xhigh" (showing only the
+        // family hid that a chat ran on extra high, 2026-11-16)
+        val rest = name.lowercase()
+        val effort = when {
+            "extra high" in rest || "xhigh" in rest -> "xhigh"
+            Regex("\\bhigh\\b").containsMatchIn(rest) -> "high"
+            Regex("\\bmedium\\b").containsMatchIn(rest) -> "med"
+            Regex("\\blow\\b").containsMatchIn(rest) -> "low"
+            else -> ""
+        }
+        return if (effort.isEmpty()) short else "$short · $effort"
     }
 
     /** The chat's model chip: the model the agent is using now, as the laptop sees it (the user's wish,

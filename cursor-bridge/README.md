@@ -9,8 +9,9 @@ its own chat on the phone: named by Cursor's own title, and what you text, recor
 ./install.sh agents      # with Cursor installed: packs the extension and runs `cursor --install-extension`
 ```
 
-No Node tools are needed (`pack.py` makes the `.vsix`). A Cursor window picks it up without a reload; after an
-update, run **Developer: Restart Extension Host** once (Ctrl+Shift+P) when no chat is in the middle of work.
+No Node tools are needed (`pack.py` makes the `.vsix`). A Cursor window picks up a first install without a reload;
+after an update, run **Developer: Reload Window** (Ctrl+Shift+P) when no chat is in the middle of work (restarting
+the extension host alone keeps the old version).
 
 ## How it works
 
