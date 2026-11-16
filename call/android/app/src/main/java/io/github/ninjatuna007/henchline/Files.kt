@@ -50,14 +50,17 @@ object Files {
         }
     }
 
-    /** Saved to Downloads/Henchline, then opened; `note` hears how it went (on the main thread). */
-    fun open(context: Context, url: String, name: String, type: String, note: (String) -> Unit) {
+    /** Opened from its copy in Downloads/Henchline when it is there already (the user's catch, 2026-11-16: every
+     *  tap downloaded it again), else saved there first and then opened; `note` hears how it went (on the main
+     *  thread). size: the file's size, to know it again among copies saved before this was remembered. */
+    fun open(context: Context, url: String, name: String, type: String, size: Long = 0, note: (String) -> Unit) {
         val address = resolve(context, url) ?: return note("That file isn't from your laptop's address, so I didn't open it.")
         val main = android.os.Handler(context.mainLooper)
-        note("Downloading $name…")
         Thread {
-            val saved = try {
-                download(context, address, name, type)
+            val kept = savedCopy(context, address, name, size)
+            if (kept == null) main.post { note("Downloading $name…") }
+            val saved = kept ?: try {
+                download(context, address, name, type).also { remember(context, address, it) }
             } catch (e: Exception) {
                 main.post { note("Couldn't download $name: ${e.message ?: "no connection"} (is Tailscale on?)") }
                 return@Thread
@@ -66,13 +69,50 @@ object Files {
                 try {
                     context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(saved, type)
                         .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK))
-                    note("Saved to Downloads/Henchline: $name")
+                    if (kept == null) note("Saved to Downloads/Henchline: $name")
                 } catch (_: ActivityNotFoundException) {
                     note("Saved to Downloads/Henchline: $name (no app here opens $type)")
                 }
             }
         }.start()
     }
+
+    private fun remember(context: Context, address: String, saved: Uri) =
+        context.getSharedPreferences("downloads", Context.MODE_PRIVATE).edit().putString(address, saved.toString()).apply()
+
+    /** The copy of that file already in Downloads/Henchline, if it is still there and readable: the one saved for
+     *  this very link, else (saved before links were remembered) the newest there with its name and exact size. */
+    private fun savedCopy(context: Context, address: String, name: String, size: Long): Uri? {
+        val resolver = context.contentResolver
+        fun readable(uri: Uri) = try { resolver.openFileDescriptor(uri, "r")?.use { true } ?: false } catch (_: Exception) { false }
+        context.getSharedPreferences("downloads", Context.MODE_PRIVATE).getString(address, null)?.let { kept ->
+            val uri = Uri.parse(kept)
+            if (readable(uri)) return uri
+        }
+        if (size <= 0) return null
+        // Only copies saved before links were remembered: a new file that happens to share an old one's name and
+        // size must never open the old copy (DATE_ADDED is in seconds)
+        val prefs = context.getSharedPreferences("downloads", Context.MODE_PRIVATE)
+        val since = prefs.getLong("remembering_since", 0L).takeIf { it > 0 }
+            ?: (System.currentTimeMillis() / 1000).also { prefs.edit().putLong("remembering_since", it).apply() }
+        return try {
+            resolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Downloads._ID),
+                "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.SIZE} = ? AND " +
+                    "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? AND ${MediaStore.Downloads.DATE_ADDED} < ?",
+                arrayOf(name, size.toString(), "${Environment.DIRECTORY_DOWNLOADS}/Henchline%", since.toString()),
+                "${MediaStore.Downloads.DATE_ADDED} DESC")?.use { rows ->
+                if (!rows.moveToFirst()) null
+                else android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, rows.getLong(0))
+                    .takeIf { readable(it) }?.also { remember(context, address, it) }
+            }
+        } catch (_: Exception) {
+            null
+        }
+    }
+
+    /** Named by the link's SHA-256: two links never share a file (its copy may be saved under the other's name). */
+    private fun cacheFile(context: Context, address: String) = File(context.cacheDir, "previews/" +
+        java.security.MessageDigest.getInstance("SHA-256").digest(address.toByteArray()).joinToString("") { "%02x".format(it) })
 
     private fun download(context: Context, url: String, name: String, type: String): Uri {
         val resolver = context.contentResolver
@@ -85,7 +125,10 @@ object Files {
         val uri = resolver.insert(MediaStore.Downloads.EXTERNAL_CONTENT_URI, values)
             ?: throw IllegalStateException("no room in Downloads")
         try {
-            client.newCall(Request.Builder().url(url).build()).execute().use { answer ->
+            val fetched = cacheFile(context, url)
+            if (fetched.exists()) {  // fetched already for its preview: copied, not fetched again
+                resolver.openOutputStream(uri)!!.use { out -> fetched.inputStream().use { it.copyTo(out) } }
+            } else client.newCall(Request.Builder().url(url).build()).execute().use { answer ->
                 if (!answer.isSuccessful) throw IllegalStateException(
                     if (answer.code == 404) "the laptop no longer has it (kept a week)" else "the laptop said ${answer.code}")
                 resolver.openOutputStream(uri)!!.use { out -> answer.body!!.byteStream().copyTo(out) }
@@ -98,20 +141,25 @@ object Files {
         return uri
     }
 
-    /** A small picture for the chat, or null; kept in the cache, so a screen rebuilt doesn't fetch it again. */
+    /** The file itself in the app's cache, fetched once (a screen rebuilt doesn't fetch it again), or null. */
+    private fun fetched(context: Context, address: String): File? {
+        val cached = cacheFile(context, address)
+        if (cached.exists()) return cached
+        cached.parentFile?.mkdirs()
+        client.newCall(Request.Builder().url(address).build()).execute().use { answer ->
+            if (!answer.isSuccessful) return null
+            val part = File(cached.path + "." + java.util.UUID.randomUUID() + ".part")  // two fetches never share one
+            part.outputStream().use { out -> answer.body!!.byteStream().copyTo(out) }
+            part.renameTo(cached)
+        }
+        return cached.takeIf { it.exists() }
+    }
+
+    /** A small picture for the chat, or null. */
     fun preview(context: Context, url: String, widthPx: Int): Bitmap? {
         val address = resolve(context, url) ?: return null
-        val cached = File(context.cacheDir, "previews/" + address.hashCode().toUInt().toString(16))
         try {
-            if (!cached.exists()) {
-                cached.parentFile?.mkdirs()
-                client.newCall(Request.Builder().url(address).build()).execute().use { answer ->
-                    if (!answer.isSuccessful) return null
-                    val part = File(cached.path + "." + java.util.UUID.randomUUID() + ".part")  // two fetches never share one
-                    part.outputStream().use { out -> answer.body!!.byteStream().copyTo(out) }
-                    part.renameTo(cached)
-                }
-            }
+            val cached = fetched(context, address) ?: return null
             val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
             BitmapFactory.decodeFile(cached.path, bounds)
             var sample = 1
@@ -124,6 +172,31 @@ object Files {
             return null
         } catch (_: OutOfMemoryError) {  // a picture too big even so: not shown, never a crash
             return null
+        }
+    }
+
+    /** A PDF's first page as a picture widthPx wide, and how many pages it has, for its card in the chat; null
+     *  when it can't be fetched or read. Fetched once into the cache, which opening it later copies from. */
+    fun pdfPreview(context: Context, url: String, widthPx: Int): Pair<Bitmap, Int>? {
+        val address = resolve(context, url) ?: return null
+        return try {
+            val file = fetched(context, address) ?: return null
+            android.os.ParcelFileDescriptor.open(file, android.os.ParcelFileDescriptor.MODE_READ_ONLY).use { fd ->
+                android.graphics.pdf.PdfRenderer(fd).use { pdf ->
+                    if (pdf.pageCount == 0) return null
+                    pdf.openPage(0).use { page ->
+                        val height = (widthPx.toLong() * page.height / page.width.coerceAtLeast(1)).toInt().coerceIn(1, widthPx * 2)
+                        val bitmap = Bitmap.createBitmap(widthPx, height, Bitmap.Config.ARGB_8888)
+                        bitmap.eraseColor(android.graphics.Color.WHITE)  // pages are paper: transparent would show black
+                        page.render(bitmap, null, null, android.graphics.pdf.PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                        bitmap to pdf.pageCount
+                    }
+                }
+            }
+        } catch (_: Exception) {
+            null
+        } catch (_: OutOfMemoryError) {
+            null
         }
     }
 

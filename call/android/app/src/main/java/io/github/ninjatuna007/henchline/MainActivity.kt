@@ -1850,6 +1850,61 @@ class MainActivity : Activity() {
 
     /** A file an agent sent: a picture shown small (tap for it whole), audio with its own play button, anything
      *  else as a card that saves and opens it. Long-press any of them to save it and open it in another app. */
+    /** A document as a messaging app shows one (the user's wish, 2026-11-16: it was a paper clip and its name): a
+     *  PDF's first page on top, then a coloured badge of its kind, its name, and "PDF · 6 pages · 6.1 MB"; a tap
+     *  opens it (from Downloads/Henchline if it is there already). */
+    private fun documentCard(card: LinearLayout, url: String, name: String, type: String, size: Long) {
+        val kind = name.substringAfterLast('.', "").uppercase().take(4).ifEmpty { "FILE" }
+        val colour = when (kind) {
+            "PDF" -> 0xFFE5534B; "PPT", "PPTX", "KEY", "ODP" -> 0xFFE8833A; "DOC", "DOCX", "ODT", "RTF", "MD", "TXT" -> 0xFF4A8FE7
+            "XLS", "XLSX", "CSV", "ODS" -> 0xFF3CB371; "ZIP", "TAR", "GZ", "7Z", "XZ" -> 0xFF8A8F98; else -> 0xFF26B8C8
+        }.toInt()
+        val width = dp(240)
+        val page = ImageView(this).apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            visibility = View.GONE  // only once there is a page to show
+            background = GradientDrawable().apply { setColor(0xFFFFFFFF.toInt()); cornerRadius = dp(10).toFloat() }
+            clipToOutline = true
+        }
+        card.addView(page, LinearLayout.LayoutParams(width, dp(150)).apply { bottomMargin = dp(8) })
+        val badge = TextView(this).apply {
+            text = kind; setTextColor(0xFFFFFFFF.toInt()); textSize = 11f; gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            background = GradientDrawable().apply { setColor(colour); cornerRadius = dp(6).toFloat() }
+        }
+        val title = TextView(this).apply {
+            text = name; setTextColor(getColor(R.color.text)); textSize = 15f; maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
+        }
+        val about = TextView(this).apply {
+            text = "$kind · ${Files.sizeText(size)}"; setTextColor(getColor(R.color.muted)); textSize = 12.5f
+        }
+        val words = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; addView(title); addView(about) }
+        val line = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            addView(badge, LinearLayout.LayoutParams(dp(40), dp(44)).apply { marginEnd = dp(10) })
+            addView(words, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        card.addView(line, LinearLayout.LayoutParams(width, LinearLayout.LayoutParams.WRAP_CONTENT))
+        card.setOnClickListener { Files.open(this, url, name, type, size) { say("", it, note = true) } }
+        // A PDF's first page, fetched once (opening it later copies that, not the laptop again); not for a big one
+        // (a known size only: one of unknown size could be anything)
+        if ((type == "application/pdf" || kind == "PDF") && size in 1..25_000_000) {
+            fun show(shown: android.graphics.Bitmap, pages: Int) {
+                page.setImageBitmap(shown); page.visibility = View.VISIBLE
+                about.text = "$kind · $pages page${if (pages == 1) "" else "s"} · ${Files.sizeText(size)}"
+            }
+            val kept = pictures.get("$url#page")
+            val keptPages = pageCounts[url]
+            if (kept != null && keptPages != null) show(kept, keptPages)  // a redraw: not rendered again
+            else decoder.execute {
+                val shown = Files.pdfPreview(this, url, width)
+                if (shown != null) { pictures.put("$url#page", shown.first); pageCounts[url] = shown.second }
+                main.post { if (shown != null) show(shown.first, shown.second) }
+            }
+        }
+    }
+
     private fun fileCard(from: String, file: JSONObject, session: String, keep: Boolean = true) {
         if (keep) Chats.add(this, session, JSONObject().put("from", from).put("file", file))
         val url = file.getString("url")
@@ -1860,7 +1915,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setBackgroundResource(R.drawable.bubble_agent)
             setPadding(dp(10), dp(10), dp(10), dp(10))
-            setOnLongClickListener { Files.open(this@MainActivity, url, name, type) { say("", it, note = true) }; true }
+            setOnLongClickListener { Files.open(this@MainActivity, url, name, type, size) { say("", it, note = true) }; true }
         }
         val label = TextView(this).apply {
             text = "$name · ${Files.sizeText(size)}"
@@ -1883,13 +1938,7 @@ class MainActivity : Activity() {
                 card.addView(label)
             }
             type.startsWith("audio/") -> card.addView(audioRow(url, name, size))
-            else -> {
-                label.text = "📎 $name · ${Files.sizeText(size)}\nTap to open"
-                label.setTextColor(getColor(R.color.text))
-                label.textSize = 15f
-                card.setOnClickListener { Files.open(this, url, name, type) { say("", it, note = true) } }
-                card.addView(label)
-            }
+            else -> documentCard(card, url, name, type, size)
         }
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
@@ -2192,13 +2241,13 @@ class MainActivity : Activity() {
                 val row = audioRow(url, name, intent.getLongExtra(Files.SIZE, 0)) as LinearLayout
                 holder.addView(row)
                 AlertDialog.Builder(this).setTitle(name).setView(holder)
-                    .setPositiveButton("Save and open") { _, _ -> Files.open(this, url, name, type, note) }
+                    .setPositiveButton("Save and open") { _, _ -> Files.open(this, url, name, type, intent.getLongExtra(Files.SIZE, 0), note) }
                     .setNegativeButton("Close", null)
                     .setOnDismissListener { stopSound() }
                     .show()
                 row.getChildAt(0).performClick()  // it starts playing
             }
-            else -> Files.open(this, url, name, type, note)
+            else -> Files.open(this, url, name, type, intent.getLongExtra(Files.SIZE, 0), note)
         }
     }
 
@@ -2210,6 +2259,7 @@ class MainActivity : Activity() {
         const val TAKE_PHOTO = 5  // the + sheet's camera
         // Pictures in the chat: decoded two at a time and kept a while, for the app's whole life (not per screen)
         private val decoder = java.util.concurrent.Executors.newFixedThreadPool(2)
+        private val pageCounts = java.util.concurrent.ConcurrentHashMap<String, Int>()  // a PDF's pages, by its link
         private val pictures = object : android.util.LruCache<String, android.graphics.Bitmap>(16 * 1024 * 1024) {  // 16 MB
             override fun sizeOf(key: String, value: android.graphics.Bitmap) = value.byteCount
         }
