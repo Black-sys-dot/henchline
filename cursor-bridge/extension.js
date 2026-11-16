@@ -32,6 +32,14 @@ function activate(context) {
           // The chat's next model, as Cursor's own "cycle model" does: no keys, no text; Henchline reads the model
           // it lands on from Cursor's store and asks again until it's the one picked on the phone
           await vscode.commands.executeCommand("composer.openComposer", asked.cycle);
+          // Cycle only when that chat is the one Cursor has selected now: its "cycle model" takes no chat id and
+          // works on the selected one, which must not be another chat
+          const selected = await vscode.commands.executeCommand("composer.getOrderedSelectedComposerIds");
+          const first = Array.isArray(selected) ? selected[selected.length - 1] : undefined;
+          if (first !== asked.cycle) {
+            conn.end(JSON.stringify({ ok: false, why: "another chat is selected", selected }) + "\n");
+            return;
+          }
           await vscode.commands.executeCommand("composer.cycleModel");
           conn.end(JSON.stringify({ ok: true }) + "\n");
           return;
