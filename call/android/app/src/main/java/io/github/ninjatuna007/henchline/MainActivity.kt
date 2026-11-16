@@ -56,7 +56,14 @@ class MainActivity : Activity() {
 
     private val main = Handler(Looper.getMainLooper())
     private var buttonOnly = false  // a noisy place: only holding the button gets in
-    private var current = ""  // the agent replies go to now; its chat is the one shown
+    private var current = ""  // the chat shown: texts and voice messages go to its agent
+    // The call and the chats are apart, as WhatsApp's (the user's wish, 2026-11-16): the call is with callSession;
+    // any other chat can be read and texted meanwhile, and a bar leads back to the call
+    private var callSession = ""
+    private var callFrom = ""  // the chat a call was started from: the call goes to its agent
+
+    /** The chat shown is the call's: the talk button, hang-up and the call's state belong to it. */
+    private fun onCall() = CallService.Bus.connected && (callSession.isEmpty() || current == callSession)
     private var names = mapOf<String, String>()  // session: the name the server gives it
     private var typed = 0  // ids for typed lines, so a "not sent" note strikes the right one
     private var talking = false
@@ -122,10 +129,20 @@ class MainActivity : Activity() {
 
         findViewById<ImageButton>(R.id.menu).setOnClickListener { show(listScreen) }
         findViewById<View>(R.id.compose).setOnClickListener { newChat() }
+        for (id in listOf(R.id.callBarList, R.id.callBarChat)) findViewById<View>(id).setOnClickListener { openCall() }
         findViewById<View>(R.id.modelChip).setOnClickListener { switchModel() }
         findViewById<View>(R.id.tabChats).setOnClickListener { showCalls(false) }
         findViewById<View>(R.id.tabCalls).setOnClickListener { showCalls(true) }
-        callButton.setOnClickListener { if (CallService.Bus.connected) hangUp() else call() }
+        callButton.setOnClickListener {
+            when {
+                onCall() -> hangUp()
+                CallService.Bus.connected -> openCall()  // one call at a time: back to it
+                else -> call()
+            }
+        }
+        val pickForCall = View.OnClickListener { if (onCall()) switchCall() }
+        who.setOnClickListener(pickForCall)
+        avatar.setOnClickListener(pickForCall)
         findViewById<View>(R.id.serverRow).setOnClickListener { askServer { } }
         showClear(prefs().getBoolean("clear", true))
         setUpTalkButton()
@@ -136,7 +153,7 @@ class MainActivity : Activity() {
         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.BLUETOOTH_CONNECT), 1)
         showHistory()
-        show(if (CallService.Bus.connected) chatScreen else listScreen)  // home: the chat list
+        if (CallService.Bus.connected) openCall() else show(listScreen)  // home: the chat list
         RingService.register(this)  // so agents can ring this phone
         askFullScreen()
         DoNotDisturb.ask(this)
@@ -282,7 +299,7 @@ class MainActivity : Activity() {
     override fun onResume() {
         super.onResume()
         CallService.Bus.listener = { message -> main.post { fromServer(message) } }
-        showConnected(CallService.Bus.connected)
+        showConnected(onCall())
         if (CallService.Bus.connected) {  // what was said while this screen wasn't looking
             CallService.Bus.lastAgents?.let { fromServer(it) }
             CallService.Bus.lastMode?.let { fromServer(it) }
@@ -349,6 +366,8 @@ class MainActivity : Activity() {
             return
         }
         state.text = "Connecting…"
+        callFrom = current  // the call goes to the agent of the chat it was started from
+        callSession = current
         show(chatScreen)
         startForegroundService(Intent(this, CallService::class.java).putExtra(CallService.SERVER, server)
             .putExtra(CallService.CLEAR, prefs().getBoolean("clear", true)).putExtra(IncomingActivity.REPLY, reply))
@@ -399,11 +418,18 @@ class MainActivity : Activity() {
         val status = JSONObject(message)
         when {
             status.has("opened") -> {
-                showConnected(true)
+                // Started from a chat: the call is with that chat's agent
+                if (callFrom.isNotEmpty()) CallService.Bus.service?.send(JSONObject().put("switch", callFrom).toString())
+                callSession = callFrom
+                callFrom = ""
+                showConnected(onCall())
+                showCallBar()
                 if (buttonOnly) CallService.Bus.service?.send(JSONObject().put("button_only", true).toString())
             }
             status.has("closed") -> {
+                callSession = ""
                 showConnected(false)
+                showCallBar()
                 say("", status.getString("closed"), note = true)
             }
             status.has("chat") -> {
@@ -451,7 +477,7 @@ class MainActivity : Activity() {
                 say("", status.getString("note"), note = true)
             }
             status.has("mode") -> {
-                state.text = status.optString("state")
+                if (onCall()) state.text = status.optString("state")
                 showMode(status.getString("mode"))
             }
         }
@@ -465,11 +491,17 @@ class MainActivity : Activity() {
         }
         prefs().edit().putString("crew", list.toString()).apply()  // to pick from, and text, off a call
         val now = status.optString("current")
-        if (now.isNotEmpty() && now != current) {
-            current = now
-            prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
-            showHistory()
+        val following = current.isEmpty() || current == callSession  // looking at the call: it follows the switch
+        if (now.isNotEmpty() && now != callSession) {
+            callSession = now
+            if (following && now != current) {
+                current = now
+                prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
+                showHistory()
+            }
         }
+        showConnected(onCall())
+        showCallBar()
         showCrew()
     }
 
@@ -622,7 +654,7 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun micMode() = !CallService.Bus.connected && text.text.isNullOrBlank()
+    private fun micMode() = !onCall() && text.text.isNullOrBlank()
 
     private fun startVoiceNote() {
         if (current.isEmpty() || voiceNote != null) return
@@ -701,7 +733,7 @@ class MainActivity : Activity() {
         }, 220)
         attach.setImageResource(R.drawable.ic_attach)
         attach.contentDescription = "Attach pictures or files"
-        showConnected(CallService.Bus.connected)  // the hint and the mic back
+        showConnected(onCall())  // the hint and the mic back
         val short = System.currentTimeMillis() - note.started < 700
         val wav = note.stop(keep && !short)
         if (wav == null) {
@@ -745,7 +777,7 @@ class MainActivity : Activity() {
         val words = if (quote.isEmpty()) entered else "(replying to: \"${quote.replace("\n", " ").take(160)}\") $entered"
         setQuote("")
         val id = java.util.UUID.randomUUID().toString()
-        if (!CallService.Bus.connected) {  // off a call: a text, to the agent whose chat this is
+        if (!onCall()) {  // not the call's chat: a text, to the agent whose chat this is
             if (current.isEmpty()) return
             Chats.add(this, current, JSONObject().put("from", "you").put("text", words).put("mine", true).put("id", id).put("status", "sent"))
             val bubble = say("you", words, mine = true, session = current, keep = false, status = "sent")
@@ -773,6 +805,30 @@ class MainActivity : Activity() {
         bubble.tag = "typed-$id"
         sentBubbles[id] = bubble to words
         text.setText("")
+    }
+
+    /** Back to the call's chat, from anywhere (the call bar, or Call while texting another agent). */
+    private fun openCall() {
+        if (callSession.isNotEmpty() && callSession != current) open(callSession) else { showConnected(onCall()); show(chatScreen) }
+    }
+
+    /** The bar over the list and other chats while a call is up: who it's with; a tap goes back to it. */
+    private fun showCallBar() {
+        val up = CallService.Bus.connected && !(chatScreen.visibility == View.VISIBLE && onCall())
+        val words = "📞  On a call with ${names[callSession]?.substringBefore(",") ?: "your crew"} · tap to return"
+        for (id in listOf(R.id.callBarList, R.id.callBarChat)) findViewById<TextView>(id).apply {
+            visibility = if (up) View.VISIBLE else View.GONE
+            text = words
+        }
+    }
+
+    /** On the call, a tap on the agent's name or face: who the call is with, switched (as "switch me to …"). */
+    private fun switchCall() {
+        val crew = names.map { (session, name) -> JSONObject().put("id", session).put("name", name) }
+        if (crew.size < 2) return
+        panel = ModelPicker(this, "Switch the call to", crew, withDefault = false) { session, _ ->
+            CallService.Bus.service?.send(JSONObject().put("switch", session).toString())
+        }.also { it.show() }
     }
 
     /** The clear-sound switch shows this, without counting as a flip. A flip switches the call too, if one is up. */
@@ -814,7 +870,8 @@ class MainActivity : Activity() {
         findViewById<View>(R.id.idle).visibility = if (readable) View.GONE else View.VISIBLE
         showClear(CallService.Bus.service?.clear ?: prefs().getBoolean("clear", true))
         if (!on) {
-            state.text = "Not on a call"  // texts and voice messages still reach the agent (not "not connected", 2026-11-16)
+            state.text = if (CallService.Bus.connected) "Texting · on a call with ${names[callSession]?.substringBefore(",") ?: "your crew"}"
+                         else "Not on a call"  // texts and voice messages still reach the agent (not "not connected", 2026-11-16)
             showMode("waiting")
         }
         showCrew()
@@ -1071,6 +1128,7 @@ class MainActivity : Activity() {
     private fun show(screen: View) {
         for (s in listOf(listScreen, chatScreen, settingsScreen)) s.visibility = if (s === screen) View.VISIBLE else View.GONE
         if (screen === listScreen) showCrew()
+        showCallBar()
         // A chat opens at its newest message, as a messaging app's does (it opened at the oldest, 2026-11-16)
         if (screen === chatScreen) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
         Messages.viewing = if (screen === chatScreen) current else ""
@@ -1080,14 +1138,12 @@ class MainActivity : Activity() {
     /** Into an agent's chat from the list: on a call the laptop switches to it (and says so); off one, its chat
      *  is shown and texts go to it. */
     private fun open(session: String) {
-        if (session != current) {
-            if (CallService.Bus.connected) CallService.Bus.service?.send(JSONObject().put("switch", session).toString())
-            else {
-                current = session
-                prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
-                showHistory()
-            }
+        if (session != current) {  // a chat, not the call: on a call this doesn't switch it (the call bar leads back)
+            current = session
+            prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
+            showHistory()
         }
+        showConnected(onCall())
         showCrew()
         show(chatScreen)
         if (current.isNotEmpty()) { Messages.seen(this, current); markRead(current) }  // opened: read
@@ -1320,7 +1376,7 @@ class MainActivity : Activity() {
                 if (line.optBoolean("mine") && line.has("id")) sentBubbles[line.getString("id")] = bubble to line.optString("text")
             }
         }
-        if (!CallService.Bus.connected) showConnected(false)  // off a call: the chat if there is one, else the henchman
+        if (!onCall()) showConnected(false)  // not the call's chat: the chat if there is one, else the henchman
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
     }
 

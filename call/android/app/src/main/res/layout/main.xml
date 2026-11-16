@@ -15,6 +15,19 @@
         android:layout_height="match_parent"
         android:background="@color/navy"
         android:orientation="vertical">
+        <!-- While a call is up and another chat or the list shows: who the call is with; a tap returns to it -->
+        <TextView
+            android:id="@+id/callBarList"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/call"
+            android:gravity="center"
+            android:paddingVertical="10dp"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
 
         <LinearLayout
             android:layout_width="match_parent"
@@ -151,6 +164,19 @@
         android:background="@color/navy"
         android:orientation="vertical"
         android:visibility="gone">
+        <!-- While a call is up and another chat or the list shows: who the call is with; a tap returns to it -->
+        <TextView
+            android:id="@+id/callBarChat"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:background="@color/call"
+            android:gravity="center"
+            android:paddingVertical="10dp"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:textStyle="bold"
+            android:visibility="gone" />
+
 
         <!-- Who you are talking to: their henchman, their name, what is happening; and the call button -->
         <LinearLayout
