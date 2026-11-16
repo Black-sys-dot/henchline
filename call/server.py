@@ -721,13 +721,18 @@ def switch_claude(target: Speaker, model: str, settings: dict) -> str:
         return found if isinstance(found, dict) else None
 
     old = parsed(before)
+    if not before.strip():  # no settings of the user's to put back: never an empty file written over Claude's
+        return "Switched. Claude has no settings file of yours, so it may keep this as its default."
     if old is None:
         return "Switched, but Claude's settings couldn't be read before, so its defaults weren't checked."
     expected = {"model"} | ({"effortLevel", "effort", "modelSettings"} if settings.get("effort") else set())
     new: dict | None = old
     for _ in range(40):
         time.sleep(0.25)
-        new = parsed(path.read_text() if path.exists() else "")
+        try:
+            new = parsed(path.read_text() if path.exists() else "")
+        except OSError:
+            new = None
         if new is None:
             continue
         changed = {k for k in set(old) | set(new) if old.get(k) != new.get(k)}
@@ -738,11 +743,14 @@ def switch_claude(target: Speaker, model: str, settings: dict) -> str:
     changed = {k for k in set(old) | set(new) if old.get(k) != new.get(k)}
     if not changed:
         return "Switched; Claude hasn't saved it as a default (yet), so there was nothing to put back."
+    late = bool(settings.get("effort")) and not changed & {"effortLevel", "effort", "modelSettings"}
     if changed <= {"model", "effortLevel", "effort", "modelSettings"}:  # only what the two commands touch: put back
         aside = path.with_name(f"{path.name}.henchline-{os.getpid()}-{time.monotonic_ns()}")
         aside.write_text(before)
         os.chmod(aside, path.stat().st_mode & 0o777)
         aside.replace(path)
+        if late:  # the effort's own save not seen yet: it may still land as the default
+            return "Switched. Its model default was put back; its effort may still save itself as your default."
     else:
         return "Switched, but Claude's settings changed in other ways too, so its defaults were left as they are."
     return ""
