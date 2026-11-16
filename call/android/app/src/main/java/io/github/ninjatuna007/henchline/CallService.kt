@@ -66,6 +66,41 @@ class CallService : Service() {
     // earbuds or a headset, when there are some, win over both.
     @Volatile var speaker = true
         private set
+    // Earbuds or a headset, when there are some: used unless the user picked the speaker or the earpiece over them
+    @Volatile var useHeadset = true
+        private set
+
+    /** Earbuds or a wired headset the call could use now. */
+    fun headsetAvailable(): Boolean = if (Build.VERSION.SDK_INT >= 31)
+        audio.availableCommunicationDevices.any { it.type in HEADSETS }
+    else audio.getDevices(AudioManager.GET_DEVICES_OUTPUTS).any { it.type in HEADSETS || it.type == AudioDeviceInfo.TYPE_BLUETOOTH_A2DP }
+
+    /** Where the call's sound is now, as the button shows it: "headset", "speaker" or "earpiece". */
+    val where get() = if (useHeadset && headsetAvailable()) "headset" else if (speaker) "speaker" else "earpiece"
+
+    /** The route picked with earbuds connected (the user's wish, 2026-11-16: the button flipped its look while the
+     *  sound stayed in the earbuds). Speaker or earpiece over the earbuds need the call path: clear sound is media,
+     *  which follows the earbuds. false: still switching from a tap before. */
+    fun setRoute(to: String): Boolean {
+        if (to == "headset") {
+            useHeadset = true
+            Thread { synchronized(audioLock) { if (running && !clear) route() } }.start()
+            return true
+        }
+        val wasHeadset = useHeadset
+        useHeadset = false
+        val on = to == "speaker"
+        if (clear && headsetAvailable()) {  // media would stay in the earbuds: to the call path, routed there
+            val wasSpeaker = speaker
+            speaker = on
+            if (switchSound(false)) return true
+            speaker = wasSpeaker; useHeadset = wasHeadset
+            return false
+        }
+        if (setSpeaker(on)) return true
+        useHeadset = wasHeadset
+        return false
+    }
     private var proximity: PowerManager.WakeLock? = null  // the screen off at the ear, on the earpiece
     private val generation = java.util.concurrent.atomic.AtomicInteger()  // the audio threads' round
     private val switching = java.util.concurrent.atomic.AtomicBoolean()  // a sound switch under way: taps wait
@@ -465,9 +500,8 @@ class CallService : Service() {
             return
         }
         val devices = audio.availableCommunicationDevices
-        val preferred = listOf(AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-            AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET,
-            if (speaker) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)
+        val preferred = (if (useHeadset) HEADSETS.toList() else emptyList()) +
+            (if (speaker) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)
         val picked = preferred.firstNotNullOfOrNull { type -> devices.firstOrNull { it.type == type } }
         picked?.let { audio.setCommunicationDevice(it) }
         nearEar(picked?.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)
@@ -511,6 +545,9 @@ class CallService : Service() {
         const val SERVER = "server"
         const val CLEAR = "clear"
         const val SPEAKER = "speaker"
+        // Earbuds and headsets the call uses before the phone's own speaker or earpiece, best first
+        val HEADSETS = intArrayOf(AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
+            AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET)
         const val STOP = "stop"
         const val TALK = "talk"
         val TALK_KEYS = setOf(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,

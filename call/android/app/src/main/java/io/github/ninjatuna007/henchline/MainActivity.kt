@@ -113,8 +113,14 @@ class MainActivity : Activity() {
         }
         callButton = findViewById(R.id.call)
         speakerButton = findViewById(R.id.speaker)
-        speakerButton.setOnClickListener {  // loudspeaker ⇄ earpiece, mid-call
+        speakerButton.setOnClickListener {  // loudspeaker ⇄ earpiece, mid-call; with earbuds, a list of the three
             val service = CallService.Bus.service ?: return@setOnClickListener
+            // The list on Android 12 and later, where the call can be put on the earbuds by name (on 10 and 11 picking
+            // them couldn't bring up their call channel)
+            if (android.os.Build.VERSION.SDK_INT >= 31 && service.headsetAvailable()) {
+                panel = RoutePicker(this, service.where) { to -> route(to) }.also { it.show() }
+                return@setOnClickListener
+            }
             val on = !service.speaker
             // Back to the speaker after the earpiece took clear sound away: clear sound again, as it was (the user's
             // catch, 2026-11-16); clear sound is the loudspeaker, so that one switch does both
@@ -166,6 +172,7 @@ class MainActivity : Activity() {
             setOnLongClickListener { callMenu(); true }
         }
         findViewById<View>(R.id.callBarHang).setOnClickListener { hangUp() }
+        getSystemService(android.media.AudioManager::class.java).registerAudioDeviceCallback(devicesWatch, main)
         // The window's edges by hand: the status bar's height to a strip of our own (green on a call), the sides and
         // the bottom (gesture bar, keyboard) as padding, so only the top turns green
         findViewById<View>(R.id.root).setOnApplyWindowInsetsListener { root, insets ->
@@ -451,6 +458,7 @@ class MainActivity : Activity() {
     }
 
     override fun onDestroy() {
+        getSystemService(android.media.AudioManager::class.java).unregisterAudioDeviceCallback(devicesWatch)
         main.removeCallbacks(recordClock)
         lockHint?.dismiss(); lockHint = null
         super.onDestroy()
@@ -992,7 +1000,10 @@ class MainActivity : Activity() {
         val service = CallService.Bus.service ?: return
         panel = CallMenu(this, names[callSession]?.substringBefore(",") ?: "Your crew",
             names.map { (session, name) -> session to name }, callSession,
-            speaker = service.speaker, clear = service.clear, buttonOnly = buttonOnly,
+            speaker = service.speaker, where = service.where,
+            earbuds = android.os.Build.VERSION.SDK_INT >= 31 && service.headsetAvailable(),
+            onRoute = { to -> route(to) },
+            clear = service.clear, buttonOnly = buttonOnly,
             onSwitch = { session ->
                 // The laptop is told, and the phone follows at once: that agent's chat, loaded, and the bar's name
                 // (it waited for the laptop's next word, then didn't load the chat, 2026-11-16)
@@ -1044,12 +1055,50 @@ class MainActivity : Activity() {
         }
     }
 
+    /** Earbuds, speaker or earpiece, picked from the list (earbuds connected): the call's sound goes there. Speaker
+     *  or earpiece over the earbuds leave clear sound (it would follow the earbuds), as the earpiece always does. */
+    private fun route(to: String) {
+        val service = CallService.Bus.service ?: return
+        // Back to the earbuds after speaker or earpiece took clear sound away: clear sound again (it follows them)
+        if (to == "headset" && prefs().getBoolean("clear_back", false)) {
+            service.setRoute("headset")
+            clear.isChecked = true  // its listener switches the sound and forgets clear_back
+            main.postDelayed({ showSpeaker(service.speaker) }, 300)
+            return
+        }
+        val wasClear = service.clear
+        if (!service.setRoute(to)) return  // still switching from the last tap
+        if (to != "headset") prefs().edit().putBoolean("speaker", to == "speaker").apply()
+        if (wasClear && !service.clear) {
+            prefs().edit().putBoolean("clear", false).putBoolean("clear_back", true).apply()
+            showClear(false)
+        }
+        main.postDelayed({ showSpeaker(service.speaker) }, 300)
+    }
+
+    private val devicesWatch = object : android.media.AudioDeviceCallback() {  // earbuds come or go: the button says so
+        override fun onAudioDevicesAdded(added: Array<out android.media.AudioDeviceInfo>) { refreshRoute() }
+        override fun onAudioDevicesRemoved(removed: Array<out android.media.AudioDeviceInfo>) { refreshRoute() }
+    }
+
+    private fun refreshRoute() {
+        val service = CallService.Bus.service ?: return
+        if (CallService.Bus.connected) showSpeaker(service.speaker)
+    }
+
     /** The speaker button as it is: lit on the loudspeaker, dim on the earpiece. */
     private fun showSpeaker(on: Boolean) {
-        speakerButton.background = if (on) android.graphics.drawable.InsetDrawable(
+        val where = CallService.Bus.service?.where ?: if (on) "speaker" else "earpiece"
+        val lit = where != "earpiece"
+        speakerButton.setImageResource(if (where == "headset") R.drawable.ic_headset else R.drawable.ic_sound)
+        speakerButton.background = if (lit) android.graphics.drawable.InsetDrawable(
             GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x33FFFFFF) }, dp(6)) else null
-        speakerButton.alpha = if (on) 1f else 0.6f
-        speakerButton.contentDescription = if (on) "Speaker on: tap for the earpiece" else "Earpiece: tap for the speaker"
+        speakerButton.alpha = if (lit) 1f else 0.6f
+        speakerButton.contentDescription = when (where) {
+            "headset" -> "Earbuds: tap to pick earbuds, speaker or earpiece"
+            "speaker" -> "Speaker on: tap for the earpiece"
+            else -> "Earpiece: tap for the speaker"
+        }
     }
 
     private fun showConnected(on: Boolean) {

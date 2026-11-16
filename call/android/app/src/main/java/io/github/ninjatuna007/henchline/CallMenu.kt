@@ -22,6 +22,9 @@ class CallMenu(
     private val crew: List<Pair<String, String>>,  // session, name
     private val current: String,
     private val speaker: Boolean,
+    private val where: String = if (speaker) "speaker" else "earpiece",  // "headset" when earbuds carry the call
+    private val earbuds: Boolean = false,  // earbuds connected: they're a third choice
+    private val onRoute: (String) -> Unit = {},
     private val clear: Boolean,
     private val buttonOnly: Boolean,
     private val onSwitch: (String) -> Unit,
@@ -39,7 +42,9 @@ class CallMenu(
             sheet.addView(HorizontalScrollView(activity).apply { isHorizontalScrollBarEnabled = false; addView(row) }, wide(10))
         }
         sheet.addView(label("SOUND"), wide(18))
-        sheet.addView(choice("🔊  Speaker", "👂  Earpiece", speaker) { onSpeaker(it); close() }, wide(10, px(48)))
+        if (earbuds) sheet.addView(choices(listOf("🎧  Earbuds" to "headset", "🔊  Speaker" to "speaker",
+            "👂  Earpiece" to "earpiece"), where) { onRoute(it); close() }, wide(10, px(48)))
+        else sheet.addView(choice("🔊  Speaker", "👂  Earpiece", speaker) { onSpeaker(it); close() }, wide(10, px(48)))
         sheet.addView(choice("Clear sound", "Call sound", clear) { onClear(it); close() }, wide(8, px(48)))
         sheet.addView(choice("Open line", "Hold to talk", !buttonOnly) { onButtonOnly(!it); close() }, wide(8, px(48)))
         val hang = primary("Hang up", colour(R.color.hang), Color.WHITE).apply { setOnClickListener { close(); onHangUp() } }
@@ -157,6 +162,25 @@ class CallMenu(
         else -> R.drawable.avatar_handsfree_alive
     }
 
+    /** Parts of a pill, the one that's on lit in cyan; a tap on another picks it (its key). */
+    private fun choices(options: List<Pair<String, String>>, on: String, picked: (String) -> Unit) =
+        LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = rounded(colour(R.color.navy), 24f)
+            setPadding(px(4), px(4), px(4), px(4))
+            for ((words, key) in options) {
+                val lit = key == on
+                addView(TextView(activity).apply {
+                    text = words; textSize = 13.5f; gravity = Gravity.CENTER; maxLines = 1
+                    setTextColor(colour(if (lit) R.color.navy else R.color.text))
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                    background = if (lit) rounded(colour(R.color.cyan), 20f) else null
+                    contentDescription = if (lit) "$words, on" else words
+                    setOnClickListener { if (!lit) picked(key) }
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
+            }
+        }
+
     /** Two halves of a pill, the one that's on lit in cyan; a tap on the other picks it (true: the first). */
     private fun choice(first: String, second: String, firstOn: Boolean, picked: (Boolean) -> Unit) =
         LinearLayout(activity).apply {
@@ -175,4 +199,29 @@ class CallMenu(
                 }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, 1f))
             }
         }
+}
+
+/** With earbuds connected, the speaker button's list (the user's wish, 2026-11-16): where the call's sound goes. */
+class RoutePicker(activity: Activity, private val where: String, private val picked: (String) -> Unit) : BottomPanel(activity) {
+    fun show() {
+        val sheet = open("Sound", "Where you hear the call")
+        for ((icon, words, key) in listOf(Triple("🎧", "Earbuds", "headset"), Triple("🔊", "Speaker", "speaker"),
+                Triple("👂", "Phone earpiece", "earpiece"))) {
+            val on = key == where
+            sheet.addView(LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                setPadding(px(14), px(14), px(14), px(14))
+                background = rounded(colour(if (on) R.color.surface_high else R.color.navy), 16f,
+                    if (on) 2 else 0, colour(R.color.cyan))
+                addView(TextView(activity).apply { text = icon; textSize = 20f }, LinearLayout.LayoutParams(px(38), ViewGroup.LayoutParams.WRAP_CONTENT))
+                addView(TextView(activity).apply {
+                    text = words; textSize = 16f; setTextColor(colour(if (on) R.color.cyan else R.color.text))
+                    typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                if (on) addView(TextView(activity).apply { text = "✓"; textSize = 18f; setTextColor(colour(R.color.cyan)) })
+                contentDescription = if (on) "$words, on" else words
+                setOnClickListener { if (!on) picked(key); close() }
+            }, wide(10))
+        }
+    }
 }
