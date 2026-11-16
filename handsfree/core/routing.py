@@ -309,13 +309,27 @@ def introduced(speaker: Speaker, heard: Heard) -> None:
         (INTRODUCED / speaker.session).touch()
 
 
+why_not = ""  # why the last delivery didn't happen, for a text's sender (the phone) as well as the room
+
+
+def refuse(words: str) -> None:
+    """A delivery that can't happen: said out loud, and kept for the phone (it said only "the laptop says why",
+    out of the user's earshot, 2026-11-16)."""
+    global why_not
+    why_not = words
+    say(words)
+
+
 def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
-    """Type the words, tagged with how they were heard, to `to`, or else to the agent that spoke last."""
+    """Type the words, tagged with how they were heard, to `to`, or else to the agent that spoke last. When it
+    can't, says why out loud and leaves the reason in why_not, for the phone to show too."""
+    global why_not
+    why_not = ""
     speaker = to or last_speaker()
     message = f"{heard.tag} {introduce(speaker, heard)}{text}"
     if speaker is None:
         log(HANDSFREE_LOG, "nobody to send to")
-        say("I heard you, but no agent has spoken yet.")
+        refuse("I heard you, but no agent has spoken yet.")
         return False
     tab = speaker.tab
     if speaker.in_editor:
@@ -325,12 +339,12 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
         if chat and not cursor_bridge.open_chat(speaker.where, chat):
             # Never into whatever chat is open instead: that may be another agent's
             log(HANDSFREE_LOG, f"Cursor bridge couldn't open chat {chat[:8]} in {speaker.where}: nothing typed")
-            say("I couldn't open that Cursor chat, so nothing was typed. Is its window still open?")
+            refuse("I couldn't open that Cursor chat, so nothing was typed. Is its window still open?")
             return False
         wid = cursor_window(speaker.where)
         if not wid:
             log(HANDSFREE_LOG, f"no Cursor window for {speaker.where}")
-            say("I heard you, but I can't find Cursor's window for that project.")
+            refuse("I heard you, but I can't find Cursor's window for that project.")
             return False
         ok = subprocess.run([sys.executable, str(Path(__file__).resolve().parents[1] / "handsfree.py"),
                              "type-into-cursor", wid, message], timeout=20).returncode == 0
@@ -339,23 +353,23 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
             Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
             introduced(speaker, heard)
         if not ok and desktop().locked():
-            say("The laptop's screen is locked, so I can't type into Cursor. "
-                "Agents in a terminal still get your words.")
+            refuse("The laptop's screen is locked, so I can't type into Cursor. "
+                   "Agents in a terminal still get your words.")
         elif not ok:
-            say("I couldn't bring Cursor's window to the front, so I didn't type that anywhere. "
-                "Click Cursor's window and say it again.")
+            refuse("I couldn't bring Cursor's window to the front, so I didn't type that anywhere. "
+                   "Click Cursor's window and say it again.")
         return ok
     if not tab:
         log(HANDSFREE_LOG, f"no terminal tab for {speaker.agent}")
-        say("I heard you, but I don't know which terminal to type that into.")
+        refuse("I heard you, but I don't know which terminal to type that into.")
         return False
     if not desktop().terminals.agent_running(tab):
         log(HANDSFREE_LOG, f"no agent running in {tab.address}")
-        say("I heard you, but the agent I was talking to isn't running any more, so I didn't type it anywhere.")
+        refuse("I heard you, but the agent I was talking to isn't running any more, so I didn't type it anywhere.")
         return False
     if not desktop().terminals.type_line(tab, message):
         log(HANDSFREE_LOG, f"typing into {tab.address} failed")
-        say("I heard you, but that terminal is gone.")
+        refuse("I heard you, but that terminal is gone.")
         return False
     log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.address}")
     Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()

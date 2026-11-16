@@ -340,8 +340,8 @@ def to_agent(words: str, session: str, heard: Heard, switch: bool = True) -> tup
         current = last_speaker()
         if switch and (not current or current.session != session):
             routing.switch_to(target)
-    if not routing.deliver(words, heard, to=target):  # it says why out loud on the laptop
-        return "", "No agent could take that just now (the laptop says why)."
+    if not routing.deliver(words, heard, to=target):  # it says why out loud on the laptop, and keeps it
+        return "", "Not sent: " + (routing.why_not or "the laptop couldn't type it into the agent.")
     got = target or last_speaker()
     return (got.spoken() if got else "your agent"), ""
 
