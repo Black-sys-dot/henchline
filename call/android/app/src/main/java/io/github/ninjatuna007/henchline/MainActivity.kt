@@ -2124,6 +2124,9 @@ class MainActivity : Activity() {
 
     /** A phone command, picked or typed. */
     private fun runCommand(name: String) {
+        // The keyboard down first: the sheet a command opens came up under it (the user's catch, 2026-11-16)
+        getSystemService(android.view.inputmethod.InputMethodManager::class.java)?.hideSoftInputFromWindow(text.windowToken, 0)
+        text.clearFocus()
         when (name) {
             "stop" -> stopAgent()
             "model" -> switchModel()
