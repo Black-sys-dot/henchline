@@ -11,11 +11,12 @@ import android.widget.ImageView
 
 /** A picture to look into, as a messaging app's viewer (the user's wish, 2026-11-16): it opens fitted to the
  *  screen; pinch to zoom (up to six times), drag around while zoomed, double tap to zoom in there or back out.
- *  A single tap is the screen's (it shows or hides the bar). */
+ *  A single tap is the screen's (it shows or hides the bar); a flick sideways, not zoomed, the next picture. */
 class ZoomImage(context: Context) : ImageView(context) {
     private val shown = Matrix()
     private var zoom = 1f  // over the fitted size
     var onTap: (() -> Unit)? = null
+    var onSwipe: ((Int) -> Unit)? = null  // +1 the next picture, -1 the one before (a flick while not zoomed)
 
     init {
         scaleType = ScaleType.MATRIX
@@ -89,6 +90,12 @@ class ZoomImage(context: Context) : ImageView(context) {
             return true
         }
 
+        override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+            if (zoom > 1.01f || kotlin.math.abs(vx) < 800f || kotlin.math.abs(vx) < kotlin.math.abs(vy)) return false
+            onSwipe?.invoke(if (vx < 0) 1 else -1)
+            return true
+        }
+
         override fun onSingleTapConfirmed(e: MotionEvent): Boolean {
             onTap?.invoke()
             return true
@@ -103,3 +110,6 @@ class ZoomImage(context: Context) : ImageView(context) {
         return true
     }
 }
+
+/** A picture in the viewer or an album: an agent's (on the laptop, at url) or yours (its small copy, thumb). */
+data class Pic(val name: String, val url: String?, val type: String, val thumb: String?)

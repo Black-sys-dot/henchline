@@ -515,7 +515,11 @@ class MainActivity : Activity() {
                 if (file == null || line.optString("text").isNotEmpty())
                     say(from, line.getString("text"), mine = from == "you", session = line.optString("session"), keep = false,
                         status = if (from == "you") "delivered" else "")
-                if (file != null) fileCard(from, file, line.optString("session"), keep = false)
+                if (file != null) {
+                    val where = line.optString("session")
+                    if (where == current && joinsAlbum(where)) showHistory()  // it joins the picture before it
+                    else fileCard(from, file, where, keep = false)
+                }
                 // An agent's text arriving in the chat you're looking at: read at once
                 if (line.optString("session") == current && chatScreen.visibility == View.VISIBLE) {
                     if (line.has("tid")) Messages.seen(this, current)
@@ -1813,7 +1817,12 @@ class MainActivity : Activity() {
             Messages.seen(this, current)
             markRead(current)
         }
-        for ((i, line) in history.withIndex()) {
+        var i = 0
+        while (i < history.size) {
+            val line = history[i]
+            var end = i + 1  // pictures sent together: one album
+            while (end < history.size && sameAlbum(history[end - 1], history[end])) end++
+            if (end - i >= 2) { album(history.subList(i, end), current); i = end; continue }
             val file = line.optJSONObject("file")
             if (file != null) fileCard(line.optString("from"), file, current, keep = false)
             else if (line.has("thumb")) picture(line.getString("thumb"), line.optString("text"), current)
@@ -1828,6 +1837,7 @@ class MainActivity : Activity() {
                 // Yours, by id: a delivered reply arriving later changes this bubble, the one on screen
                 if (line.optBoolean("mine") && line.has("id")) sentBubbles[line.getString("id")] = bubble to line.optString("text")
             }
+            i++
         }
         if (!onCall()) showConnected(false)  // not the call's chat: the chat if there is one, else the henchman
         refreshStop()
@@ -1964,7 +1974,11 @@ class MainActivity : Activity() {
     /** A picture whole, as a messaging app's viewer (the user's wish, 2026-11-16: it was a grey box): black, the
      *  whole screen, pinch and drag to look into it, double tap to zoom; a slim bar on top with back, its name and
      *  Save (saves it and opens it in another app), a tap hiding or showing the bar. */
-    private fun showPicture(url: String, name: String, type: String) {
+    private fun showPicture(url: String, name: String, type: String) = showPictures(listOf(Pic(name, url, type, null)), 0)
+
+    /** Several, as an album opens them: at the one tapped, a flick sideways to the next ("2 / 5" in the bar). */
+    private fun showPictures(pics: List<Pic>, start: Int) {
+        var at = start.coerceIn(0, pics.size - 1)
         val dialog = android.app.Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen)
         val screen = FrameLayout(this).apply { setBackgroundColor(0xFF000000.toInt()) }
         val picture = ZoomImage(this)
@@ -1981,26 +1995,129 @@ class MainActivity : Activity() {
             setPadding(dp(12), dp(12), dp(12), dp(12)); contentDescription = "Back"
             setOnClickListener { dialog.dismiss() }
         }, LinearLayout.LayoutParams(dp(48), dp(48)))
-        bar.addView(TextView(this).apply {
-            text = name; setTextColor(0xFFFFFFFF.toInt()); textSize = 16f; maxLines = 1
+        val title = TextView(this).apply {
+            setTextColor(0xFFFFFFFF.toInt()); textSize = 16f; maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.MIDDLE
-        }, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
-        bar.addView(TextView(this).apply {
+        }
+        bar.addView(title, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        val save = TextView(this).apply {
             text = "Save"; setTextColor(getColor(R.color.cyan)); textSize = 16f; setPadding(dp(12), dp(10), dp(4), dp(10))
-            setOnClickListener { Files.open(this@MainActivity, url, name, type) { say("", it, note = true) } }
-        })
+        }
+        bar.addView(save)
         screen.addView(bar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP))
         picture.onTap = { bar.visibility = if (bar.visibility == View.VISIBLE) View.GONE else View.VISIBLE }
+        var asked = 0  // the newest load: an older one finishing late is not shown over it
+        fun load() {
+            val pic = pics[at]
+            title.text = if (pics.size > 1) "${at + 1} / ${pics.size} · ${pic.name}" else pic.name
+            save.visibility = if (pic.url != null) View.VISIBLE else View.GONE  // yours is on your phone already
+            save.setOnClickListener { pic.url?.let { u -> Files.open(this@MainActivity, u, pic.name, pic.type) { say("", it, note = true) } } }
+            picture.setImageDrawable(null)
+            waiting.visibility = View.VISIBLE
+            val ask = ++asked
+            Thread {  // twice the screen's width: room to zoom before it blurs
+                val bitmap = if (pic.url != null) Files.preview(this, pic.url, resources.displayMetrics.widthPixels * 2)
+                             else pic.thumb?.let { decodeSmall(it, resources.displayMetrics.widthPixels * 2) }
+                main.post {
+                    if (!dialog.isShowing || ask != asked) return@post
+                    waiting.visibility = View.GONE
+                    if (bitmap != null) picture.setImageBitmap(bitmap) else say("", "Couldn't load ${pic.name}.", note = true)
+                }
+            }.start()
+        }
+        picture.onSwipe = { step -> val to = at + step; if (to in pics.indices) { at = to; load() } }
         dialog.setContentView(screen)
         dialog.show()
-        Thread {  // twice the screen's width: room to zoom before it blurs
-            val bitmap = Files.preview(this, url, resources.displayMetrics.widthPixels * 2)
-            main.post {
-                if (!dialog.isShowing) return@post
-                waiting.visibility = View.GONE
-                if (bitmap != null) picture.setImageBitmap(bitmap) else say("", "Couldn't load $name.", note = true)
+        load()
+    }
+
+    /** A picture file on the phone, decoded no wider than it needs to be (and never huge). */
+    private fun decodeSmall(path: String, width: Int): android.graphics.Bitmap? = try {
+        val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+        android.graphics.BitmapFactory.decodeFile(path, bounds)
+        var sample = 1
+        while (bounds.outWidth / (sample * 2) >= width) sample *= 2
+        while (bounds.outWidth / sample > 4096 || bounds.outHeight / sample > 4096) sample *= 2
+        android.graphics.BitmapFactory.decodeFile(path, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample })
+    } catch (_: Exception) { null } catch (_: OutOfMemoryError) { null }
+
+    private fun isPicture(line: JSONObject): Boolean =
+        line.has("thumb") || line.optJSONObject("file")?.optString("type")?.startsWith("image/") == true
+
+    /** Two pictures in a row from the same side, sent within a minute: one album, as a messaging app groups them
+     *  (the user's wish, 2026-11-16: five pictures were five bubbles). */
+    private fun sameAlbum(a: JSONObject, b: JSONObject): Boolean =
+        isPicture(a) && isPicture(b) && a.has("thumb") == b.has("thumb") && a.optBoolean("mine") == b.optBoolean("mine") &&
+            a.optString("from") == b.optString("from") && b.optLong("at") - a.optLong("at") in 0..60_000
+
+    /** The newest line of that chat joins an album with the one before it: the chat is drawn again to group them. */
+    private fun joinsAlbum(session: String): Boolean {
+        val history = Chats.load(this, session)
+        return history.size >= 2 && sameAlbum(history[history.size - 2], history[history.size - 1])
+    }
+
+    /** An album: up to four pictures in a square grid, "+N" over the fourth when there are more; a tap opens the
+     *  viewer at that picture, flicking through all of them. Your words with them, if any, under it. */
+    private fun album(lines: List<JSONObject>, session: String) {
+        val first = lines[0]
+        val mine = first.optBoolean("mine")
+        val from = first.optString("from")
+        val pics = lines.map { line ->
+            line.optJSONObject("file")?.let { f -> Pic(f.optString("name", "picture"), f.getString("url"), f.optString("type", "image/*"), null) }
+                ?: Pic(line.optString("text").removePrefix("📎 ").substringBefore("\n"), null, "image/*", line.optString("thumb"))
+        }
+        val said = lines.mapNotNull { l -> l.optString("text").substringAfter("\n", "").trim().ifEmpty { null } }.joinToString("\n")
+        dayLine(first.optLong("at"))
+        val tile = dp(112)
+        val grid = android.widget.GridLayout(this).apply { columnCount = 2 }
+        for (k in 0 until minOf(4, pics.size)) {
+            val cell = FrameLayout(this)
+            val image = ImageView(this).apply {
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                background = GradientDrawable().apply { setColor(0xFF000000.toInt()); cornerRadius = dp(10).toFloat() }
+                clipToOutline = true
+                contentDescription = pics[k].name
+                setOnClickListener { showPictures(pics, k) }
             }
-        }.start()
+            cell.addView(image, FrameLayout.LayoutParams(tile, tile))
+            if (k == 3 && pics.size > 4) cell.addView(TextView(this).apply {
+                text = "+${pics.size - 4}"; setTextColor(0xFFFFFFFF.toInt()); textSize = 26f; gravity = Gravity.CENTER
+                background = GradientDrawable().apply { setColor(0x99000000.toInt()); cornerRadius = dp(10).toFloat() }
+                setOnClickListener { showPictures(pics, 3) }
+            }, FrameLayout.LayoutParams(tile, tile))
+            grid.addView(cell, android.widget.GridLayout.LayoutParams().apply { width = tile; height = tile; setMargins(dp(2), dp(2), dp(2), dp(2)) })
+            val pic = pics[k]
+            val key = (pic.url ?: pic.thumb ?: "") + "#tile"
+            val cached = pictures.get(key)
+            if (cached != null) image.setImageBitmap(cached)
+            else decoder.execute {
+                val bitmap = if (pic.url != null) Files.preview(this, pic.url, tile) else pic.thumb?.let { decodeSmall(it, tile) }
+                if (bitmap != null) pictures.put(key, bitmap)
+                main.post { if (bitmap != null) image.setImageBitmap(bitmap) }
+            }
+        }
+        val bubble = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundResource(if (mine) R.drawable.bubble_mine else R.drawable.bubble_agent)
+            setPadding(dp(6), dp(6), dp(6), dp(6))
+            addView(grid)
+            if (said.isNotEmpty()) addView(TextView(this@MainActivity).apply {
+                text = said; setTextColor(getColor(R.color.text)); textSize = 15f; setPadding(dp(8), dp(6), dp(8), dp(2))
+                maxWidth = tile * 2 + dp(8)
+            })
+        }
+        val row = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = if (mine) Gravity.END else Gravity.START or Gravity.BOTTOM
+            setPadding(0, dp(4), 0, dp(4))
+            setTag(R.id.chat, session)
+        }
+        if (!mine && from.isNotEmpty()) row.addView(ImageView(this).apply { setImageResource(avatarOf(session.ifEmpty { from })) },
+            LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) })
+        row.addView(bubble)
+        if (mine) row.addView(ImageView(this).apply { setImageResource(R.drawable.avatar_you) },
+            LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginStart = dp(8) })
+        chat.addView(row, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
     }
 
     /** A file from a notification (no call up, or the call screen wasn't showing): pictures and audio here,
