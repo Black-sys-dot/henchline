@@ -40,7 +40,7 @@ sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
-from voice.desktop import current as desktop, tmux  # noqa: E402
+from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
                          CALL_PINNED,
                          SPAWNED, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
@@ -287,11 +287,19 @@ async def from_page(message: dict, ear: Ear) -> str:
     return ""
 
 
+def chat_named(speaker: Speaker) -> str:
+    """For one of several Cursor chats in a window: " · " and its first words, to tell them apart."""
+    chat = cursor_bridge.chat_of(speaker.session) if speaker.agent == "cursor" else ""
+    title = cursor_bridge.chat_title(chat) if chat else ""
+    return f" · {title}" if title else ""
+
+
 def agents() -> dict:
     """The agents a call can switch to: heard lately and still running, and the one replies go to now."""
     current, locked = last_speaker(), desktop().locked()
     started = spawned()
-    listed = [{"session": s.session, "name": s.spoken() + (" (laptop locked)" if s.in_editor and locked else ""),
+    listed = [{"session": s.session,
+               "name": s.spoken() + chat_named(s) + (" (laptop locked)" if s.in_editor and locked else ""),
                "spawned": s.tab.owner == tmux.OWNER and s.tab.address in started}
               for s in recent_speakers() if routing.reachable(s)]
     return {"agents": listed,

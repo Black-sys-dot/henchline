@@ -58,6 +58,7 @@ CALL_HANGUP = STATE / "call.hangup"  # end the phone call once talkback is done:
 VOICE_NOTES = STATE / "voicenotes"
 INTRODUCED = STATE / "introduced"  # a file per agent session already told, once, how phone messages work
 SPAWNED = STATE / "spawned.json"  # tmux panes of agents started from the phone: only these can be ended from it
+CHAT_KEY = re.compile(r"-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")  # a Cursor chat's own key
 CALL_PINNED = STATE / "call.pinned"  # the agent picked on this call: another speaking doesn't take the call over
 # A voice message not yet typed after this long is dropped, never typed late: the phone stops waiting at 180 s
 VOICE_NOTE_STALE = 150  # voice messages from the phone, waiting for hands-free to transcribe them
@@ -299,7 +300,10 @@ class Speaker:
             if not other or other.session == self.session or other.agent != self.agent:
                 continue
             in_tab = bool(self.tab) and other.tab == self.tab
-            in_editor = not self.tab and not other.tab and other.where == self.where
+            # In the Cursor editor, a window's record found before any of its chats spoke goes; another chat in that
+            # window, with its own chat id, is another agent and stays
+            in_editor = (not self.tab and not other.tab and other.where == self.where
+                         and not CHAT_KEY.search(other.session))
             if in_tab or in_editor:
                 path.unlink(missing_ok=True)
 

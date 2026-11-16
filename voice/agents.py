@@ -106,6 +106,16 @@ def agent_folder() -> Path:
         return Path.cwd()
 
 
+def agent_where() -> str:
+    """The calling agent's place, as named out loud: its workspace folder's name ("home" for the home folder), or,
+    for a Cursor editor chat (whose shell may sit in /tmp), its window's workspace label."""
+    label = os.environ.get("CURSOR_WORKSPACE_LABEL", "")
+    if label:
+        return label
+    folder = agent_folder()
+    return "home" if folder == Path.home() else folder.name
+
+
 def editor_workspace() -> str | None:
     """A Cursor editor chat runs its commands in a sandbox that hides the editor, so it is known by its folder:
     the editor window whose workspace is that folder or one above it gets the key hands-free found it under
@@ -153,7 +163,10 @@ def identity(agent: str = "", session: str = "") -> tuple[str, str]:
         else:
             agent = "agent"
     if not session:
+        # A Cursor editor chat runs its commands with its own chat id: each chat is its own agent (the user's wish,
+        # 2026-11-16: several chats in one window, each talked to apart)
         session = ((os.environ.get("CLAUDE_CODE_SESSION_ID") if agent == "claude" else None)
+                   or (os.environ.get("CURSOR_CONVERSATION_ID") if agent == "cursor" else None)
                    or (os.environ.get("CURSOR_TRACE_ID") if agent == "cursor" else None)
                    or (editor_workspace() if agent == "cursor" and in_cursor_sandbox() else None)
                    or str(agent_folder()))

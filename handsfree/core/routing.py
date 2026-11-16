@@ -16,7 +16,7 @@ from enum import Enum
 from pathlib import Path
 
 from voice.agents import SPOKEN_TO, identity, process
-from voice.desktop import current as desktop
+from voice.desktop import current as desktop, cursor_bridge
 from voice.state import (BY_HANDSFREE, CALL_PINNED, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent, Speaker,
                          in_call, last_speaker, log, recent_speakers)
 
@@ -319,6 +319,12 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
         return False
     tab = speaker.tab
     if speaker.in_editor:
+        # That very chat brought to the front first, by Henchline's bridge in Cursor; without it, the window's
+        # chat on screen gets the words, as before
+        chat = cursor_bridge.chat_of(speaker.session)
+        if chat and not cursor_bridge.open_chat(speaker.where, chat):
+            log(HANDSFREE_LOG, f"Cursor bridge couldn't open chat {chat[:8]} in {speaker.where}: "
+                               "typing into the open one")
         wid = cursor_window(speaker.where)
         if not wid:
             log(HANDSFREE_LOG, f"no Cursor window for {speaker.where}")

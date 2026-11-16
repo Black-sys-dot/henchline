@@ -30,7 +30,7 @@ sys.path.insert(0, str(HERE))
 
 from voice import spool  # noqa: E402
 import worker  # noqa: E402
-from voice.agents import agent_folder, identity  # noqa: E402
+from voice.agents import agent_where, identity  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
 from voice.state import HOLDS, PLAYING, SPOOL, TALKBACK_LOG, WORKER_PID, Playing, log  # noqa: E402
 
@@ -51,9 +51,7 @@ def stop() -> None:
 
 
 def new_clip(agent: str, session: str, text: str, voice: str) -> spool.Clip:
-    folder = agent_folder()
-    return spool.Clip.of_text(text, agent=agent, session=session, voice=voice,
-                              where="home" if folder == Path.home() else folder.name,
+    return spool.Clip.of_text(text, agent=agent, session=session, voice=voice, where=agent_where(),
                               tab=desktop().terminals.tab_of_caller())
 
 

@@ -57,7 +57,7 @@ from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import files  # noqa: E402
 from voice.speech import whisper  # noqa: E402
 from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN, CALL_RING, CALL_RINGER,  # noqa: E402
-                         CLOSE, HANDSFREE_LOG, HANDSFREE_ON, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES, read_json,
+                         CHAT_KEY, CLOSE, HANDSFREE_LOG, HANDSFREE_ON, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES, read_json,
                          recent_speakers,
                          LISTEN, SPEAKERS, Speaker, in_call, log,
                          release_phase, turn_on_handsfree, write_json)
@@ -140,16 +140,16 @@ def caller(register: bool = False) -> Speaker | None:
     known = Speaker.load(SPEAKERS / f"{session}.json")
     if known or agent == "agent":
         return known
-    if not register:  # only a ring makes its caller known; a text or a file doesn't put it in the crew
+    # Only a ring makes its caller known; a text or a file doesn't put it in the crew. Except a Cursor editor chat:
+    # its own key comes only from its chat id, and the phone's reply must find it (and its window) again
+    if not register and not CHAT_KEY.search(session):
         return Speaker(session, agent)
     # Never heard through talkback: found now, as talkback would (its workspace, its terminal tab), and kept, so an
     # answered ring can be put through to it (a Cursor ring was routed to Claude, 2026-11-15). Not made the one
     # spoken words go to: that is still whoever spoke last, until the ring is answered
-    from voice.agents import agent_folder
+    from voice.agents import agent_where
     from voice.desktop import current as desktop
-    folder = agent_folder()
-    where = "home" if folder == Path.home() else folder.name
-    speaker = Speaker(session, agent, where, desktop().terminals.tab_of_caller())
+    speaker = Speaker(session, agent, agent_where(), desktop().terminals.tab_of_caller())
     speaker.save(SPEAKERS / f"{session}.json")
     return speaker
 
@@ -345,8 +345,8 @@ def voice_note(transcriber: whisper.Transcriber, meta_path: Path) -> None:
             meta_path.unlink(missing_ok=True)
         return
     if age > VOICE_NOTE_STALE:  # the phone has given up on it: never typed late
-        write_json(meta_path, {**meta, "status": "failed", "note": "Not sent: the laptop didn't transcribe it in time."},
-                   private=True)
+        late = "Not sent: the laptop didn't transcribe it in time."
+        write_json(meta_path, {**meta, "status": "failed", "note": late}, private=True)
         wav.unlink(missing_ok=True)
         return
     # Taken: the call server's status check no longer drops it as stale while it is transcribed

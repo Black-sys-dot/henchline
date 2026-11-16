@@ -207,6 +207,13 @@ i = text.index("[") + 1
 open(path, "w").write(text[:i] + "\n" + entry + text[i:].lstrip("\n"))
 PYEOF
     fi
+    # The bridge: each Cursor window opens a chat by its id, so phone messages reach that very chat
+    if command -v cursor >/dev/null; then
+      vsix="$(mktemp --suffix=.vsix)"
+      python3 "$root/cursor-bridge/pack.py" "$vsix" && cursor --install-extension "$vsix" >/dev/null 2>&1 \
+        && say "Cursor: Henchline bridge extension installed (each chat its own on the phone)"
+      rm -f "$vsix"
+    fi
     say "Cursor: rule ~/.cursor/rules/voice.mdc, chat-focus key ctrl+alt+shift+f12"
   fi
   if [ -d "$HOME/.codex" ]; then
