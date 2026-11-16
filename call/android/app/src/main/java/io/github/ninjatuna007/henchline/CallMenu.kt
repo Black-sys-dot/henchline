@@ -55,15 +55,19 @@ class CallMenu(
         val on = session == current
         val name = label.substringBefore(",")
         val project = label.substringAfter(", in ", "").substringBefore(" · ").replace("_", " ")
-        val face = ImageView(activity).apply {
-            setImageResource(MainActivity.avatarOf(session))
-            setPadding(px(6), px(6), px(6), px(6))
+        // A round window that stays put; the henchman lives inside it, clipped by its rim (the user's wish,
+        // 2026-11-16: the whole circle moved, as if the henchman were stuck in a pill)
+        val window = android.widget.FrameLayout(activity).apply {
             background = GradientDrawable().apply {
                 shape = GradientDrawable.OVAL; setColor(colour(R.color.surface_high))
                 if (on) setStroke(px(2), colour(R.color.call_live))
             }
+            outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+            clipToOutline = true
         }
-        addView(face, LinearLayout.LayoutParams(px(60), px(60)))
+        val face = ImageView(activity).apply { setImageResource(MainActivity.avatarOf(session)) }
+        window.addView(face, android.widget.FrameLayout.LayoutParams(px(48), px(48), Gravity.CENTER))
+        addView(window, LinearLayout.LayoutParams(px(60), px(60)))
         addView(TextView(activity).apply {
             text = name; textSize = 12.5f; maxLines = 1; gravity = Gravity.CENTER
             ellipsize = android.text.TextUtils.TruncateAt.END
@@ -77,33 +81,64 @@ class CallMenu(
         }, LinearLayout.LayoutParams(px(84), ViewGroup.LayoutParams.WRAP_CONTENT))
         contentDescription = if (on) "$name in $project, on the call" else "Move the call to $name in $project"
         setOnClickListener { if (!on) { pop(this); onSwitch(session) }; close() }
-        if (!on) eager(face, place)
+        if (!on) alive(face, session, place)
     }
 
-    /** A hop and a little lean, now and then, each a beat after the one before it: eager, not frantic. Only while
-     *  the face is on screen (the menu closed, it stops). */
-    private fun eager(face: ImageView, place: Int) {
+    /** The henchman inside its window, eager to take over, each in its own way and never in step: Claude peeks up
+     *  from below the rim and tilts its head at you, Cursor sneaks in from the side, Codex bobs and leans in;
+     *  every move and pause picked at random. Only while the window is on screen (the menu closed, it stops). */
+    private fun alive(face: ImageView, session: String, place: Int) {
+        val random = java.util.Random(session.hashCode().toLong() xor System.nanoTime())
+        val d = px(1).toFloat()
+        fun anim(prop: android.util.Property<android.view.View, Float>, vararg values: Float) =
+            android.animation.ObjectAnimator.ofFloat(face, prop, *values)
+        val moves: List<() -> android.animation.Animator> = listOf(
+            { android.animation.AnimatorSet().apply {  // peek: duck below the rim, rise slowly, look at you
+                playSequentially(anim(android.view.View.TRANSLATION_Y, 0f, 56 * d).apply { duration = 300 },
+                    anim(android.view.View.TRANSLATION_Y, 56 * d, 6 * d, 0f).apply { duration = 900
+                        interpolator = android.view.animation.DecelerateInterpolator() },
+                    anim(android.view.View.ROTATION, 0f, -12f, -12f, 0f).apply { duration = 1100 }) } },
+            { android.animation.AnimatorSet().apply {  // sneak: out one side, in quickly from the other
+                val side = if (random.nextBoolean()) 1f else -1f
+                playSequentially(anim(android.view.View.TRANSLATION_X, 0f, 56 * d * side).apply { duration = 220 },
+                    anim(android.view.View.TRANSLATION_X, -56 * d * side, 0f).apply { duration = 420
+                        interpolator = android.view.animation.OvershootInterpolator(1.4f) }) } },
+            { android.animation.AnimatorSet().apply {  // lean in: closer, a nod, back
+                playTogether(anim(android.view.View.SCALE_X, 1f, 1.18f, 1.18f, 1f),
+                    anim(android.view.View.SCALE_Y, 1f, 1.18f, 1.18f, 1f),
+                    anim(android.view.View.TRANSLATION_Y, 0f, 4 * d, -3 * d, 0f))
+                duration = 1000 } },
+            { android.animation.AnimatorSet().apply {  // bob: a couple of eager little hops in place
+                playTogether(anim(android.view.View.TRANSLATION_Y, 0f, -7 * d, 0f, -4 * d, 0f),
+                    anim(android.view.View.ROTATION, 0f, 5f, -5f, 0f))
+                duration = 700 } },
+        )
+        val agent = session.substringBefore("-")
+        val likes = when (agent) {  // its favourite moves come up most
+            "claude" -> listOf(0, 0, 2, 3)
+            "cursor" -> listOf(1, 1, 3, 2)
+            "codex" -> listOf(3, 3, 2, 0)
+            else -> listOf(0, 1, 2, 3)
+        }
         var running: android.animation.Animator? = null
-        face.addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
-            override fun onViewAttachedToWindow(v: android.view.View) {
-                val hop = android.animation.ObjectAnimator.ofFloat(face, android.view.View.TRANSLATION_Y,
-                    0f, -px(9).toFloat(), 0f, -px(4).toFloat(), 0f).apply { duration = 700 }
-                val lean = android.animation.ObjectAnimator.ofFloat(face, android.view.View.ROTATION, 0f, -6f, 6f, 0f)
-                    .apply { duration = 700 }
-                running = android.animation.AnimatorSet().apply {
-                    playTogether(hop, lean)
-                    startDelay = 250L + place * 350L
-                    addListener(object : android.animation.AnimatorListenerAdapter() {
-                        private var cancelled = false
-                        override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
-                        override fun onAnimationEnd(animation: android.animation.Animator) {
-                            if (!cancelled) { startDelay = 1600L; start() }  // a pause, then again
-                        }
-                    })
-                    start()
-                }
+        var stopped = true
+        fun next(delay: Long) {
+            if (stopped) return
+            running = moves[likes[random.nextInt(likes.size)]]().apply {
+                startDelay = delay
+                addListener(object : android.animation.AnimatorListenerAdapter() {
+                    private var cancelled = false
+                    override fun onAnimationCancel(animation: android.animation.Animator) { cancelled = true }
+                    override fun onAnimationEnd(animation: android.animation.Animator) {
+                        if (!cancelled) next(900L + random.nextInt(2200))
+                    }
+                })
+                start()
             }
-            override fun onViewDetachedFromWindow(v: android.view.View) { running?.cancel(); running = null }
+        }
+        face.addOnAttachStateChangeListener(object : android.view.View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: android.view.View) { stopped = false; next(300L + place * 400L + random.nextInt(500)) }
+            override fun onViewDetachedFromWindow(v: android.view.View) { stopped = true; running?.cancel(); running = null }
         })
     }
 
