@@ -65,6 +65,11 @@ class Terminals(ABC):
     def only_a_shell(self, window: Window) -> bool:
         """Does that focused terminal window show a tab running nothing but a shell? Unsure: False."""
 
+    def interrupt(self, tab: Tab) -> bool:
+        """Stop what the tab's agent is doing, as Escape typed in it does (the phone's stop button). A terminal that
+        can't be sent a key without its window in front says no."""
+        return False
+
     def agent_tabs(self) -> list[tuple[Tab, int]]:
         """Every tab whose foreground program is an agent, with that program's pid: for finding an agent the user
         asks for that hasn't spoken yet. A terminal that can't be asked lists none."""

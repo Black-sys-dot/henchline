@@ -245,21 +245,6 @@
                 android:tint="#FFFFFF" />
         </LinearLayout>
 
-        <!-- The agent's model, as a slim strip across the chat under its name (which model works matters: the
-             user's wish, 2026-11-16; a pill under the name looked out of place); tap it to switch mid-chat -->
-        <TextView
-            android:id="@+id/modelChip"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:background="@color/surface"
-            android:contentDescription="Switch this agent's model"
-            android:ellipsize="end"
-            android:gravity="center"
-            android:maxLines="1"
-            android:paddingVertical="6dp"
-            android:text="✦ Model · tap to switch"
-            android:textColor="@color/cyan"
-            android:textSize="13sp" />
 
         <FrameLayout
             android:layout_width="match_parent"
@@ -337,48 +322,90 @@
             android:id="@+id/inputRow"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:gravity="center_vertical"
-            android:orientation="horizontal"
-            android:paddingHorizontal="12dp"
-            android:paddingBottom="12dp">
-
-            <!-- Attach pictures or files: for the agent whose chat this is -->
-            <ImageButton
-                android:id="@+id/attach"
-                android:layout_width="44dp"
-                android:layout_height="48dp"
-                android:layout_marginEnd="4dp"
-                android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="Attach pictures or files"
-                android:enabled="false"
-                android:src="@drawable/ic_attach"
-                android:tint="@color/muted" />
+            android:layout_marginHorizontal="10dp"
+            android:layout_marginBottom="10dp"
+            android:background="@drawable/compose_box"
+            android:orientation="vertical"
+            android:paddingHorizontal="8dp"
+            android:paddingTop="4dp"
+            android:paddingBottom="8dp">
 
             <EditText
                 android:id="@+id/text"
-                android:layout_width="0dp"
-                android:layout_height="48dp"
-                android:layout_weight="1"
-                android:background="@drawable/pill"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:background="@android:color/transparent"
                 android:enabled="false"
                 android:hint="Message your crew…"
                 android:imeOptions="actionSend"
                 android:inputType="textCapSentences"
-                android:paddingHorizontal="18dp"
+                android:minHeight="48dp"
+                android:paddingHorizontal="12dp"
                 android:textColor="@color/text"
                 android:textColorHint="@color/muted" />
 
-            <ImageButton
-                android:id="@+id/send"
-                android:layout_width="48dp"
-                android:layout_height="48dp"
-                android:layout_marginStart="8dp"
-                android:background="@drawable/round_call"
-                android:backgroundTint="@color/cyan"
-                android:contentDescription="Send"
-                android:enabled="false"
-                android:src="@drawable/ic_send"
-                android:tint="@color/navy" />
+            <!-- Below the words, as in the Claude app: attach, the agent's model (tap to switch), send or the mic -->
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:gravity="center_vertical"
+                android:orientation="horizontal">
+
+                <ImageButton
+                    android:id="@+id/attach"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="Add a photo, a picture or files"
+                    android:enabled="false"
+                    android:src="@drawable/ic_add"
+                    android:tint="@color/text" />
+
+                <TextView
+                    android:id="@+id/modelChip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="4dp"
+                    android:background="@drawable/chip"
+                    android:contentDescription="The agent's model: tap to switch"
+                    android:ellipsize="end"
+                    android:maxLines="1"
+                    android:maxWidth="220dp"
+                    android:paddingHorizontal="14dp"
+                    android:paddingVertical="8dp"
+                    android:text="✦ Model"
+                    android:textColor="@color/text"
+                    android:textSize="14sp" />
+
+                <View
+                    android:layout_width="0dp"
+                    android:layout_height="1dp"
+                    android:layout_weight="1" />
+
+                <!-- While the agent works on what you sent: stop it, as Escape in its terminal (the Claude app's) -->
+                <ImageButton
+                    android:id="@+id/stop"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:layout_marginEnd="8dp"
+                    android:background="@drawable/round_call"
+                    android:backgroundTint="@color/surface_high"
+                    android:contentDescription="Stop the agent"
+                    android:src="@drawable/ic_stop"
+                    android:tint="@color/text"
+                    android:visibility="gone" />
+
+                <ImageButton
+                    android:id="@+id/send"
+                    android:layout_width="48dp"
+                    android:layout_height="48dp"
+                    android:background="@drawable/round_call"
+                    android:backgroundTint="@color/cyan"
+                    android:contentDescription="Send"
+                    android:enabled="false"
+                    android:src="@drawable/ic_send"
+                    android:tint="@color/navy" />
+            </LinearLayout>
         </LinearLayout>
     </LinearLayout>
 

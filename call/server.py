@@ -741,6 +741,34 @@ async def crew_model(request: web.Request) -> web.Response:
     return web.json_response({"ok": True, "name": model["name"]})
 
 
+async def crew_stop(request: web.Request) -> web.Response:
+    """The phone's stop button: the agent stops what it's doing, as Escape in its terminal (or Cursor's own stop for
+    an editor chat, through the bridge). {session}"""
+    trusted(request)
+    try:
+        session = str((await request.json()).get("session", ""))
+    except (ValueError, AttributeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    if target is None:
+        return web.json_response({"note": "That agent isn't known to the laptop."}, status=404)
+    loop = asyncio.get_running_loop()
+    if target.in_editor:
+        chat = cursor_bridge.chat_of(target.session)
+        stopped = bool(chat) and await loop.run_in_executor(None, cursor_bridge.ask_window, chat, {"stop": chat})
+        if not stopped and cursor_bridge.last_why == "not a chat id":
+            return web.json_response({"note": "Cursor runs an older Henchline bridge: Reload Window in Cursor."},
+                                     status=409)
+    else:
+        terminals = desktop().terminals
+        running = await loop.run_in_executor(None, terminals.agent_running, target.tab)
+        stopped = running and await loop.run_in_executor(None, terminals.interrupt, target.tab)
+    if not stopped:
+        return web.json_response({"note": "Couldn't stop it from here."}, status=409)
+    log(HANDSFREE_LOG, f"stopped {target.spoken()} from the phone")
+    return web.json_response({"ok": True})
+
+
 async def crew_end(request: web.Request) -> web.Response:
     """Ending an agent from the phone (the long-press menu, after asking): only one Henchline started itself, in
     its tmux pane. Agents the user started never are."""
@@ -991,6 +1019,7 @@ def main() -> int:
     app.router.add_get("/crew/folders", crew_folders)
     app.router.add_post("/crew/new", crew_new)
     app.router.add_post("/crew/end", crew_end)
+    app.router.add_post("/crew/stop", crew_stop)
     app.router.add_get("/crew/models", crew_models)
     app.router.add_post("/crew/model", crew_model)
     app.router.add_get("/files/{secret}/{name}", sent_file)

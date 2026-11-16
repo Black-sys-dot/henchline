@@ -148,7 +148,13 @@ class MainActivity : Activity() {
         setUpTalkButton()
         send.setOnClickListener { sendTyped() }
         setUpVoiceNotes()
-        attach.setOnClickListener { if (locked) endVoiceNote(keep = false, why = "Dropped") else pickFiles() }
+        attach.setOnClickListener {
+            if (locked) endVoiceNote(keep = false, why = "Dropped")
+            else panel = AddSheet(this) { what ->
+                when (what) { "Camera" -> takePhoto(); "Photos" -> pickPhotos(); else -> pickFiles() }
+            }.also { it.show() }
+        }
+        findViewById<View>(R.id.stop).setOnClickListener { stopAgent() }
         text.setOnEditorActionListener { _, action, _ -> (action == EditorInfo.IME_ACTION_SEND).also { if (it) sendTyped() } }
         requestPermissions(arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS,
             Manifest.permission.BLUETOOTH_CONNECT), 1)
@@ -177,12 +183,48 @@ class MainActivity : Activity() {
             .putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true), PICK_FILES)
     }
 
+    /** Photos: the phone's photo picker (no permission needed), several at once. */
+    private fun pickPhotos() {
+        val intent = if (android.os.Build.VERSION.SDK_INT >= 33)
+            Intent(android.provider.MediaStore.ACTION_PICK_IMAGES).putExtra(android.provider.MediaStore.EXTRA_PICK_IMAGES_MAX, 20)
+        else Intent(Intent.ACTION_GET_CONTENT).setType("image/*").putExtra(Intent.EXTRA_ALLOW_MULTIPLE, true)
+        startActivityForResult(intent, PICK_FILES)
+    }
+
+    private var photo: android.net.Uri? = null  // where the camera puts the picture it takes
+
+    /** Camera: a picture taken now, into the phone's Pictures/Henchline, then shared like any picked file. */
+    private fun takePhoto() {
+        val values = android.content.ContentValues().apply {
+            put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "henchline-${System.currentTimeMillis()}.jpg")
+            put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
+            put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Henchline")
+        }
+        photo = contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
+        try {
+            startActivityForResult(Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
+                .putExtra(android.provider.MediaStore.EXTRA_OUTPUT, photo), TAKE_PHOTO)
+        } catch (_: android.content.ActivityNotFoundException) {
+            contentResolver.delete(photo!!, null, null); photo = null
+            android.widget.Toast.makeText(this, "No camera app", android.widget.Toast.LENGTH_SHORT).show()
+        }
+    }
+
     @Deprecated("the platform Activity has no result API besides this")
     override fun onActivityResult(code: Int, result: Int, data: Intent?) {
         super.onActivityResult(code, result, data)
+        if (code == TAKE_PHOTO) {
+            val taken = photo.also { photo = null } ?: return
+            if (result == RESULT_OK) attachUris(listOf(taken)) else contentResolver.delete(taken, null, null)
+            return
+        }
         if (code != PICK_FILES || result != RESULT_OK || data == null) return
         val uris = data.clipData?.let { clip -> (0 until clip.itemCount).map { clip.getItemAt(it).uri } }
             ?: listOfNotNull(data.data)
+        attachUris(uris)
+    }
+
+    private fun attachUris(uris: List<android.net.Uri>) {
         if (uris.isEmpty()) return
         // The same sheet as sharing from another app (the user's wish, 2026-11-15): what it is, who gets it (this
         // chat's agent first), a caption; anything already typed in the box comes along as the caption
@@ -445,6 +487,7 @@ class MainActivity : Activity() {
                     say(from, line.getString("text"), session = current, keep = false)
                     for ((bubble, words) in myBubbles) bubble.text = stamp(bubble, words, "read")
                     myBubbles.clear()
+                    main.post { refreshStop() }  // it answered: nothing to stop
                     if (chatScreen.visibility == View.VISIBLE) {
                         if (line.has("tid")) Messages.seen(this, current)
                         markRead(current)
@@ -950,8 +993,27 @@ class MainActivity : Activity() {
 
     /** A line of yours moved on (delivered): its ticks change where it is, nothing else redrawn. */
     private fun tick(id: String, status: String) {
+        refreshStop()
         val (bubble, words) = sentBubbles[id] ?: return
         bubble.text = stamp(bubble, words, status)
+    }
+
+    /** The stop square: shown while the agent works on what you sent, i.e. your last line there was typed into it
+     *  (delivered) and it hasn't answered since (the Claude app's stop button, the user's wish, 2026-11-16). */
+    private fun refreshStop() {
+        val last = if (current.isEmpty()) null else Chats.last(this, current)
+        val working = last != null && last.optBoolean("mine") && last.optString("status") == "delivered"
+        findViewById<View>(R.id.stop).visibility = if (working) View.VISIBLE else View.GONE
+    }
+
+    private fun stopAgent() {
+        val session = current.ifEmpty { return }
+        findViewById<View>(R.id.stop).visibility = View.GONE
+        ask("/crew/stop", JSONObject().put("session", session)) { answer ->
+            android.widget.Toast.makeText(this, if (answer.optBoolean("ok")) "Stopped" else answer.optString("note").ifEmpty { "Not stopped" },
+                android.widget.Toast.LENGTH_SHORT).show()
+            if (!answer.optBoolean("ok")) refreshStop()
+        }
     }
 
     private val bubbleAt = java.util.WeakHashMap<TextView, Long>()  // when each bubble's line was said
@@ -1173,12 +1235,12 @@ class MainActivity : Activity() {
      *  2026-11-16); until it answers, the one last switched to from here. */
     private fun showModel(session: String) {
         val chip = findViewById<TextView>(R.id.modelChip)
-        chip.text = prefs().getString("model_$session", null)?.let { "✦ " + shortModel(it) + "  ·  tap to switch" } ?: "✦ Model · tap to switch"
+        chip.text = prefs().getString("model_$session", null)?.let { "✦ " + shortModel(it) } ?: "✦ Model"
         if (session.isEmpty() || Files.origin(this) == null) return
         ask("/crew/models?only=now&session=" + android.net.Uri.encode(session), null) { answer ->
             val now = answer.optString("now")
             if (now.isNotEmpty() && session == current) {
-                chip.text = "✦ " + shortModel(now) + "  ·  tap to switch"
+                chip.text = "✦ " + shortModel(now)
                 prefs().edit().putString("model_$session", now).apply()
             }
         }
@@ -1389,6 +1451,7 @@ class MainActivity : Activity() {
             }
         }
         if (!onCall()) showConnected(false)  // not the call's chat: the chat if there is one, else the henchman
+        refreshStop()
         chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
     }
 
@@ -1564,6 +1627,7 @@ class MainActivity : Activity() {
         const val ANSWER = "io.github.ninjatuna007.henchline.ANSWER"  // from IncomingActivity's Answer
         const val MIC_FOR_CALL = 2  // the permission request a call waits on
         const val PICK_FILES = 3  // the paperclip's picker
+        const val TAKE_PHOTO = 5  // the + sheet's camera
         // Pictures in the chat: decoded two at a time and kept a while, for the app's whole life (not per screen)
         private val decoder = java.util.concurrent.Executors.newFixedThreadPool(2)
         private val pictures = object : android.util.LruCache<String, android.graphics.Bitmap>(16 * 1024 * 1024) {  // 16 MB

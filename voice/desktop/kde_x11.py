@@ -86,6 +86,10 @@ class Konsole(AnyTerminal):
             time.sleep(TYPE_PAUSE)
         return True
 
+    def interrupt(self, tab: Tab) -> bool:
+        """Escape, sent to the tab as Konsole sends text: no window raised, no key pressed."""
+        return qdbus_ok(tab.owner, tab.address, "sendText", "\x1b")
+
     def only_a_shell(self, window: Window) -> bool:
         if not window.is_app("konsole"):
             return super().only_a_shell(window)  # another terminal: its one shell child's foreground job

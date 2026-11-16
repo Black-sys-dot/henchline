@@ -218,6 +218,12 @@ class WithTmux(Terminals):
     def only_a_shell(self, window: Window) -> bool:
         return self.inner.only_a_shell(window)
 
+    def interrupt(self, tab: Tab) -> bool:
+        if tab.owner != OWNER:
+            return self.inner.interrupt(tab)
+        done = tmux("send-keys", "-t", tab.address, "Escape")
+        return bool(done and done.returncode == 0)
+
     def agent_tabs(self) -> list[tuple[Tab, int]]:
         found = list(self.inner.agent_tabs())
         for line in out("list-panes", "-a", "-F", "#{pane_id} #{pane_pid}").splitlines():

@@ -388,3 +388,29 @@ class ModelPicker(
         list("")
     }
 }
+
+/** The + in the message box (the Claude app's "Add context"): Camera, Photos, Files, as tiles. */
+class AddSheet(activity: Activity, private val picked: (String) -> Unit) : BottomPanel(activity) {
+    fun show() {
+        val sheet = open("Add", "For the agent whose chat this is")
+        val tiles = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
+        for ((icon, name) in listOf("📷" to "Camera", "🖼" to "Photos", "📄" to "Files")) {
+            tiles.addView(LinearLayout(activity).apply {
+                orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER
+                setPadding(px(8), px(18), px(8), px(18))
+                background = rounded(colour(R.color.navy), 18f, 1, colour(R.color.surface_high))
+                addView(TextView(activity).apply { text = icon; textSize = 26f; gravity = Gravity.CENTER })
+                addView(TextView(activity).apply {
+                    text = name; setTextColor(colour(R.color.text)); textSize = 15f; gravity = Gravity.CENTER
+                    setPadding(0, px(6), 0, 0)
+                })
+                setOnClickListener { pop(this); close(); picked(name) }
+            }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f).apply {
+                marginEnd = if (name != "Files") px(10) else 0
+            })
+        }
+        sheet.addView(tiles, wide(18))
+        sheet.addView(quiet("Cancel") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
+    }
+}
