@@ -1189,6 +1189,7 @@ class MainActivity : Activity() {
                         say("", "✦ Switched to $name", note = true)
                         prefs().edit().putString("model_$session", name).apply()
                         findViewById<TextView>(R.id.modelChip).text = "✦ $name"
+                        done.optString("note").takeIf { it.isNotEmpty() }?.let(toast)  // e.g. press Enter in Konsole
                     } else toast(done.optString("note").ifEmpty { "Didn't switch." })
                 }
             }.also { it.show() }

@@ -18,7 +18,7 @@ from pathlib import Path
 from voice.agents import SPOKEN_TO, identity, process
 from voice.desktop import current as desktop
 from voice.state import (BY_HANDSFREE, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent, Speaker, in_call,
-                         last_speaker, log, read_json, recent_speakers, write_json)
+                         last_speaker, log, recent_speakers)
 
 SAY = Path(__file__).resolve().parents[2] / "talkback/scripts/say.py"
 AFTER_SWITCH = 30.0  # seconds to start talking after "Now talking to …"
@@ -294,16 +294,16 @@ INTRO = ("(Henchline, said once: I'm writing from my phone and can't see this sc
 def introduce(speaker: Speaker | None, heard: Heard) -> str:
     """The first phone message an agent session gets says how to answer it (the user's idea, 2026-11-16: a Cursor
     CLI started from the phone answered only in its terminal, not knowing the phone can't see it)."""
-    if speaker is None or heard not in PHONE or speaker.session in read_json(INTRODUCED).get("sessions", []):
+    if speaker is None or heard not in PHONE or (INTRODUCED / speaker.session).exists():
         return ""
     return INTRO
 
 
 def introduced(speaker: Speaker, heard: Heard) -> None:
-    if heard in PHONE:
-        seen = read_json(INTRODUCED).get("sessions", [])
-        if speaker.session not in seen:
-            write_json(INTRODUCED, {"sessions": [*seen[-499:], speaker.session]})
+    """Marked once delivered: a file per session, so the call server and hands-free never write over each other."""
+    if heard in PHONE and speaker.session and "/" not in speaker.session:
+        INTRODUCED.mkdir(parents=True, exist_ok=True)
+        (INTRODUCED / speaker.session).touch()
 
 
 def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:

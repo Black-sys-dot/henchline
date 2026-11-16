@@ -598,22 +598,22 @@ def switch_model(target: Speaker, model: dict) -> str:
         before = read_json(settings).get("model")
         if not terminals.type_line(target.tab, f"/model {model['id']}"):
             return "Couldn't type into it."
-        for _ in range(8):  # it writes the new default within a second or two
+        written = None
+        for _ in range(20):  # it writes the new default within a second or two; up to ten
             time.sleep(0.5)
-            now = read_json(settings)
-            if now.get("model") != before:
+            if read_json(settings).get("model") != before:
+                written = read_json(settings).get("model")
                 break
-        if now and now.get("model") != before:
-            text = settings.read_text()
-            written = f'"model": {json.dumps(now.get("model"))}'
-            if before is not None and text.count(written) == 1:  # just that line, the rest as the user had it
-                settings.write_text(text.replace(written, f'"model": {json.dumps(before)}'))
-            else:
-                if before is None:
-                    now.pop("model", None)
-                else:
-                    now["model"] = before
-                settings.write_text(json.dumps(now, indent=2) + "\n")
+        if written is None:
+            return ""
+        # Only that one line goes back, read again right now, and only while it still holds what Claude just wrote:
+        # anything else in the file (or a later change) is left as it is
+        text = settings.read_text()
+        line = f'"model": {json.dumps(written)}'
+        if before is None or text.count(line) != 1:
+            return (f"Switched, but Claude also made {model['name']} your default for new sessions "
+                    "(change it with /model).")
+        settings.write_text(text.replace(line, f'"model": {json.dumps(before)}'))
         return ""
     if target.agent == "cursor":  # its picker, filtered by the model's own name, then Enter on the first match
         words = []
@@ -621,13 +621,22 @@ def switch_model(target: Speaker, model: dict) -> str:
             if word.lower() in CURSOR_TRIM:
                 break
             words.append(word)
-        if not words or not terminals.type_line(target.tab, "/model " + " ".join(words)):
+        name = " ".join(words)
+        # Its /model with a name switches at once to its best match (no list), or opens its list when none matches
+        if not words or not terminals.type_line(target.tab, f"/model {name}"):
             return "Couldn't type into it."
-        time.sleep(1.0)
-        if target.tab.owner == tmux.OWNER:
-            tmux.tmux("send-keys", "-t", target.tab.address, "Enter")
-        else:
-            return "Picked in its list: press Enter there to confirm."
+        if target.tab.owner != tmux.OWNER:  # a Konsole tab: its screen can't be read back
+            return f"Switched, to Cursor's best match for {name}."
+        time.sleep(1.5)
+        lines = tmux.out("capture-pane", "-p", "-t", target.tab.address).splitlines()
+        if any(line.strip().startswith("Filter:") for line in lines[-30:]):  # no match: its list is open
+            tmux.tmux("send-keys", "-t", target.tab.address, "Escape")
+            return f"Cursor has no model called {name}: left as it was."
+        # Its status line shows the model now in use ("Claude Opus 5.5 300K Medium   …   Run Everything")
+        status = next((line.strip() for line in reversed(lines) if "Run Everything" in line or " · MAX" in line), "")
+        now = re.split(r"\s{2,}| · ", status)[0] if status else ""
+        if now and not re.match(re.escape(name) + r"(\s|$)", now, re.I):
+            return f"Switched, but Cursor picked {now} (its best match for {name})."
         return ""
     return "Codex switches models only in its own picker: start a new chat with the model instead."
 
@@ -648,6 +657,8 @@ async def crew_model(request: web.Request) -> web.Response:
     if model is None:
         return web.json_response({"note": f"{target.agent} has no model {wanted}."}, status=400)
     why = await loop.run_in_executor(None, switch_model, target, model)
+    if why.startswith("Switched,"):
+        return web.json_response({"ok": True, "name": model["name"], "note": why})
     if why:
         return web.json_response({"note": why}, status=409)
     log(HANDSFREE_LOG, f"{target.spoken()} switched to {model['name']} from the phone")
