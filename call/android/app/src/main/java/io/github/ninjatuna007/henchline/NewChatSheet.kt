@@ -311,16 +311,19 @@ class ChatActionsSheet(
     private val canEnd: Boolean,
     private val gone: Boolean,  // its agent is no longer on the laptop's crew list
     private val onClear: () -> Unit,
+    private val onRemove: () -> Unit,
     private val onEnd: (done: (String?) -> Unit) -> Unit,
 ) : BottomPanel(activity) {
     fun show() {
         val sheet = open(title, subtitle)
         val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         sheet.addView(rows, wide(16))
-        if (gone) rows.addView(row("🗑", "Remove chat", "Its agent has gone from the laptop: the chat leaves the list", R.color.text) {
+        if (!gone) rows.addView(row("🧹", "Clear chat", "On this phone only: the agent keeps its conversation", R.color.text) {
             onClear(); close()
-        }) else rows.addView(row("🧹", "Clear chat", "On this phone only: the agent keeps its conversation", R.color.text) {
-            onClear(); close()
+        })
+        // Always there: an agent ended on the laptop may still be on the phone's last list (2026-11-16)
+        rows.addView(row("🗑", "Remove chat", "From this phone's list; it comes back only if the agent is still running", R.color.text) {
+            onRemove(); close()
         })
         if (canEnd && !gone) rows.addView(row("⏹", "End agent", "Closes its tmux window on the laptop", R.color.hang) { confirm(rows) })
         else if (!gone) rows.addView(TextView(activity).apply {

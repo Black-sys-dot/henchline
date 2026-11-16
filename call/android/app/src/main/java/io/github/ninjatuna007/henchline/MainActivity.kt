@@ -1240,7 +1240,7 @@ class MainActivity : Activity() {
     /** One screen at a time: the chat list, a chat, or settings. */
     private fun show(screen: View) {
         for (s in listOf(listScreen, chatScreen, settingsScreen)) s.visibility = if (s === screen) View.VISIBLE else View.GONE
-        if (screen === listScreen) showCrew()
+        if (screen === listScreen) { showCrew(); refreshCrewQuietly() }
         showCallBar()
         // A chat opens at its newest message, as a messaging app's does (it opened at the oldest, 2026-11-16)
         if (screen === chatScreen) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
@@ -1294,6 +1294,18 @@ class MainActivity : Activity() {
                 chip.text = "✦ " + (answer.optString("label").ifEmpty { shortModel(now) })
                 prefs().edit().putString("model_$session", now).apply()
             }
+        }
+    }
+
+    private var crewAsked = 0L
+
+    /** The list coming into view: the laptop's crew asked for again, quietly, at most every half minute, so agents
+     *  ended on the laptop leave the list without a pull (one stayed listed after it was killed, 2026-11-16). */
+    private fun refreshCrewQuietly() {
+        if (System.currentTimeMillis() - crewAsked < 30_000 || Files.origin(this) == null) return
+        crewAsked = System.currentTimeMillis()
+        ask("/crew", JSONObject()) { answer ->
+            if (answer.has("agents")) { takeCrew(answer); if (listScreen.visibility == View.VISIBLE) showCrew() }
         }
     }
 
@@ -1424,6 +1436,15 @@ class MainActivity : Activity() {
             onClear = {
                 Chats.clear(this, session)
                 if (session == current) showHistory()
+                showCrew()
+            },
+            onRemove = {
+                Chats.clear(this, session)
+                names = names - session
+                val kept = org.json.JSONArray(prefs().getString("crew", "[]"))
+                val crew = org.json.JSONArray((0 until kept.length()).map { kept.getJSONObject(it) }.filter { it.optString("session") != session })
+                prefs().edit().putString("crew", crew.toString()).apply()
+                if (session == current) { current = ""; prefs().edit().putString("current", "").apply() }
                 showCrew()
             },
             onEnd = { done ->
