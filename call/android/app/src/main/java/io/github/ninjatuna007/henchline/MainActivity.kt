@@ -43,6 +43,7 @@ class MainActivity : Activity() {
     private lateinit var search: EditText
     private var quote = ""  // the message being replied to (swiped right), sent along with the answer
     private lateinit var callButton: ImageButton
+    private lateinit var speakerButton: ImageButton
     private lateinit var talk: Button
     private lateinit var who: TextView
     private lateinit var avatar: ImageView
@@ -109,6 +110,15 @@ class MainActivity : Activity() {
             setOnClickListener { askName(this) }
         }
         callButton = findViewById(R.id.call)
+        speakerButton = findViewById(R.id.speaker)
+        speakerButton.setOnClickListener {  // loudspeaker ⇄ earpiece, mid-call
+            val service = CallService.Bus.service ?: return@setOnClickListener
+            val on = !service.speaker
+            if (!service.setSpeaker(on)) return@setOnClickListener  // still switching from the last tap
+            prefs().edit().putBoolean("speaker", on).apply()
+            if (!on) { prefs().edit().putBoolean("clear", false).apply(); showClear(false) }  // the earpiece is the call path
+            showSpeaker(on)
+        }
         talk = findViewById(R.id.talk)
         who = findViewById(R.id.who)
         avatar = findViewById(R.id.avatar)
@@ -429,7 +439,11 @@ class MainActivity : Activity() {
         callSession = current
         show(chatScreen)
         startForegroundService(Intent(this, CallService::class.java).putExtra(CallService.SERVER, server)
-            .putExtra(CallService.CLEAR, prefs().getBoolean("clear", true)).putExtra(IncomingActivity.REPLY, reply))
+            .putExtra(CallService.CLEAR, prefs().getBoolean("clear", true))
+            // A ring answered (reply set) starts on the loudspeaker: the phone may be on the desk, and a ring-back
+            // missed at the ear would be hung up on as quiet. A call you place follows your last choice.
+            .putExtra(CallService.SPEAKER, reply != null || prefs().getBoolean("speaker", true))
+            .putExtra(IncomingActivity.REPLY, reply))
     }
 
     private fun hangUp() {
@@ -906,12 +920,21 @@ class MainActivity : Activity() {
                 return@setOnCheckedChangeListener
             }
             prefs().edit().putBoolean("clear", flipped).apply()
+            if (flipped) { prefs().edit().putBoolean("speaker", true).apply(); showSpeaker(true) }  // clear is media: the speaker
             if (service != null) android.widget.Toast.makeText(this, if (flipped) "Clear sound" else "Call sound",
                 android.widget.Toast.LENGTH_SHORT).show()
         }
     }
 
+    /** The speaker button as it is: lit on the loudspeaker, dim on the earpiece. */
+    private fun showSpeaker(on: Boolean) {
+        speakerButton.alpha = if (on) 1f else 0.45f
+        speakerButton.contentDescription = if (on) "Speaker on: tap for the earpiece" else "Earpiece: tap for the speaker"
+    }
+
     private fun showConnected(on: Boolean) {
+        speakerButton.visibility = if (on) View.VISIBLE else View.GONE
+        if (on) showSpeaker(CallService.Bus.service?.speaker ?: prefs().getBoolean("speaker", true))
         callButton.setImageResource(if (on) R.drawable.ic_call_end else R.drawable.ic_phone)
         callButton.setBackgroundResource(if (on) R.drawable.round_hang else R.drawable.round_call)
         callButton.contentDescription = if (on) "Hang up" else "Call"

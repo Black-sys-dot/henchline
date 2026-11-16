@@ -234,6 +234,18 @@
 
             </LinearLayout>
 
+            <!-- On a call: loudspeaker (lit) or earpiece (dim), as a phone call's speaker button -->
+            <ImageButton
+                android:id="@+id/speaker"
+                android:layout_width="44dp"
+                android:layout_height="44dp"
+                android:layout_marginEnd="8dp"
+                android:background="@drawable/pill"
+                android:contentDescription="Speaker"
+                android:src="@drawable/ic_sound"
+                android:tint="@color/cyan"
+                android:visibility="gone" />
+
             <ImageButton
                 android:id="@+id/call"
                 android:layout_width="52dp"

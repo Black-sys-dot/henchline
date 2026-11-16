@@ -61,6 +61,12 @@ class CallService : Service() {
     // echo of a 22 s clip came back. Off: the phone-call path, its routing and processing
     @Volatile var clear = true
         private set
+    // Loudspeaker (the default) or the earpiece, as a phone call's speaker button (the user's wish, 2026-11-16:
+    // "call is only ever on speaker"). The earpiece needs the phone-call path, so choosing it leaves clear sound;
+    // earbuds or a headset, when there are some, win over both.
+    @Volatile var speaker = true
+        private set
+    private var proximity: PowerManager.WakeLock? = null  // the screen off at the ear, on the earpiece
     private val generation = java.util.concurrent.atomic.AtomicInteger()  // the audio threads' round
     private val switching = java.util.concurrent.atomic.AtomicBoolean()  // a sound switch under way: taps wait
     private val audioLock = Any()  // starting the audio and switching its sound take turns
@@ -93,6 +99,8 @@ class CallService : Service() {
         }
         if (running) return START_NOT_STICKY  // already calling or connecting
         clear = intent.getBooleanExtra(CLEAR, true)
+        speaker = intent.getBooleanExtra(SPEAKER, true)
+        if (!speaker) clear = false  // the earpiece is only on the phone-call path
         reply = intent.getStringExtra(IncomingActivity.REPLY)
         Calls.outcome(this, reply, "answered")  // from the ring screen, its banner or the app: the user's tap
         running = true
@@ -170,6 +178,7 @@ class CallService : Service() {
             audio.mode = AudioManager.MODE_NORMAL
         }
         wakeLock?.let { if (it.isHeld) it.release() }
+        nearEar(false)
         Bus.connected = false
         if (startedAt > 0) logCall()
         Bus.service = null
@@ -191,11 +200,12 @@ class CallService : Service() {
         Thread {
             try {
                 synchronized(audioLock) {
-                    val (mic, speaker) = recorder to player
+                    val (mic, track) = recorder to player
                     clear = toClear
+                    if (toClear) speaker = true  // clear sound is media: always the loudspeaker (or earbuds)
                     generation.incrementAndGet()  // the running threads see this and stop
                     mic?.join(1000)
-                    speaker?.join(1000)
+                    track?.join(1000)
                     if (running) {  // the call may have ended meanwhile: leave the phone's audio as onDestroy set it
                         applySound()
                         startAudio()
@@ -208,12 +218,27 @@ class CallService : Service() {
         return true
     }
 
+    /** The speaker button: loudspeaker or earpiece. The earpiece from clear sound switches to the call path first
+     *  (false: still switching from a tap before). */
+    fun setSpeaker(on: Boolean): Boolean {
+        if (!on && clear) {
+            speaker = false
+            if (switchSound(false)) return true
+            speaker = true
+            return false
+        }
+        speaker = on
+        Thread { synchronized(audioLock) { if (running && !clear) route() } }.start()
+        return true
+    }
+
     /** The phone's audio for this sound: call mode and routing, or plain media; focus to match. */
     private fun applySound() {
         focus?.let { audio.abandonAudioFocusRequest(it) }
         if (clear) {
             if (Build.VERSION.SDK_INT >= 31) audio.clearCommunicationDevice()
             audio.mode = AudioManager.MODE_NORMAL
+            nearEar(false)
         } else {
             audio.mode = AudioManager.MODE_IN_COMMUNICATION  // the phone's echo cancelling, and call routing
             route()
@@ -430,18 +455,33 @@ class CallService : Service() {
         android.os.Handler(mainLooper).post { stopSelf() }
     }
 
-    /** Earbuds or a headset when there are some, else the loudspeaker (a call would pick the earpiece). */
+    /** Earbuds or a headset when there are some, else the loudspeaker or the earpiece, as the speaker button says. */
     private fun route() {
         if (Build.VERSION.SDK_INT < 31) {
             @Suppress("DEPRECATION")
-            audio.isSpeakerphoneOn = true
+            audio.isSpeakerphoneOn = speaker
+            nearEar(!speaker)
             return
         }
         val devices = audio.availableCommunicationDevices
         val preferred = listOf(AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
-            AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET, AudioDeviceInfo.TYPE_BUILTIN_SPEAKER)
-        preferred.firstNotNullOfOrNull { type -> devices.firstOrNull { it.type == type } }
-            ?.let { audio.setCommunicationDevice(it) }
+            AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET,
+            if (speaker) AudioDeviceInfo.TYPE_BUILTIN_SPEAKER else AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)
+        val picked = preferred.firstNotNullOfOrNull { type -> devices.firstOrNull { it.type == type } }
+        picked?.let { audio.setCommunicationDevice(it) }
+        nearEar(picked?.type == AudioDeviceInfo.TYPE_BUILTIN_EARPIECE)
+    }
+
+    /** On the earpiece the screen goes off at the ear (the proximity sensor), so a cheek taps nothing. */
+    private fun nearEar(on: Boolean) {
+        if (on && proximity?.isHeld != true) {
+            proximity = getSystemService(PowerManager::class.java)
+                .takeIf { it.isWakeLockLevelSupported(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK) }
+                ?.newWakeLock(PowerManager.PROXIMITY_SCREEN_OFF_WAKE_LOCK, "henchline:ear")?.also { it.acquire(4 * 60 * 60 * 1000L) }
+        } else if (!on) {
+            proximity?.let { if (it.isHeld) it.release() }
+            proximity = null
+        }
     }
 
     private fun goForeground() {
@@ -469,6 +509,7 @@ class CallService : Service() {
     companion object {
         const val SERVER = "server"
         const val CLEAR = "clear"
+        const val SPEAKER = "speaker"
         const val STOP = "stop"
         const val TALK = "talk"
         val TALK_KEYS = setOf(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
