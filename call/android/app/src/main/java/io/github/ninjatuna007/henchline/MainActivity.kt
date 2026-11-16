@@ -2335,6 +2335,13 @@ class MainActivity : Activity() {
             type.startsWith("audio/") -> card.addView(audioRow(url, name, size))
             else -> documentCard(card, url, name, type, size)
         }
+        // Held anywhere on it, the picture itself too, not only its edge (the user's catch, 2026-11-16): a tappable
+        // part takes the touch, so it opens the same menu
+        fun holdOpensMenu(view: View) {
+            if (view !== card && view.isClickable) view.setOnLongClickListener { card.performLongClick() }
+            (view as? android.view.ViewGroup)?.let { group -> for (k in 0 until group.childCount) holdOpensMenu(group.getChildAt(k)) }
+        }
+        holdOpensMenu(card)
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.START or Gravity.BOTTOM
