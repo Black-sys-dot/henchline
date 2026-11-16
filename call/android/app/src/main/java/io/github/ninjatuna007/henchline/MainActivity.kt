@@ -295,8 +295,8 @@ class MainActivity : Activity() {
 
     /** What you attached, on your side of the chat: a picture small, anything else its name. */
     /** A picture you sent, from its small copy: shown on your side of the chat, its name under it. */
-    private fun picture(thumb: String, caption: String, session: String) {
-        val bubble = say("you", caption, mine = true, session = session, keep = false)
+    private fun picture(thumb: String, caption: String, session: String, at: Long = 0) {
+        val bubble = say("you", caption, mine = true, session = session, keep = false, at = at)
         val width = dp(220)
         val cached = pictures.get(thumb)
         if (cached != null) {
@@ -1173,7 +1173,7 @@ class MainActivity : Activity() {
         val at = if (keep && !note) JSONObject().put("from", from).put("text", words).put("mine", mine)
             .also { Chats.add(this, session, it) }.optLong("at", at) else at
         if (!note && at > 0) dayLine(at)
-        val bubble = TextView(this).apply {
+        val bubble = Stamped(this).apply {
             if (!note) bubbleAt[this] = at
             text = if (note) words else stamp(this, words, if (mine) status else "")
             setTextColor(getColor(if (note) R.color.muted else R.color.text))
@@ -1492,17 +1492,33 @@ class MainActivity : Activity() {
         val time = if (at > 0) android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(at)) else ""
         val ticks = when (status) { "" -> ""; "sent" -> "✓"; else -> "✓✓" }
         val tail = listOf(time, ticks).filter { it.isNotEmpty() }.joinToString(" ")
-        if (tail.isEmpty()) return styled(words)
-        val all = android.text.SpannableStringBuilder(styled(words)).append("  ").append(tail)
-        val from = all.length - tail.length
+        if (tail.isEmpty()) { (bubble as? Stamped)?.tail = null; return styled(words) }
         // On your teal bubble the muted grey-blue was too faint (3.6:1): a lighter one there (5.4:1)
         val faint = if (status.isNotEmpty()) 0xFFB4CCD8.toInt() else getColor(R.color.muted)
-        all.setSpan(android.text.style.ForegroundColorSpan(faint), from, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        if (ticks.isNotEmpty() && status == "read")
-            all.setSpan(android.text.style.ForegroundColorSpan(getColor(R.color.cyan)), all.length - ticks.length, all.length,
+        val shown = android.text.SpannableStringBuilder(tail).apply {
+            setSpan(android.text.style.ForegroundColorSpan(faint), 0, length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            if (ticks.isNotEmpty() && status == "read")
+                setSpan(android.text.style.ForegroundColorSpan(getColor(R.color.cyan)), length - ticks.length, length,
+                    android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            setSpan(android.text.style.RelativeSizeSpan(0.75f), 0, length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+        }
+        val all = android.text.SpannableStringBuilder(styled(words)).append("  ").append(tail)
+        val from = all.length - tail.length
+        if (bubble is Stamped) {  // the words keep room for it; the bubble draws it in its corner
+            bubble.tail = shown
+            all.setSpan(android.text.style.ForegroundColorSpan(android.graphics.Color.TRANSPARENT), from, all.length,
                 android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        all.setSpan(android.text.style.RelativeSizeSpan(0.75f), from, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
-        return all
+            all.setSpan(android.text.style.RelativeSizeSpan(0.75f), from, all.length, android.text.Spannable.SPAN_EXCLUSIVE_EXCLUSIVE)
+            return all
+        }
+        return android.text.SpannableStringBuilder(styled(words)).append("  ").append(shown)
+    }
+
+    /** A message's time, small, for the corner of a picture, a file or an album. */
+    private fun timeLabel(at: Long, mine: Boolean = false) = TextView(this).apply {
+        text = if (at > 0) android.text.format.DateFormat.getTimeFormat(this@MainActivity).format(java.util.Date(at)) else ""
+        setTextColor(if (mine) 0xFFB4CCD8.toInt() else getColor(R.color.muted)); textSize = 11.5f
+        gravity = Gravity.END
     }
 
     /** An agent's light markdown, shown as it means: **bold** bold and `code` in a fixed-width face, the marks
@@ -2215,7 +2231,7 @@ class MainActivity : Activity() {
             }
             val file = line.optJSONObject("file")
             if (file != null) fileCard(line.optString("from"), file, current, keep = false, at = line.optLong("at"))
-            else if (line.has("thumb")) { picture(line.getString("thumb"), line.optString("text"), current); menuOn(before, current, listOf(line.optLong("at"))) }
+            else if (line.has("thumb")) { picture(line.getString("thumb"), line.optString("text"), current, line.optLong("at")); menuOn(before, current, listOf(line.optLong("at"))) }
             else if (line.optBoolean("note")) {  // a kept note: a call and its length
                 dayLine(line.optLong("at"))
                 callBubble(line)
@@ -2334,6 +2350,20 @@ class MainActivity : Activity() {
             }
             type.startsWith("audio/") -> card.addView(audioRow(url, name, size))
             else -> documentCard(card, url, name, type, size)
+        }
+        // Its time in the bottom-right corner, as every message's (the cat picture had none, 2026-11-16): on the
+        // name's line under a picture, else a line of its own
+        if (at > 0) {
+            val last = card.getChildAt(card.childCount - 1)
+            if (last === label) {
+                card.removeView(label)
+                card.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM
+                    addView(label, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(timeLabel(at).apply { setPadding(dp(8), 0, 0, 0) })
+                }, LinearLayout.LayoutParams(dp(240), LinearLayout.LayoutParams.WRAP_CONTENT))
+            } else card.addView(timeLabel(at), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(4) })
         }
         // Held anywhere on it, the picture itself too, not only its edge (the user's catch, 2026-11-16): a tappable
         // part takes the touch, so it opens the same menu
@@ -2613,6 +2643,8 @@ class MainActivity : Activity() {
                 text = said; setTextColor(getColor(R.color.text)); textSize = 15f; setPadding(dp(8), dp(6), dp(8), dp(2))
                 maxWidth = tile * 2 + dp(8)
             })
+            addView(timeLabel(lines.last().optLong("at"), mine).apply { setPadding(dp(8), dp(2), dp(6), 0) },
+                LinearLayout.LayoutParams(tile * 2 + dp(8), LinearLayout.LayoutParams.WRAP_CONTENT))
         }
         val row = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
