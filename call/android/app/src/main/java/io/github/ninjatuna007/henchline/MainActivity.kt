@@ -63,6 +63,7 @@ class MainActivity : Activity() {
     // any other chat can be read and texted meanwhile, and a bar leads back to the call
     private var callSession = ""
     private var callFrom = ""  // the chat a call was started from: the call goes to its agent
+    private var switchedAt = 0L  // when you moved the call yourself: the laptop's older word doesn't pull it back
     private var followRing = false  // a ring answered: the screen goes to the ringer's chat once the laptop says who
 
     /** The chat shown is the call's: the talk button, hang-up and the call's state belong to it. */
@@ -617,7 +618,9 @@ class MainActivity : Activity() {
         val now = status.optString("current")
         // Looking at the call (or answering a ring, once): the screen follows the switch
         val following = followRing || current.isEmpty() || current == callSession
-        if (now.isNotEmpty() && (now != callSession || followRing)) {
+        // A list from before your switch reached the laptop names the old agent: not followed for a few seconds
+        val stale = now != callSession && System.currentTimeMillis() - switchedAt < 4000
+        if (now.isNotEmpty() && !stale && (now != callSession || followRing)) {
             callSession = now
             followRing = false
             if (following && now != current) {
@@ -990,7 +993,15 @@ class MainActivity : Activity() {
         panel = CallMenu(this, names[callSession]?.substringBefore(",") ?: "Your crew",
             names.map { (session, name) -> session to name }, callSession,
             speaker = service.speaker, clear = service.clear, buttonOnly = buttonOnly,
-            onSwitch = { session -> service.send(JSONObject().put("switch", session).toString()) },
+            onSwitch = { session ->
+                // The laptop is told, and the phone follows at once: that agent's chat, loaded, and the bar's name
+                // (it waited for the laptop's next word, then didn't load the chat, 2026-11-16)
+                service.send(JSONObject().put("switch", session).toString())
+                callSession = session
+                switchedAt = System.currentTimeMillis()
+                open(session)
+                showCallBar()
+            },
             onSpeaker = { on -> if (service.speaker != on) speakerButton.performClick() },
             onClear = { on -> if (clear.isChecked != on) clear.isChecked = on },  // the settings switch does the rest
             onButtonOnly = { only ->
@@ -1008,6 +1019,10 @@ class MainActivity : Activity() {
         if (crew.size < 2) return
         panel = ModelPicker(this, "Switch the call to", crew, withDefault = false) { session, _ ->
             CallService.Bus.service?.send(JSONObject().put("switch", session).toString())
+            callSession = session  // the phone follows at once, as from the call's menu
+            switchedAt = System.currentTimeMillis()
+            open(session)
+            showCallBar()
         }.also { it.show() }
     }
 
