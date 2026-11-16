@@ -701,7 +701,10 @@ def switch_claude(target: Speaker, model: str, settings: dict) -> str:
     if not terminals.agent_running(target.tab):
         return "That agent isn't running."
     path = Path.home() / ".claude/settings.json"
-    before = path.read_text() if path.exists() else ""
+    try:
+        before = path.read_text() if path.exists() else ""
+    except OSError:
+        before = ""
     name = model + ("[1m]" if settings.get("context") == "1m" else "")
     if not terminals.type_line(target.tab, f"/model {name}"):
         return "Couldn't type into it."
@@ -709,18 +712,39 @@ def switch_claude(target: Speaker, model: str, settings: dict) -> str:
         time.sleep(1.5)
         if not terminals.type_line(target.tab, f"/effort {settings['effort']}"):
             return "Switched the model, but couldn't set its effort."
-    time.sleep(3.0)  # each saves itself as the default a moment later
-    now = path.read_text() if path.exists() else ""
-    if before and now != before:
-        old, new = json.loads(before), json.loads(now)
+    # Each saves itself as the default a moment later: watched until both have (or ten seconds), then put back
+    def parsed(text: str) -> dict | None:
+        try:
+            found = json.loads(text) if text else {}
+        except ValueError:
+            return None  # empty or half-written right now
+        return found if isinstance(found, dict) else None
+
+    old = parsed(before)
+    if old is None:
+        return "Switched, but Claude's settings couldn't be read before, so its defaults weren't checked."
+    expected = {"model"} | ({"effortLevel", "effort", "modelSettings"} if settings.get("effort") else set())
+    new: dict | None = old
+    for _ in range(40):
+        time.sleep(0.25)
+        new = parsed(path.read_text() if path.exists() else "")
+        if new is None:
+            continue
         changed = {k for k in set(old) | set(new) if old.get(k) != new.get(k)}
-        if changed <= {"model", "effortLevel", "effort", "modelSettings"}:  # only what the two commands touch: put back
-            aside = path.with_name(f"{path.name}.henchline-{os.getpid()}-{time.monotonic_ns()}")
-            aside.write_text(before)
-            os.chmod(aside, path.stat().st_mode & 0o777)
-            aside.replace(path)
-        else:
-            return "Switched, but Claude's settings changed in other ways too, so its defaults were left as they are."
+        if "model" in changed and (not settings.get("effort") or changed & (expected - {"model"})):
+            break
+    if new is None:
+        return "Switched, but Claude's settings couldn't be read after, so its defaults weren't checked."
+    changed = {k for k in set(old) | set(new) if old.get(k) != new.get(k)}
+    if not changed:
+        return "Switched; Claude hasn't saved it as a default (yet), so there was nothing to put back."
+    if changed <= {"model", "effortLevel", "effort", "modelSettings"}:  # only what the two commands touch: put back
+        aside = path.with_name(f"{path.name}.henchline-{os.getpid()}-{time.monotonic_ns()}")
+        aside.write_text(before)
+        os.chmod(aside, path.stat().st_mode & 0o777)
+        aside.replace(path)
+    else:
+        return "Switched, but Claude's settings changed in other ways too, so its defaults were left as they are."
     return ""
 
 
@@ -813,10 +837,10 @@ async def crew_model(request: web.Request) -> web.Response:
         if chosen is None:
             return web.json_response({"note": "Claude has no such setting for that model."}, status=400)
         why = await loop.run_in_executor(None, switch_claude, target, wanted, chosen)
-        if why:
+        if why and not why.startswith("Switched"):
             return web.json_response({"note": why}, status=409)
         log(HANDSFREE_LOG, f"{target.spoken()} switched to {wanted} {chosen} from the phone")
-        return web.json_response({"ok": True, "name": wanted})
+        return web.json_response({"ok": True, "name": wanted, "note": why})
     model = next((m for m in await loop.run_in_executor(None, tmux.models, target.agent) if m["id"] == wanted), None)
     if model is None:
         return web.json_response({"note": f"{target.agent} has no model {wanted}."}, status=400)
