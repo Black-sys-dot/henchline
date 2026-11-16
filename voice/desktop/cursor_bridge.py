@@ -79,26 +79,48 @@ def ask_window(chat: str, request: dict) -> bool:
 EFFORTS = ("xhigh", "high", "medium", "low")
 
 
+def params_of(chat: str) -> list[dict]:
+    """The settings Cursor keeps with a chat's model: [{id, value}] (effort, fast, context)."""
+    config = composer(chat).get("modelConfig") or {}
+    picked = (config.get("selectedModels") or [{}])[0] if isinstance(config, dict) else {}
+    return [p for p in (picked.get("parameters") or []) if isinstance(p, dict) and "id" in p]
+
+
 def switch_model(chat: str, slug: str) -> str:
-    """Sets a Cursor editor chat's model from a model's listed id ("grok-4.7-medium": the model is "grok-4.7")
-    through Cursor's own "Switch to Model Slug", then reads the chat's model back from Cursor's store: "" when it is
-    on it, else why not. Only the model is set; its effort is Cursor's default for it (its parameter names differ
-    between models). As when the model is changed in Cursor itself, it also becomes the default for new chats."""
-    base = slug.removesuffix("-fast")
-    for effort in EFFORTS:
-        base = base.removesuffix("-" + effort)
+    """Sets a Cursor editor chat's model from a model's listed id ("grok-4.7-xhigh", "gpt-5.6-sol-high-fast": the
+    model, its effort, fast) through Cursor's own "Switch to Model Slug", with that effort and fast (or not), and
+    the chat's context size kept when the model stays the same; then reads the chat's model and settings back from
+    Cursor's store: "" when it is on them, else what it is on. As when the model is changed in Cursor itself, it
+    also becomes the default for new chats."""
+    base, fast, effort = slug, "false", ""
+    if base.endswith("-fast"):
+        base, fast = base.removesuffix("-fast"), "true"
+    for level in EFFORTS:
+        if base.endswith("-" + level):
+            base, effort = base.removesuffix("-" + level), level
+            break
     before = chat_model(chat)
     if not before:
         return "Cursor's record of that chat can't be read, so a switch couldn't be checked: not switched."
-    if not ask_window(chat, {"model": chat, "config": {"modelId": base, "params": []}}):
+    effort_id = "reasoning" if "codex" in base else "reasoning_effort"  # Cursor's name for it differs by model
+    params = [{"id": "fast", "value": fast}]
+    if effort:
+        params.append({"id": effort_id, "value": effort})
+    if before == base:  # the same model: its context size (256k, 500k…) stays as the user had it
+        params += [p for p in params_of(chat) if p.get("id") == "context"]
+    if not ask_window(chat, {"model": chat, "config": {"modelId": base, "params": params}}):
         if last_why == "not a chat id":
             return "Cursor runs an older Henchline bridge: Reload Window in Cursor, then try again."
         return f"Cursor didn't take it ({last_why or 'no answer'}): still on {before}."
-    for _ in range(15):  # Cursor writes its store a moment later
-        time.sleep(0.2)
-        if chat_model(chat) == base:
+    got: dict = {}
+    for _ in range(40):  # Cursor writes its store a while later: the model, and its settings a few seconds after
+        time.sleep(0.25)
+        got = {p["id"]: str(p.get("value")) for p in params_of(chat)}
+        if chat_model(chat) == base and (not effort or got.get(effort_id) == effort):
             return ""
-    return f"Cursor still shows {chat_model(chat) or before} for that chat: it may not know {base}."
+    if chat_model(chat) != base:
+        return f"Cursor still shows {chat_model(chat) or before} for that chat: it may not know {base}."
+    return f"Switched to {base}, but Cursor shows its effort as {got.get(effort_id) or 'its default'} so far."
 
 
 def open_chat(workspace: str, chat: str) -> bool:
