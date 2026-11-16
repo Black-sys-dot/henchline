@@ -117,11 +117,13 @@ class NewChatSheet(
     activity: Activity,
     private val folders: List<JSONObject>,  // {path, name}
     private val agents: List<String>,
-    private val loadModels: (agent: String, then: (List<JSONObject>) -> Unit) -> Unit,
-    private val start: (folder: String, agent: String, model: String, typed: Boolean, done: (String?) -> Unit) -> Unit,
+    private val loadModels: (agent: String, then: (JSONObject) -> Unit) -> Unit,  // {models} or {menu}
+    private val start: (folder: String, agent: String, model: String, params: Map<String, String>, typed: Boolean,
+                        done: (String?) -> Unit) -> Unit,
 ) : BottomPanel(activity) {
     private var model = ""  // "" the agent's own default
     private var modelName = "Default"
+    private val settings = mutableMapOf<String, String>()  // its effort, context… from the agent's menu
     private var agent = agents.first()
     private var folder: JSONObject? = folders.firstOrNull()
     private var typed = ""  // a path in the box, when it is one
@@ -202,7 +204,7 @@ class NewChatSheet(
                     text = if (kind == "cursor") "Cursor CLI" else kind.replaceFirstChar { it.uppercase() }
                     setTextColor(colour(R.color.text)); textSize = 13f; gravity = Gravity.CENTER; setPadding(0, px(6), 0, 0)
                 })
-                setOnClickListener { agent = kind; failure = ""; model = ""; modelName = "Default"; pop(this); refresh() }
+                setOnClickListener { agent = kind; failure = ""; model = ""; modelName = "Default"; settings.clear(); pop(this); refresh() }
             }, LinearLayout.LayoutParams(px(96), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = px(10) })
         }
         sheet.addView(HorizontalScrollView(activity).apply { isHorizontalScrollBarEnabled = false; addView(chips) }, wide(10))
@@ -213,10 +215,28 @@ class NewChatSheet(
             setPadding(px(16), px(10), px(16), px(10))
             setOnClickListener {
                 text = "Loading models…"
-                loadModels(agent) { list ->
+                loadModels(agent) { answer ->
                     refresh()
+                    val menu = answer.optJSONArray("menu")
+                    if (menu != null && menu.length() > 0) {  // the same menu as a chat's: model, effort, context…
+                        val entries = (0 until menu.length()).map { menu.getJSONObject(it) }
+                        if (model.isEmpty()) {
+                            model = entries[0].optString("id")
+                        }
+                        CursorModelMenu(activity, entries, model, settings, title = "${agent.replaceFirstChar { it.uppercase() }}'s model",
+                            subtitle = "For the new chat") { picked, params, done ->
+                            model = picked
+                            settings.clear(); settings.putAll(params)
+                            val name = entries.firstOrNull { it.optString("id") == picked }?.optString("name") ?: picked
+                            val effort = params["effort"] ?: params["reasoning_effort"]
+                            modelName = listOfNotNull(name, effort, params["context"]?.takeIf { it == "1m" }?.let { "1M" }).joinToString(" · ")
+                            refresh(); done(null)
+                        }.show()
+                        return@loadModels
+                    }
+                    val list = answer.optJSONArray("models")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()
                     ModelPicker(activity, "${agent.replaceFirstChar { it.uppercase() }}'s model", list, withDefault = true) { id, name ->
-                        model = id; modelName = name; refresh()
+                        model = id; modelName = name; settings.clear(); refresh()
                     }.show()
                 }
             }
@@ -252,7 +272,7 @@ class NewChatSheet(
             go.isEnabled = false
             go.text = "Starting ${agent.replaceFirstChar { it.uppercase() }}…"
             go.animate().alpha(0.7f).setDuration(150).start()
-            start(path, agent, model, typed.isNotEmpty()) { why ->
+            start(path, agent, model, settings.toMap(), typed.isNotEmpty()) { why ->
                 if (why == null) close()  // this sheet's own close: never a newer sheet's
                 else { failure = why; refresh() }
             }
@@ -425,13 +445,15 @@ class CursorModelMenu(
     private val menu: List<JSONObject>,  // {id, name, params: [{id, name, kind, values: [{value, name}]}]}
     private var model: String,
     private val settings: MutableMap<String, String>,
+    private val title: String = "Model",
+    private val subtitle: String = "As in Cursor: the chat switches as you pick",
     private val apply: (model: String, params: Map<String, String>, done: (String?) -> Unit) -> Unit,
 ) : BottomPanel(activity) {
     private lateinit var rows: LinearLayout
     private lateinit var note: TextView
 
     fun show() {
-        val sheet = open("Model", "As in Cursor: the chat switches as you pick")
+        val sheet = open(title, subtitle)
         rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         sheet.addView(rows, wide(14))
         note = TextView(activity).apply { setTextColor(colour(R.color.muted)); textSize = 13f; gravity = Gravity.CENTER }
@@ -488,8 +510,8 @@ class CursorModelMenu(
         draw()
         note.text = "Switching…"
         apply(model, settings.toMap()) { why ->
-            note.text = why ?: "Done. Cursor also makes this the default for new chats."
-            note.setTextColor(colour(if (why == null) R.color.muted else R.color.hang))
+            note.text = why ?: "Done."
+            note.setTextColor(colour(if (why == null || why.startsWith("Switched")) R.color.muted else R.color.hang))
         }
     }
 

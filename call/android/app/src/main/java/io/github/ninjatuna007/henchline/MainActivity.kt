@@ -1359,9 +1359,10 @@ class MainActivity : Activity() {
             }
             panel = NewChatSheet(this, (0 until folders.length()).map { folders.getJSONObject(it) },
                 (0 until agents.length()).map { agents.getString(it) },
-                loadModels = { agent, then -> ask("/crew/models?agent=$agent", null) { answer -> then(modelsOf(answer)) } }
-            ) { folder, agent, model, typed, done ->
-                ask("/crew/new", JSONObject().put("folder", folder).put("agent", agent).put("model", model).put("typed", typed)) { started ->
+                loadModels = { agent, then -> ask("/crew/models?agent=$agent", null) { answer -> then(answer) } }
+            ) { folder, agent, model, params, typed, done ->
+                ask("/crew/new", JSONObject().put("folder", folder).put("agent", agent).put("model", model)
+                    .put("params", JSONObject(params as Map<*, *>)).put("typed", typed)) { started ->
                     val session = started.optString("session")
                     if (session.isEmpty()) return@ask done(started.optString("note").ifEmpty { "It didn't start." })
                     done(null)
@@ -1395,7 +1396,8 @@ class MainActivity : Activity() {
                     current.optString("model"), settings) { model, params, done ->
                     val list = org.json.JSONArray(params.map { (k, v) -> JSONObject().put("id", k).put("value", v) })
                     ask("/crew/model", JSONObject().put("session", session).put("model", model).put("params", list)) { result ->
-                        done(if (result.optBoolean("ok")) null else result.optString("note").ifEmpty { "Didn't switch." })
+                        done(if (result.optBoolean("ok")) result.optString("note").ifEmpty { null }
+                             else result.optString("note").ifEmpty { "Didn't switch." })
                         showModel(session)
                     }
                 }.also { it.show() }

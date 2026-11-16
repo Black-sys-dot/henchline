@@ -528,6 +528,7 @@ async def crew_new(request: web.Request) -> web.Response:
         body = await request.json()
         folder, agent, typed = str(body.get("folder", "")), str(body.get("agent", "claude")), bool(body.get("typed"))
         model = str(body.get("model", ""))
+        settings = body.get("params") if isinstance(body.get("params"), dict) else {}
     except (ValueError, AttributeError):
         raise web.HTTPBadRequest(text="expected JSON")
     loop = asyncio.get_running_loop()
@@ -538,9 +539,14 @@ async def crew_new(request: web.Request) -> web.Response:
             return web.json_response({"note": f"Not a folder of yours on the laptop: {folder}"}, status=400)
     if match is None or agent not in tmux.available():
         return web.json_response({"note": "Not a folder or agent the laptop offers."}, status=400)
-    if model and model not in {m["id"] for m in await loop.run_in_executor(None, tmux.models, agent)}:
+    if model and settings and tmux.checked(agent, model, {str(k): str(v) for k, v in settings.items()}) is None:
+        return web.json_response({"note": f"{agent} has no such setting for {model}."}, status=400)
+    known = ({m["id"] for m in await loop.run_in_executor(None, tmux.models, agent)}
+             | {m["id"] for m in tmux.menu(agent)})
+    if model and model not in known:
         return web.json_response({"note": f"{agent} has no model {model}."}, status=400)
-    tab = await loop.run_in_executor(None, tmux.start, agent, match, model)
+    tab = await loop.run_in_executor(None, tmux.start, agent, match, model,
+                                     {str(k): str(v) for k, v in settings.items()})
     if not tab:
         return web.json_response({"note": f"{agent} didn't start."}, status=500)
     # Claude's question only comes for a typed folder (the listed ones are those it trusts); Codex keeps its own
@@ -602,6 +608,11 @@ async def crew_models(request: web.Request) -> web.Response:
         now = ""
     if request.query.get("only") == "now":  # a chat opening: just what it is using, not the whole list
         return web.json_response({"agent": agent, "switch": switchable, "now": now})
+    agent_menu = await loop.run_in_executor(None, tmux.menu, agent)
+    if agent_menu and (not session or agent == "claude"):  # Claude and Codex: the same menu as Cursor's
+        current = {"model": claude_model_id(target) if session else "", "params": {}}
+        return web.json_response({"agent": agent, "switch": switchable or not session, "now": now,
+                                  "menu": agent_menu, "current": current})
     chat = cursor_bridge.chat_of(session) if session else ""
     if chat and target.in_editor:  # Cursor's own menu: models with their settings, and what the chat is on
         current = {"model": cursor_bridge.chat_model(chat),
@@ -611,6 +622,26 @@ async def crew_models(request: web.Request) -> web.Response:
         return web.json_response({"agent": agent, "switch": True, "now": now, "menu": shown, "current": current})
     return web.json_response({"agent": agent, "switch": switchable, "now": now,
                               "models": await loop.run_in_executor(None, tmux.models, agent)})
+
+
+def claude_model_id(target: Speaker) -> str:
+    """The exact model a Claude session last answered with ("claude-opus-5-5"), from its session log."""
+    uuid = target.session.removeprefix("claude-")
+    if not re.fullmatch(r"[0-9a-f-]{36}", uuid):
+        return ""
+    for log_file in (Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"):
+        with log_file.open("rb") as f:
+            f.seek(max(0, log_file.stat().st_size - 200_000))
+            tail = f.read().splitlines()
+        for raw in reversed(tail):
+            try:
+                entry = json.loads(raw)
+            except ValueError:
+                continue
+            model = (entry.get("message") or {}).get("model", "") if isinstance(entry, dict) else ""
+            if entry.get("type") == "assistant" and not entry.get("isSidechain") and model.startswith("claude-"):
+                return re.sub(r"-\d{8}$", "", model)
+    return ""
 
 
 def cursor_model(lines: list[str]) -> str:
@@ -660,6 +691,36 @@ def model_in_use(target: Speaker) -> str:
     if target.agent == "codex":  # "gpt-5.6-sol xhigh · ~/pc_diagnostics"
         found = [m.group(1) for line in lines if (m := re.match(r"\s*(\S+(?: \S+)?) · [~/]", line))]
         return found[-1] if found else ""
+    return ""
+
+
+def switch_claude(target: Speaker, model: str, settings: dict) -> str:
+    """A running Claude to an exact model, its context and effort: its own /model and /effort typed in, then the
+    user's defaults put back in ~/.claude/settings.json (both commands also save themselves as the default)."""
+    terminals = desktop().terminals
+    if not terminals.agent_running(target.tab):
+        return "That agent isn't running."
+    path = Path.home() / ".claude/settings.json"
+    before = path.read_text() if path.exists() else ""
+    name = model + ("[1m]" if settings.get("context") == "1m" else "")
+    if not terminals.type_line(target.tab, f"/model {name}"):
+        return "Couldn't type into it."
+    if settings.get("effort"):
+        time.sleep(1.5)
+        if not terminals.type_line(target.tab, f"/effort {settings['effort']}"):
+            return "Switched the model, but couldn't set its effort."
+    time.sleep(3.0)  # each saves itself as the default a moment later
+    now = path.read_text() if path.exists() else ""
+    if before and now != before:
+        old, new = json.loads(before), json.loads(now)
+        changed = {k for k in set(old) | set(new) if old.get(k) != new.get(k)}
+        if changed <= {"model", "effortLevel", "effort", "modelSettings"}:  # only what the two commands touch: put back
+            aside = path.with_name(f"{path.name}.henchline-{os.getpid()}-{time.monotonic_ns()}")
+            aside.write_text(before)
+            os.chmod(aside, path.stat().st_mode & 0o777)
+            aside.replace(path)
+        else:
+            return "Switched, but Claude's settings changed in other ways too, so its defaults were left as they are."
     return ""
 
 
@@ -746,6 +807,16 @@ async def crew_model(request: web.Request) -> web.Response:
         log(HANDSFREE_LOG, f"{target.spoken()} switched to {wanted} {settings} from the phone")
         return web.json_response({"ok": True, "name": wanted,
                                   "note": "Switched. Cursor also makes it the default for new chats."})
+    if target.agent == "claude" and any(m["id"] == wanted for m in tmux.menu("claude")):
+        chosen = tmux.checked("claude", wanted, {str(p.get("id")): str(p.get("value")) for p in settings
+                                                  if isinstance(p, dict)})
+        if chosen is None:
+            return web.json_response({"note": "Claude has no such setting for that model."}, status=400)
+        why = await loop.run_in_executor(None, switch_claude, target, wanted, chosen)
+        if why:
+            return web.json_response({"note": why}, status=409)
+        log(HANDSFREE_LOG, f"{target.spoken()} switched to {wanted} {chosen} from the phone")
+        return web.json_response({"ok": True, "name": wanted})
     model = next((m for m in await loop.run_in_executor(None, tmux.models, target.agent) if m["id"] == wanted), None)
     if model is None:
         return web.json_response({"note": f"{target.agent} has no model {wanted}."}, status=400)

@@ -82,7 +82,11 @@ function activate(context) {
         }
         if (typeof asked.open !== "string" || !CHAT_ID.test(asked.open)) throw new Error("not a chat id");
         await vscode.commands.executeCommand("composer.openComposer", asked.open);
-        answer = { ok: true };
+        // The chat words will be typed into must be the selected one now (Henchline picked this window by the
+        // chat's transcript; a chat in another window, or focus moved, says no)
+        const selected = await vscode.commands.executeCommand("composer.getOrderedSelectedComposerIds");
+        const last = Array.isArray(selected) ? selected[selected.length - 1] : undefined;
+        answer = last === asked.open ? { ok: true } : { ok: false, why: "another chat is selected", selected };
       } catch (e) {
         answer = { ok: false, why: String(e && e.message ? e.message : e) };
       }

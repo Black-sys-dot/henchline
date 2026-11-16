@@ -89,6 +89,55 @@ def models(agent: str) -> list[dict]:
     return []
 
 
+# Claude's models by their exact names (not only the family alias), each with whether it has the 1M context
+CLAUDE_MENU = [("claude-opus-5-5", "Opus 5.5", True), ("claude-sonnet-5-5", "Sonnet 5.5", True),
+               ("claude-fable-5-1", "Fable 5.1", True), ("claude-haiku-5-5", "Haiku 5.5", False)]
+CLAUDE_EFFORTS = [("low", "Low"), ("medium", "Medium"), ("high", "High"), ("xhigh", "Extra High"), ("max", "Max")]
+
+
+def menu(agent: str) -> list[dict]:
+    """The model menu for an agent, as Cursor's has it (the user's wish, 2026-11-16: the same across the board):
+    [{id, name, params: [{id, name, kind, values: [{value, name}]}]}]. Claude: exact model, effort, context; Codex:
+    model, effort. [] for an agent with only a flat list (the Cursor CLI)."""
+    def enum(pid: str, name: str, values: list[tuple[str, str]]) -> dict:
+        return {"id": pid, "name": name, "kind": "enum", "values": [{"value": v, "name": n} for v, n in values]}
+    if agent == "claude":
+        return [{"id": mid, "name": name,
+                 "params": [enum("effort", "Effort", CLAUDE_EFFORTS)]
+                 + ([enum("context", "Context", [("standard", "Standard"), ("1m", "1M")])] if long else [])}
+                for mid, name, long in CLAUDE_MENU]
+    if agent == "codex":
+        try:
+            listed = json.loads((Path.home() / ".codex/models_cache.json").read_text()).get("models", [])
+        except (OSError, ValueError, AttributeError):
+            return []
+        return [{"id": m["slug"], "name": m.get("display_name", m["slug"]),
+                 "params": [enum("effort", "Effort", [(lv["effort"], lv["effort"].capitalize())
+                                                      for lv in m.get("supported_reasoning_levels") or []
+                                                      if isinstance(lv, dict) and lv.get("effort")])]}
+                for m in listed if isinstance(m, dict) and m.get("slug") and m.get("visibility") == "list"]
+    return []
+
+
+def checked(agent: str, model: str, params: dict) -> dict | None:
+    """The settings, if that model in the agent's menu has each of them; None when one isn't offered."""
+    entry = next((m for m in menu(agent) if m["id"] == model), None)
+    if entry is None:
+        return None
+    allowed = {p["id"]: {v["value"] for v in p["values"]} for p in entry["params"]}
+    return dict(params) if all(v in allowed.get(k, set()) for k, v in params.items()) else None
+
+
+def model_args(agent: str, model: str, params: dict) -> list[str]:
+    """The command-line words that start an agent on a model with its settings (all checked by the caller)."""
+    if agent == "claude":
+        name = model + ("[1m]" if params.get("context") == "1m" else "")
+        return ["--model", name] + (["--effort", params["effort"]] if params.get("effort") else [])
+    if agent == "codex":
+        return ["-m", model] + (["-c", f'model_reasoning_effort="{params["effort"]}"'] if params.get("effort") else [])
+    return [MODEL_FLAG[agent], model] if model and agent in MODEL_FLAG else []
+
+
 def available() -> list[str]:
     """The agents a new chat can start: those installed, with tmux."""
     if not shutil.which("tmux"):
@@ -96,13 +145,13 @@ def available() -> list[str]:
     return [agent for agent, command in COMMANDS.items() if shutil.which(command[0])]
 
 
-def start(agent: str, folder: Path, model: str = "") -> Tab:
+def start(agent: str, folder: Path, model: str = "", params: dict | None = None) -> Tab:
     """A new agent in its own tmux window in that folder; its tab, or an empty one when it couldn't start."""
     command = COMMANDS.get(agent, [""])
     program = shutil.which(command[0])
     if not program:
         return Tab()
-    chosen = [MODEL_FLAG[agent], model] if model and agent in MODEL_FLAG else []  # checked by the caller
+    chosen = model_args(agent, model, params or {}) if model else []  # checked by the caller
     where = ["-c", str(folder), "-n", f"{agent}:{folder.name}", "-P", "-F", "#{pane_id}",
              program, *command[1:], *chosen]
     running = tmux("has-session", "-t", SESSION)
