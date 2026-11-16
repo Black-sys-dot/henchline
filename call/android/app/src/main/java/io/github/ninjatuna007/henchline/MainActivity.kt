@@ -198,6 +198,7 @@ class MainActivity : Activity() {
         setUpTalkButton()
         send.setOnClickListener { sendTyped() }
         setUpVoiceNotes()
+        setUpCommands()
         attach.setOnClickListener {
             if (locked) endVoiceNote(keep = false, why = "Dropped")
             else panel = AddSheet(this) { what ->
@@ -910,6 +911,11 @@ class MainActivity : Activity() {
     private fun sendTyped() {
         val entered = text.text.toString().trim()
         if (entered.isEmpty()) return
+        if (entered.startsWith("/") && entered.drop(1) in PHONE_COMMANDS) {  // the phone's own: done here, not typed in
+            text.setText("")
+            runCommand(entered.drop(1))
+            return
+        }
         // Replying to a message: it goes along, on the same line (a newline would send early in a terminal)
         val words = if (quote.isEmpty()) entered else "(replying to: \"${quote.replace("\n", " ").take(160)}\") $entered"
         setQuote("")
@@ -1762,6 +1768,8 @@ class MainActivity : Activity() {
         show(chatScreen)
         if (current.isNotEmpty()) { Messages.seen(this, current); markRead(current) }  // opened: read
         showModel(session)
+        commandsAsked.remove(session)  // the "/" list, fresh for this chat
+        loadCommands(session)
     }
 
     /** A model's name short enough for the top bar: "Claude Opus 5.5 300K Medium" is "Opus 5.5", "gpt-5.6-sol xhigh"
@@ -1988,7 +1996,104 @@ class MainActivity : Activity() {
             android.widget.Toast.LENGTH_LONG).show()
     }
 
-    private fun chatMenu(session: String, project: String, agent: String) {
+    // --- "/" commands (the user's wish, 2026-11-16) ------------------------------------------------------------
+
+    private val commandsOf = HashMap<String, List<JSONObject>>()  // each chat's "/" list, from the laptop
+    private val commandsAsked = HashMap<String, Long>()  // when each chat's list was last asked for: not every keystroke
+    private lateinit var commandBox: android.widget.ScrollView
+    private lateinit var commandRows: LinearLayout
+
+    /** Typing "/" at the start of a message lists the agent's commands above the words, as a messaging app lists a
+     *  bot's: the phone's own (stop, model, flush, call) first, then the agent's built-ins that work typed in, then
+     *  the user's and the project's commands and skills. A tap on a phone one does it; on the others it is put in
+     *  the box, to send as it is or with more words after it. */
+    private fun setUpCommands() {
+        commandRows = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        commandBox = object : android.widget.ScrollView(this) {
+            override fun onMeasure(widthSpec: Int, heightSpec: Int) =  // at most about five rows; the rest scroll
+                super.onMeasure(widthSpec, View.MeasureSpec.makeMeasureSpec(dp(260), View.MeasureSpec.AT_MOST))
+        }.apply { addView(commandRows); visibility = View.GONE }
+        findViewById<LinearLayout>(R.id.inputRow).addView(commandBox, 0, LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+        text.addTextChangedListener(object : android.text.TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+            override fun afterTextChanged(s: android.text.Editable?) = showCommands()
+        })
+    }
+
+    private fun showCommands() {
+        val typed = text.text.toString()
+        if (!typed.startsWith("/") || typed.any { it.isWhitespace() } || current.isEmpty()) {
+            commandBox.visibility = View.GONE
+            return
+        }
+        val list = commandsOf[current] ?: run { loadCommands(current); phoneCommands() }
+        val wanted = typed.drop(1).lowercase()
+        val first = list.filter { it.optString("name").lowercase().startsWith(wanted) }
+        val shown = first + list.filter { it !in first && it.optString("name").lowercase().contains(wanted) }
+        commandRows.removeAllViews()
+        for (command in shown.take(40)) commandRows.addView(commandRow(command))
+        commandBox.visibility = if (shown.isEmpty()) View.GONE else View.VISIBLE
+        commandBox.scrollTo(0, 0)
+    }
+
+    /** The phone's own commands, when the laptop's list isn't in yet (or the laptop is out of reach). */
+    private fun phoneCommands() = listOf(
+        "stop" to "Stop what the agent is doing", "model" to "Switch the agent's model",
+        "flush" to "Clear this chat on the phone, with its saved files if you like", "call" to "Call your crew",
+    ).map { (name, about) -> JSONObject().put("name", name).put("about", about).put("kind", "phone") }
+
+    private fun loadCommands(session: String) {
+        val now = System.currentTimeMillis()
+        if (session.isEmpty() || now - (commandsAsked[session] ?: 0L) < 30_000 || Files.origin(this) == null) return
+        commandsAsked[session] = now
+        ask("/crew/commands?session=" + android.net.Uri.encode(session), null) { answer ->
+            val got = answer.optJSONArray("commands") ?: return@ask
+            commandsOf[session] = (0 until got.length()).map { got.getJSONObject(it) }
+            if (session == current && commandBox.visibility == View.VISIBLE) showCommands()
+        }
+    }
+
+    private fun commandRow(command: JSONObject) = LinearLayout(this).apply {
+        orientation = LinearLayout.VERTICAL
+        setPadding(dp(12), dp(8), dp(12), dp(8))
+        background = getDrawable(android.R.drawable.list_selector_background)
+        val name = command.optString("name")
+        val phone = command.optString("kind") == "phone"
+        addView(TextView(this@MainActivity).apply {
+            text = android.text.SpannableStringBuilder("/$name").apply {
+                setSpan(android.text.style.StyleSpan(android.graphics.Typeface.BOLD), 0, length, 0)
+                if (phone) append("  · on the phone")
+            }
+            setTextColor(getColor(R.color.cyan)); textSize = 15f
+        })
+        command.optString("about").takeIf { it.isNotEmpty() }?.let { about ->
+            addView(TextView(this@MainActivity).apply {
+                text = about; setTextColor(getColor(R.color.muted)); textSize = 12.5f; maxLines = 2
+                ellipsize = android.text.TextUtils.TruncateAt.END
+            })
+        }
+        setOnClickListener {
+            if (phone) { text.setText(""); runCommand(name) }
+            else { text.setText("/$name "); text.setSelection(text.length()) }
+        }
+    }
+
+    /** A phone command, picked or typed. */
+    private fun runCommand(name: String) {
+        when (name) {
+            "stop" -> stopAgent()
+            "model" -> switchModel()
+            "flush" -> current.takeIf { it.isNotEmpty() }?.let { session ->
+                val label = names[session] ?: session
+                chatMenu(session, label.substringAfter(", ", ""), label.substringBefore(","), clearOnly = true)
+            }
+            "call" -> call()
+        }
+    }
+
+    private fun chatMenu(session: String, project: String, agent: String, clearOnly: Boolean = false) {
         val lines = Chats.load(this, session)
         val saved = Media.onlyIn(this, session, Media.savedFor(this, lines), except = lines.map { it.optLong("at") }.toSet())
         panel = ChatActionsSheet(this, agent, project.replace("_", " "), startedHere(session), gone = session !in names,
@@ -2022,7 +2127,7 @@ class MainActivity : Activity() {
                     if (session == current) { current = ""; prefs().edit().putString("current", "").apply() }
                     showCrew()
                 }
-            }).also { it.show() }
+            }).also { if (clearOnly) it.showClear() else it.show() }
     }
 
     /** Replying to a message: shown above the box until sent, or tapped away. */
@@ -2564,6 +2669,7 @@ class MainActivity : Activity() {
                 prefs.edit().putString(CALL_KEY, it).apply()
             }
         }
+        val PHONE_COMMANDS = setOf("stop", "model", "flush", "call")
         const val OPEN_FILE = "io.github.ninjatuna007.henchline.OPEN_FILE"  // a file's notification, tapped
 
         /** Each agent's henchman, by its session (claude-…, cursor-…, codex-…) or its name. */

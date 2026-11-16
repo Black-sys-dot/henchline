@@ -39,7 +39,7 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
-from voice import files  # noqa: E402
+from voice import commands, files  # noqa: E402
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
@@ -593,6 +593,35 @@ async def crew_new(request: web.Request) -> web.Response:
 # Words a Cursor model's listed name ends with that its /model picker doesn't use ("Claude Opus 5 1M Thinking" is
 # "Claude Opus 5" there)
 CURSOR_TRIM = {"low", "medium", "high", "extra", "fast", "thinking", "max", "1m", "500k", "300k", "(no", "zdr)"}
+
+
+def project_of(target: Speaker) -> Path | None:
+    """The folder an agent works in: Claude's from its session log, else its workspace folder under home."""
+    if target.agent == "claude":
+        uuid = target.session.removeprefix("claude-")
+        for log_file in (Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"):
+            try:
+                for entry in backwards(log_file, most=4 * 1024 * 1024):
+                    if entry.get("cwd"):
+                        return Path(entry["cwd"])
+            except OSError:
+                pass
+    folder = Path.home() / target.where if target.where else None
+    return folder if folder and folder.is_dir() else None
+
+
+async def crew_commands(request: web.Request) -> web.Response:
+    """The "/" list for the agent whose chat the phone shows (?session=): the phone's own actions, the agent's
+    built-ins that work typed in, and the user's and its project's commands and skills."""
+    trusted(request)
+    session = request.query.get("session", "")
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    if target is None:
+        return web.json_response({"note": "That agent isn't known to the laptop."}, status=404)
+    loop = asyncio.get_running_loop()
+    project = await loop.run_in_executor(None, project_of, target)
+    listed = await loop.run_in_executor(None, commands.listed, target.agent, project)
+    return web.json_response({"agent": target.agent, "commands": listed})
 
 
 async def crew_models(request: web.Request) -> web.Response:
@@ -1529,6 +1558,7 @@ def main() -> int:
     app.router.add_get("/chat/thoughts", chat_thoughts)
     app.router.add_get("/chat/working", chat_working)
     app.router.add_get("/crew/models", crew_models)
+    app.router.add_get("/crew/commands", crew_commands)
     app.router.add_post("/crew/model", crew_model)
     app.router.add_get("/files/{secret}/{name}", sent_file)
     proxied = False

@@ -368,6 +368,15 @@ class ChatActionsSheet(
             ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
     }
 
+    /** Straight to clearing (the chat's /flush): the same question as from the menu. */
+    fun showClear() {
+        val sheet = open(title, subtitle)
+        val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        sheet.addView(rows, wide(16))
+        deleteConfirm(rows, "Clear the chat with $title on this phone? The agent keeps its conversation.",
+            savedFiles, "Clear chat", onClear)
+    }
+
     private fun confirm(rows: LinearLayout) {
         rows.removeAllViews()
         rows.addView(TextView(activity).apply {
