@@ -217,21 +217,43 @@ PYEOF
       # Enter there, with no keys on the desktop, even with the screen locked. Cursor's own launcher, with the
       # port added; it takes effect when Cursor next starts. While it is open, any program or user on this
       # computer can drive Cursor through it.
-      if python3 - "$HOME/.local/share/applications/cursor.desktop" <<'PYEOF'
-import re, sys
+      if python3 - "$HOME/.local/share/applications" <<'PYEOF'
+import re, shlex, sys
 from pathlib import Path
-mine = Path(sys.argv[1])
-source = mine if mine.exists() else Path("/usr/share/applications/cursor.desktop")
-if not source.exists():
-    sys.exit(1)
-lines = source.read_text().splitlines()
-# The program itself (…/cursor), not a word inside a longer path (cursor.AppImage); once only
-edited = [re.sub(r"^(Exec=\S*/cursor)(?=\s|$)(?!.*--remote-debugging-port)", r"\1 --remote-debugging-port=9333", line)
-          for line in lines]
-if not any(re.match(r"Exec=.*--remote-debugging-port", line) for line in edited):
-    sys.exit(1)  # a launcher this doesn't know (an AppImage, env …): left alone
-mine.parent.mkdir(parents=True, exist_ok=True)
-mine.write_text("\n".join(edited) + "\n")
+# Every launcher of the user's that starts Cursor (a package's copy, an AppImage's own), else a copy of the
+# package's; in each, the port right after the program the Exec line runs, once
+apps = Path(sys.argv[1])
+FLAG = "--remote-debugging-port=9333"
+EXEC = re.compile(r"^(Exec=(?:env\s+(?:\S+=\S*\s+)*)?)(\"[^\"]+\"|\S+)(.*)$")
+
+
+def is_cursor(text):
+    return bool(re.search(r"^(Name=Cursor|StartupWMClass=Cursor)\s*$", text, re.M))
+
+
+def with_port(line):
+    found = EXEC.match(line)
+    if not found or "--remote-debugging-port" in line:
+        return line
+    head, program, rest = found.groups()
+    name = Path(shlex.split(program)[0] if program.startswith('"') else program).name.lower()
+    return f"{head}{program} {FLAG}{rest}" if "cursor" in name else line
+
+
+mine = [f for f in sorted(apps.glob("*.desktop")) if is_cursor(f.read_text(errors="replace"))] if apps.is_dir() else []
+package = Path("/usr/share/applications/cursor.desktop")
+if not mine and package.exists():
+    apps.mkdir(parents=True, exist_ok=True)
+    (apps / "cursor.desktop").write_text(package.read_text())
+    mine = [apps / "cursor.desktop"]
+done = False
+for launcher in mine:
+    lines = launcher.read_text().splitlines()
+    edited = [with_port(line) for line in lines]
+    if edited != lines:
+        launcher.write_text("\n".join(edited) + "\n")
+    done = done or any(line.startswith("Exec=") and FLAG in line for line in edited)
+sys.exit(0 if done else 1)
 PYEOF
       then say "Cursor: starts with its debugging port 9333 (localhost) from its next launch"
       else say "Cursor: add --remote-debugging-port=9333 to how you start Cursor, for its chats with the screen locked"
@@ -291,9 +313,12 @@ remove_call() {
 }
 
 remove_agents() {
-  # Cursor's launcher without the debugging port again (the copy install made; Cursor's own file is untouched)
-  launcher="$HOME/.local/share/applications/cursor.desktop"
-  if [ -f "$launcher" ]; then sed -i 's/ --remote-debugging-port=9333//' "$launcher"; fi
+  # Cursor's launchers without the debugging port again (the package's own file was never touched)
+  for launcher in "$HOME"/.local/share/applications/*.desktop; do
+    if grep -q -- " --remote-debugging-port=9333" "$launcher" 2>/dev/null; then
+      sed -i 's/ --remote-debugging-port=9333//' "$launcher"
+    fi
+  done
   remove_link "$share/talkback/skill"
   remove_link "$HOME/.claude/skills/talkback"
   remove_link "$HOME/.cursor/skills/talkback"
