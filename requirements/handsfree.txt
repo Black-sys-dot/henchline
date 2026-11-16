@@ -5,4 +5,5 @@ scipy==1.17.1
 scikit-learn==1.5.2
 tqdm
 requests
+sherpa-onnx==2.0.1  # Nemotron streaming: turns heard while the user talks (voice/speech/nemotron.py); needs >= 1.13.4
 aiohttp==3.11.18  # Cursor IDE chats through Cursor's debugging port (voice/desktop/cursor_cdp.py)

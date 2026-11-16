@@ -27,6 +27,9 @@ class Config:
     device: str = "auto"  # auto: GPU on AC, CPU on battery; or cpu / cuda
     language: str = "en"  # "auto" lets Whisper detect it
     tone: bool = True  # tone marks for agent windows
+    # Hands-free turns heard while the user talks (voice/speech/nemotron.py): the words are ready a moment after
+    # they stop, on the CPU; Whisper still confirms wake words and transcribes when the model isn't installed
+    streaming: bool = True
     hotwords: list[str] = field(default_factory=lambda: list(DEFAULT_HOTWORDS))
     chime: bool = True
     chime_sound: str = "/usr/share/sounds/freedesktop/stereo/complete.oga"

@@ -112,6 +112,29 @@ builtin_mic() {
 }
 
 handsfree_done=""
+# NVIDIA's Nemotron Speech Streaming (sherpa-onnx's int8 export, ~630 MB) and its tokenizer, for hint words: turns
+# are heard while the user talks, the words ready a moment after they stop. Without it Whisper transcribes turns.
+NEMOTRON=sherpa-onnx-nemotron-speech-streaming-en-0.6b-560ms-int8-2026-04-25
+install_nemotron() {
+  dir="$share/handsfree/nemotron"
+  if [ ! -f "$dir/bpe.vocab" ]; then
+    tmp=$(mktemp -d)
+    # Only the four files used are unpacked; any step failing leaves Whisper in charge, never a half install
+    if curl -fsSL "https://github.com/k2-fsa/sherpa-onnx/releases/download/asr-models/$NEMOTRON.tar.bz2" |
+         tar xj -C "$tmp" "$NEMOTRON/encoder.int8.onnx" "$NEMOTRON/decoder.int8.onnx" "$NEMOTRON/joiner.int8.onnx" \
+           "$NEMOTRON/tokens.txt" &&
+       curl -fsSL -o "$tmp/tokenizer.json" "https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b/resolve/main/tokenizer.json" &&
+       mkdir -p "$dir" && cp "$tmp/$NEMOTRON"/* "$tmp/tokenizer.json" "$dir/" &&
+       (cd "$root" && venv_python -c 'from voice.speech import nemotron as n; n.build_vocab(n.MODEL_DIR / "tokenizer.json", n.MODEL_DIR / "bpe.vocab")'); then
+      say "Nemotron streaming: hands-free turns are heard as you talk (\"streaming\": false in ~/.config/ptt/config.json turns it off)"
+    else
+      rm -f "$dir/bpe.vocab"
+      say "Nemotron didn't install (offline?): Whisper transcribes hands-free turns. Run ./install.sh handsfree again later."
+    fi
+    rm -rf "$tmp"
+  fi
+}
+
 install_handsfree() {  # the call needs it too: once is enough
   [ -z "$handsfree_done" ] || return 0
   handsfree_done=1
@@ -125,6 +148,7 @@ install_handsfree() {  # the call needs it too: once is enough
   # "hey Jarvis": openWakeWord's published model, a wake word that needs no recordings of your voice
   venv_python -c "from openwakeword.utils import download_models; download_models(['hey_jarvis'], '$share/handsfree')" \
     >/dev/null 2>&1 || say "The hey Jarvis model did not download (offline?): hey Claude still works once trained."
+  install_nemotron
   mic=$(builtin_mic || true)
   mkdir -p "$units" "$HOME/.config/pipewire" "$bin"
   conf="$HOME/.config/pipewire/talkback-echo-cancel.conf"

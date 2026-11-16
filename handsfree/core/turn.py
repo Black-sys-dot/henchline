@@ -22,7 +22,7 @@ from routing import Heard, Meaning
 from sensing import PER_SECOND, RATE, SPEECH, level
 from talkover import TalkOver, our_own_words
 from voicegate import START_DB
-from voice.speech import whisper
+from voice.speech import nemotron, whisper
 from voice.state import (BY_HANDSFREE, CALL_HANGUP, CALL_PUSH, HANDSFREE_LOG, HANDSFREE_WAV, Phase, in_call,
                          last_speaker, log, ptt_busy, release_phase, set_phase, set_target)
 
@@ -67,6 +67,13 @@ class Turn:
         self.cfg, self.transcriber, self.talkover = cfg, transcriber, talkover
         self.read, self.show, self.echo_slipped, self.stop = read, show, echo_slipped, stop
         self.last_message: tuple[str, Heard] | None = None  # for "send that to …"
+        self.live = None  # this turn, heard as it is recorded (Nemotron), when it is installed
+        self.streamer = None
+        if cfg.streaming and nemotron.available():
+            try:
+                self.streamer = nemotron.Streamer(cfg.hotwords, HANDSFREE_LOG)
+            except Exception as exc:  # Whisper as before
+                log(HANDSFREE_LOG, f"nemotron didn't load ({exc}): Whisper transcribes turns")
 
     def take(self, frames: list[np.ndarray], floor: float, heard: Heard) -> float | None:
         """One turn, end to end; returns seconds to keep listening (0: the default), None if no words."""
@@ -97,6 +104,12 @@ class Turn:
         """Frames until a pause, "over", or the limit; None if push-to-talk took over."""
         set_phase(Phase.RECORDING, BY_HANDSFREE)  # talkback goes quiet and holds
         self.show(Mode.RECORDING)
+        if self.live:  # a turn that failed before it was transcribed: its decoding stops
+            self.live.cancel()
+        self.live = self.streamer.begin() if self.streamer else None
+        for frame in frames:  # what was heard before the turn began (the wake word, a word over a clip)
+            if self.live:
+                self.live.feed(frame)
         since, quiet, peak = time.monotonic(), 0, -120.0
         started = heard is not Heard.WOKE  # after "hey Claude" people pause for the chime
         calling = in_call()
@@ -114,9 +127,14 @@ class Turn:
                 break
             if len(frames) % PTT_CHECK == 0 and ptt_busy():
                 log(HANDSFREE_LOG, "push-to-talk took over; dropped the hands-free recording")
+                if self.live:
+                    self.live.cancel()
+                    self.live = None
                 return None  # it delivers these words; ours would arrive twice
             frame = samples.astype(np.float32) / 32768
             frames.append(frame)
+            if self.live:
+                self.live.feed(frame)
             db = level(frame)
             peak = max(peak, db)
             if not started:
@@ -145,8 +163,11 @@ class Turn:
         audio = (np.concatenate(frames) * 32767).astype("<i2") if frames else np.zeros(0, "<i2")
         # A cough or a bare "um" has no speech, and Whisper given only that tends
         # to write out its hint words ("Cursor, Cursor, Kokoro")
+        live, self.live = self.live, None
         if not len(audio) or not get_speech_timestamps(audio.astype(np.float32) / 32768, SPEECH):
             log(HANDSFREE_LOG, "no speech in the recording")
+            if live:
+                live.cancel()
             return "", ""
         with wave.open(str(HANDSFREE_WAV), "wb") as out:
             out.setnchannels(1)
@@ -154,7 +175,25 @@ class Turn:
             out.setframerate(RATE)
             out.writeframes(audio.tobytes())
         try:
-            return self.transcriber.file(HANDSFREE_WAV)
+            began = time.monotonic()
+            heard = live.finish() if live else None
+            if heard and heard[0]:
+                text = nemotron.tidy(heard[0], self.cfg.hotwords)
+                log(HANDSFREE_LOG, f"heard by nemotron {time.monotonic() - began:.2f}s after the turn ended")
+                rich = text
+                if self.cfg.tone:
+                    try:
+                        from voice.speech import tone
+
+                        rich = tone.annotate(HANDSFREE_WAV, heard[1], text)
+                    except Exception as exc:  # tone is extra; the words must still get through
+                        log(HANDSFREE_LOG, f"tone failed: {exc}")
+                return text, rich
+            if live:
+                log(HANDSFREE_LOG, "nemotron heard nothing: Whisper transcribes this turn")
+            got = self.transcriber.file(HANDSFREE_WAV)
+            log(HANDSFREE_LOG, f"heard by whisper {time.monotonic() - began:.2f}s after the turn ended")
+            return got
         except Exception as exc:
             log(HANDSFREE_LOG, f"transcribe failed: {exc}")
             return "", ""
