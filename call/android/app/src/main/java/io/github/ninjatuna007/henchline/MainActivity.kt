@@ -1386,6 +1386,21 @@ class MainActivity : Activity() {
                 session.matches(Regex("cursor-[0-9a-f-]{36}")) -> "On ${answer.optString("now").ifEmpty { "its own model" }}. Cursor only lets you change an IDE chat's model in Cursor itself."
                 else -> "This agent can't switch models from the phone."
             })
+            // A Cursor IDE chat: Cursor's own menu (model, effort, context, fast)
+            answer.optJSONArray("menu")?.let { menu ->
+                val current = answer.optJSONObject("current") ?: JSONObject()
+                val settings = mutableMapOf<String, String>()
+                current.optJSONObject("params")?.let { p -> p.keys().forEach { k -> settings[k] = p.optString(k) } }
+                panel = CursorModelMenu(this, (0 until menu.length()).map { menu.getJSONObject(it) },
+                    current.optString("model"), settings) { model, params, done ->
+                    val list = org.json.JSONArray(params.map { (k, v) -> JSONObject().put("id", k).put("value", v) })
+                    ask("/crew/model", JSONObject().put("session", session).put("model", model).put("params", list)) { result ->
+                        done(if (result.optBoolean("ok")) null else result.optString("note").ifEmpty { "Didn't switch." })
+                        showModel(session)
+                    }
+                }.also { it.show() }
+                return@ask
+            }
             val now = answer.optString("now")
             panel = ModelPicker(this, if (now.isNotEmpty()) "Now on $now" else "Switch model", modelsOf(answer), withDefault = false) { id, name ->
                 ask("/crew/model", JSONObject().put("session", session).put("model", id)) { done ->

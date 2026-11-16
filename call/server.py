@@ -602,6 +602,13 @@ async def crew_models(request: web.Request) -> web.Response:
         now = ""
     if request.query.get("only") == "now":  # a chat opening: just what it is using, not the whole list
         return web.json_response({"agent": agent, "switch": switchable, "now": now})
+    chat = cursor_bridge.chat_of(session) if session else ""
+    if chat and target.in_editor:  # Cursor's own menu: models with their settings, and what the chat is on
+        current = {"model": cursor_bridge.chat_model(chat),
+                   "params": {p["id"]: str(p.get("value")) for p in cursor_bridge.params_of(chat)}}
+        models = await loop.run_in_executor(None, cursor_bridge.catalog)
+        shown = [m for m in models if m["on"] or m["id"] == current["model"]]
+        return web.json_response({"agent": agent, "switch": True, "now": now, "menu": shown, "current": current})
     return web.json_response({"agent": agent, "switch": switchable, "now": now,
                               "models": await loop.run_in_executor(None, tmux.models, agent)})
 
@@ -636,15 +643,15 @@ def model_in_use(target: Speaker) -> str:
                         return f"{family.capitalize()} {'.'.join(version)}".strip()
         return ""
     if target.in_editor and (chat := cursor_bridge.chat_of(target.session)):  # Cursor's store: its id, named
-        # Its store has the model ("grok-4.7") and, apart, its effort ("xhigh"); the list names each pair. Not the
-        # first of the family: that showed "Low" for a chat on extra high (the user's catch, 2026-11-16)
-        used, effort = cursor_bridge.chat_model(chat), cursor_bridge.chat_effort(chat)
-        listed = {m["id"]: m["name"] for m in tmux.models("cursor")}
-        family = next((n for i, n in listed.items() if i.startswith(used + "-")), used)
-        family = " ".join(w for w in family.split() if w.lower() not in CURSOR_TRIM)
-        effort_words = {"xhigh": "Extra High", "high": "High", "medium": "Medium", "low": "Low"}
-        named = listed.get(f"{used}-{effort}")
-        return named or (f"{family} {effort_words.get(effort, effort)}".strip() if used else "")
+        # Named as Cursor's own menu names it: the model, then its effort ("Grok 4.7 Extra High"), from its catalog
+        used = cursor_bridge.chat_model(chat)
+        settings = {p["id"]: str(p.get("value")) for p in cursor_bridge.params_of(chat)}
+        entry = next((m for m in cursor_bridge.catalog() if m["id"] == used), None)
+        if entry is None:
+            return used
+        effort = next((v["name"] for p in entry["params"] if p["id"] in ("reasoning_effort", "reasoning")
+                       for v in p["values"] if v["value"] == settings.get(p["id"])), "")
+        return f"{entry['name']} {effort}".strip()
     if target.tab.owner != tmux.OWNER:
         return ""
     lines = tmux.out("capture-pane", "-p", "-t", target.tab.address).splitlines()
@@ -658,11 +665,8 @@ def model_in_use(target: Speaker) -> str:
 
 def switch_model(target: Speaker, model: dict) -> str:
     """Types the agent's own /model into its terminal; "" when done, else why not."""
-    if target.in_editor:  # a Cursor editor chat: through the bridge, read back from Cursor's store
-        why = cursor_bridge.switch_model(cursor_bridge.chat_of(target.session), model["id"])
-        # Said, so it isn't a surprise: the effort is Cursor's default for the model, and (as in Cursor) the model is
-        # now the default for new chats too
-        return why or "Switched. Cursor also makes it the default for new chats."
+    if target.in_editor:  # see crew_model: Cursor editor chats switch by Cursor's catalog, not this list
+        return "Pick it from Cursor's own model menu."
     terminals = desktop().terminals
     if not terminals.agent_running(target.tab):
         return "That agent isn't running."
@@ -726,6 +730,7 @@ async def crew_model(request: web.Request) -> web.Response:
     try:
         body = await request.json()
         session, wanted = str(body.get("session", "")), str(body.get("model", ""))
+        settings = body.get("params") if isinstance(body.get("params"), list) else []
     except (ValueError, AttributeError):
         raise web.HTTPBadRequest(text="expected JSON")
     target = next((s for s in recent_speakers() if s.session == session), None)
@@ -733,6 +738,14 @@ async def crew_model(request: web.Request) -> web.Response:
         return web.json_response({"note": "Only an agent in a terminal or a Cursor chat can switch models from here."},
                                  status=400)
     loop = asyncio.get_running_loop()
+    if target.in_editor:  # a Cursor editor chat: a model of Cursor's catalog and its settings, read back after
+        why = await loop.run_in_executor(None, cursor_bridge.set_model, cursor_bridge.chat_of(target.session),
+                                         wanted, settings)
+        if why:
+            return web.json_response({"note": why}, status=409)
+        log(HANDSFREE_LOG, f"{target.spoken()} switched to {wanted} {settings} from the phone")
+        return web.json_response({"ok": True, "name": wanted,
+                                  "note": "Switched. Cursor also makes it the default for new chats."})
     model = next((m for m in await loop.run_in_executor(None, tmux.models, target.agent) if m["id"] == wanted), None)
     if model is None:
         return web.json_response({"note": f"{target.agent} has no model {wanted}."}, status=400)

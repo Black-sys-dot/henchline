@@ -414,3 +414,92 @@ class AddSheet(activity: Activity, private val picked: (String) -> Unit) : Botto
             ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
     }
 }
+
+/**
+ * A Cursor IDE chat's model, as Cursor's own menu has it (the user's wish, 2026-11-16, shown from his screen): rows
+ * for Model, Effort, Context and a Fast switch, each choice from Cursor's catalog for that model. Each change is
+ * sent at once, the whole setting, and the rows follow what the chat is then on.
+ */
+class CursorModelMenu(
+    activity: Activity,
+    private val menu: List<JSONObject>,  // {id, name, params: [{id, name, kind, values: [{value, name}]}]}
+    private var model: String,
+    private val settings: MutableMap<String, String>,
+    private val apply: (model: String, params: Map<String, String>, done: (String?) -> Unit) -> Unit,
+) : BottomPanel(activity) {
+    private lateinit var rows: LinearLayout
+    private lateinit var note: TextView
+
+    fun show() {
+        val sheet = open("Model", "As in Cursor: the chat switches as you pick")
+        rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        sheet.addView(rows, wide(14))
+        note = TextView(activity).apply { setTextColor(colour(R.color.muted)); textSize = 13f; gravity = Gravity.CENTER }
+        sheet.addView(note, wide(10))
+        sheet.addView(quiet("Done") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(4) })
+        draw()
+    }
+
+    private fun entry() = menu.firstOrNull { it.optString("id") == model }
+
+    private fun params(): List<JSONObject> =
+        entry()?.optJSONArray("params")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()
+
+    private fun values(param: JSONObject): List<JSONObject> =
+        param.optJSONArray("values")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()
+
+    private fun draw() {
+        rows.removeAllViews()
+        rows.addView(row("Model", entry()?.optString("name") ?: model) {
+            ModelPicker(activity, "Model", menu.map { JSONObject().put("id", it.optString("id")).put("name", it.optString("name")) },
+                withDefault = false) { id, _ ->
+                model = id
+                // Its own settings: kept where the new model has the same choice, else its first
+                val kept = mutableMapOf<String, String>()
+                for (p in params()) {
+                    val options = values(p).map { it.optString("value") }
+                    kept[p.optString("id")] = settings[p.optString("id")]?.takeIf { it in options } ?: options.firstOrNull() ?: ""
+                }
+                settings.clear(); settings.putAll(kept)
+                send()
+            }.show()
+        })
+        // Fast last, as in Cursor
+        for (p in params().sortedBy { it.optString("kind") == "bool" }) {
+            val id = p.optString("id")
+            val options = values(p)
+            if (p.optString("kind") == "bool") {
+                val on = settings[id] == "true"
+                rows.addView(row(p.optString("name"), if (on) "On" else "Off") {
+                    settings[id] = if (on) "false" else "true"; send()
+                })
+            } else {
+                val shown = options.firstOrNull { it.optString("value") == settings[id] }?.optString("name") ?: settings[id] ?: ""
+                rows.addView(row(p.optString("name"), shown) {
+                    ModelPicker(activity, p.optString("name"), options.map { JSONObject().put("id", it.optString("value")).put("name", it.optString("name")) },
+                        withDefault = false) { value, _ -> settings[id] = value; send() }.show()
+                })
+            }
+        }
+    }
+
+    private fun send() {
+        draw()
+        note.text = "Switching…"
+        apply(model, settings.toMap()) { why ->
+            note.text = why ?: "Done. Cursor also makes this the default for new chats."
+            note.setTextColor(colour(if (why == null) R.color.muted else R.color.hang))
+        }
+    }
+
+    private fun row(name: String, value: String, then: () -> Unit) = LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        setPadding(px(16), px(14), px(16), px(14))
+        background = rounded(colour(R.color.navy), 14f)
+        addView(TextView(activity).apply { text = name; setTextColor(colour(R.color.text)); textSize = 16f },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(TextView(activity).apply { text = "$value  ›"; setTextColor(colour(R.color.cyan)); textSize = 15f })
+        setOnClickListener { pop(this); then() }
+    }.also { it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = px(6) } }
+}

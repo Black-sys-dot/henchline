@@ -79,48 +79,78 @@ def ask_window(chat: str, request: dict) -> bool:
 EFFORTS = ("xhigh", "high", "medium", "low")
 
 
+_catalog: tuple[float, list[dict]] = (0.0, [])
+
+
+def catalog() -> list[dict]:
+    """Cursor's own model list, as its model menu shows it: [{id, name, on, params: [{id, name, kind ("enum" |
+    "bool"), values: [{value, name}]}]}], from its settings store (availableDefaultModels2), kept a minute."""
+    global _catalog
+    at, models = _catalog
+    if time.monotonic() - at < 60 and models:
+        return models
+    models = []
+    try:
+        with contextlib.closing(sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=1)) as db:
+            row = db.execute("select value from ItemTable where key like ?",
+                             ("%reactiveStorageServiceImpl.persistentStorage.applicationUser",)).fetchone()
+        listed = json.loads(row[0]).get("availableDefaultModels2") or [] if row else []
+    except (sqlite3.Error, ValueError, TypeError, AttributeError):
+        listed = []
+    for m in listed:
+        if not isinstance(m, dict) or not m.get("name"):
+            continue
+        params = []
+        for p in m.get("parameterDefinitions") or []:
+            kind = p.get("parameterType") or {}
+            values = (kind.get("enumParameter") or kind.get("booleanParameter") or {}).get("values") or []
+            params.append({"id": p.get("id", ""), "name": p.get("name", p.get("id", "")),
+                           "kind": "bool" if "booleanParameter" in kind else "enum",
+                           "values": [{"value": str(v.get("value")), "name": re.sub(r"[\u200b]", "", str(
+                               v.get("displayName") or v.get("value")))} for v in values]})
+        models.append({"id": m["name"], "name": m.get("clientDisplayName") or m["name"], "on": bool(m.get("defaultOn")),
+                       "params": params})
+    _catalog = (time.monotonic(), models)
+    return models
+
+
+def set_model(chat: str, model: str, params: list[dict]) -> str:
+    """Sets a Cursor editor chat's model and its settings (each checked against Cursor's catalog for that model)
+    through Cursor's own "Switch to Model Slug", then reads them back from Cursor's store: "" when it is on them,
+    else what it is on. As when changed in Cursor itself, it also becomes the default for new chats."""
+    entry = next((m for m in catalog() if m["id"] == model), None)
+    if entry is None:
+        return f"Cursor doesn't list a model {model}."
+    allowed = {p["id"]: {v["value"] for v in p["values"]} for p in entry["params"]}
+    picked = [{"id": str(p.get("id")), "value": str(p.get("value"))} for p in params if isinstance(p, dict)]
+    wrong = [p["id"] for p in picked if p["value"] not in allowed.get(p["id"], set())]
+    if wrong:
+        return f"{entry['name']} has no such {', '.join(wrong)}."
+    before = chat_model(chat)
+    if not before:
+        return "Cursor's record of that chat can't be read, so a switch couldn't be checked: not switched."
+    if not ask_window(chat, {"model": chat, "config": {"modelId": model, "params": picked}}):
+        if last_why == "not a chat id":
+            return "Cursor runs an older Henchline bridge: Reload Window in Cursor, then try again."
+        return f"Cursor didn't take it ({last_why or 'no answer'}): still on {before}."
+    want = {p["id"]: p["value"] for p in picked}
+    got: dict = {}
+    for _ in range(40):  # Cursor writes its store a while later: the model, and its settings a few seconds after
+        time.sleep(0.25)
+        got = {p["id"]: str(p.get("value")) for p in params_of(chat)}
+        if chat_model(chat) == model and all(got.get(k) == v for k, v in want.items()):
+            return ""
+    if chat_model(chat) != model:
+        return f"Cursor still shows {chat_model(chat) or before} for that chat."
+    off = [k for k, v in want.items() if got.get(k) != v]
+    return f"Switched to {entry['name']}, but Cursor shows {', '.join(off)} differently so far."
+
+
 def params_of(chat: str) -> list[dict]:
     """The settings Cursor keeps with a chat's model: [{id, value}] (effort, fast, context)."""
     config = composer(chat).get("modelConfig") or {}
     picked = (config.get("selectedModels") or [{}])[0] if isinstance(config, dict) else {}
     return [p for p in (picked.get("parameters") or []) if isinstance(p, dict) and "id" in p]
-
-
-def switch_model(chat: str, slug: str) -> str:
-    """Sets a Cursor editor chat's model from a model's listed id ("grok-4.7-xhigh", "gpt-5.6-sol-high-fast": the
-    model, its effort, fast) through Cursor's own "Switch to Model Slug", with that effort and fast (or not), and
-    the chat's context size kept when the model stays the same; then reads the chat's model and settings back from
-    Cursor's store: "" when it is on them, else what it is on. As when the model is changed in Cursor itself, it
-    also becomes the default for new chats."""
-    base, fast, effort = slug, "false", ""
-    if base.endswith("-fast"):
-        base, fast = base.removesuffix("-fast"), "true"
-    for level in EFFORTS:
-        if base.endswith("-" + level):
-            base, effort = base.removesuffix("-" + level), level
-            break
-    before = chat_model(chat)
-    if not before:
-        return "Cursor's record of that chat can't be read, so a switch couldn't be checked: not switched."
-    effort_id = "reasoning" if "codex" in base else "reasoning_effort"  # Cursor's name for it differs by model
-    params = [{"id": "fast", "value": fast}]
-    if effort:
-        params.append({"id": effort_id, "value": effort})
-    if before == base:  # the same model: its context size (256k, 500k…) stays as the user had it
-        params += [p for p in params_of(chat) if p.get("id") == "context"]
-    if not ask_window(chat, {"model": chat, "config": {"modelId": base, "params": params}}):
-        if last_why == "not a chat id":
-            return "Cursor runs an older Henchline bridge: Reload Window in Cursor, then try again."
-        return f"Cursor didn't take it ({last_why or 'no answer'}): still on {before}."
-    got: dict = {}
-    for _ in range(40):  # Cursor writes its store a while later: the model, and its settings a few seconds after
-        time.sleep(0.25)
-        got = {p["id"]: str(p.get("value")) for p in params_of(chat)}
-        if chat_model(chat) == base and (not effort or got.get(effort_id) == effort):
-            return ""
-    if chat_model(chat) != base:
-        return f"Cursor still shows {chat_model(chat) or before} for that chat: it may not know {base}."
-    return f"Switched to {base}, but Cursor shows its effort as {got.get(effort_id) or 'its default'} so far."
 
 
 def open_chat(workspace: str, chat: str) -> bool:

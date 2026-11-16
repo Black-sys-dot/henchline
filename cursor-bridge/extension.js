@@ -81,10 +81,6 @@ function activate(context) {
           return;
         }
         if (typeof asked.open !== "string" || !CHAT_ID.test(asked.open)) throw new Error("not a chat id");
-        // Belt only: Cursor hands back a handle even for an id it doesn't have, so Henchline itself picks the
-        // window whose project holds the chat's transcript (voice/desktop/cursor_bridge.py)
-        const handle = await vscode.commands.executeCommand("composer.getComposerHandleById", asked.open);
-        if (!handle) throw new Error("not a chat of this window");
         await vscode.commands.executeCommand("composer.openComposer", asked.open);
         answer = { ok: true };
       } catch (e) {
