@@ -122,6 +122,7 @@ class MainActivity : Activity() {
 
         findViewById<ImageButton>(R.id.menu).setOnClickListener { show(listScreen) }
         findViewById<View>(R.id.compose).setOnClickListener { newChat() }
+        findViewById<View>(R.id.modelChip).setOnClickListener { switchModel() }
         findViewById<View>(R.id.tabChats).setOnClickListener { showCalls(false) }
         findViewById<View>(R.id.tabCalls).setOnClickListener { showCalls(true) }
         callButton.setOnClickListener { if (CallService.Bus.connected) hangUp() else call() }
@@ -1090,6 +1091,8 @@ class MainActivity : Activity() {
         showCrew()
         show(chatScreen)
         if (current.isNotEmpty()) { Messages.seen(this, current); markRead(current) }  // opened: read
+        // The model last switched to from here, if any (the agent may have been switched on the laptop since)
+        findViewById<TextView>(R.id.modelChip).text = prefs().getString("model_$session", null)?.let { "✦ $it" } ?: "✦ Model"
     }
 
     /** Pull down on the list: the laptop looks for every agent running (as "switch me to" does) and lists them. */
@@ -1153,13 +1156,40 @@ class MainActivity : Activity() {
                 return@ask
             }
             panel = NewChatSheet(this, (0 until folders.length()).map { folders.getJSONObject(it) },
-                (0 until agents.length()).map { agents.getString(it) }) { folder, agent, typed, done ->
-                ask("/crew/new", JSONObject().put("folder", folder).put("agent", agent).put("typed", typed)) { started ->
+                (0 until agents.length()).map { agents.getString(it) },
+                loadModels = { agent, then -> ask("/crew/models?agent=$agent", null) { answer -> then(modelsOf(answer)) } }
+            ) { folder, agent, model, typed, done ->
+                ask("/crew/new", JSONObject().put("folder", folder).put("agent", agent).put("model", model).put("typed", typed)) { started ->
                     val session = started.optString("session")
                     if (session.isEmpty()) return@ask done(started.optString("note").ifEmpty { "It didn't start." })
                     done(null)
                     takeCrew(started)
                     open(session)
+                }
+            }.also { it.show() }
+        }
+    }
+
+    private fun modelsOf(answer: JSONObject): List<JSONObject> =
+        answer.optJSONArray("models")?.let { list -> (0 until list.length()).map { list.getJSONObject(it) } } ?: emptyList()
+
+    /** The model chip in a chat's top bar: the agent's models, and the pick typed into it as its own /model. */
+    private fun switchModel() {
+        val session = current.ifEmpty { return }
+        ask("/crew/models?session=" + android.net.Uri.encode(session), null) { answer ->
+            val toast = { words: String -> android.widget.Toast.makeText(this, words, android.widget.Toast.LENGTH_LONG).show() }
+            if (answer.has("note")) return@ask toast(answer.optString("note"))
+            if (!answer.optBoolean("switch")) return@ask toast(when (answer.optString("agent")) {
+                "codex" -> "Codex switches models only in its own picker: start a new chat with the model."
+                else -> "This agent can't switch models from the phone."
+            })
+            panel = ModelPicker(this, "Switch model", modelsOf(answer), withDefault = false) { id, name ->
+                ask("/crew/model", JSONObject().put("session", session).put("model", id)) { done ->
+                    if (done.optBoolean("ok")) {
+                        say("", "✦ Switched to $name", note = true)
+                        prefs().edit().putString("model_$session", name).apply()
+                        findViewById<TextView>(R.id.modelChip).text = "✦ $name"
+                    } else toast(done.optString("note").ifEmpty { "Didn't switch." })
                 }
             }.also { it.show() }
         }

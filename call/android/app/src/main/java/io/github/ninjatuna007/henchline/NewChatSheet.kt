@@ -117,12 +117,16 @@ class NewChatSheet(
     activity: Activity,
     private val folders: List<JSONObject>,  // {path, name}
     private val agents: List<String>,
-    private val start: (folder: String, agent: String, typed: Boolean, done: (String?) -> Unit) -> Unit,
+    private val loadModels: (agent: String, then: (List<JSONObject>) -> Unit) -> Unit,
+    private val start: (folder: String, agent: String, model: String, typed: Boolean, done: (String?) -> Unit) -> Unit,
 ) : BottomPanel(activity) {
+    private var model = ""  // "" the agent's own default
+    private var modelName = "Default"
     private var agent = agents.first()
     private var folder: JSONObject? = folders.firstOrNull()
     private var typed = ""  // a path in the box, when it is one
     private var failure = ""  // why the last start didn't happen, shown until something else is picked
+    private var modelRefresh: () -> Unit = {}
 
     fun show() {
         val sheet = open("New chat", "Starts an agent on your laptop, in its own tmux window")
@@ -139,6 +143,7 @@ class NewChatSheet(
 
         fun pretty(path: String) = if (home != null && path.startsWith(home)) "~" + path.removePrefix(home) else path
         fun refresh() {
+            modelRefresh()
             for (i in 0 until chips.childCount) {
                 val chip = chips.getChildAt(i)
                 val on = chip.tag == agent
@@ -153,6 +158,7 @@ class NewChatSheet(
             }
             val where = if (typed.isNotEmpty()) typed.trimEnd('/').substringAfterLast('/') else folder?.optString("name") ?: ""
             go.text = if (where.isEmpty()) "Pick a folder" else "Start ${agent.replaceFirstChar { it.uppercase() }} in ${where.replace("_", " ")}"
+            if (where.isNotEmpty() && model.isNotEmpty()) go.text = "${go.text} · $modelName"
             go.isEnabled = where.isNotEmpty()
             go.alpha = if (go.isEnabled) 1f else 0.5f
             when {
@@ -196,10 +202,28 @@ class NewChatSheet(
                     text = if (kind == "cursor") "Cursor CLI" else kind.replaceFirstChar { it.uppercase() }
                     setTextColor(colour(R.color.text)); textSize = 13f; gravity = Gravity.CENTER; setPadding(0, px(6), 0, 0)
                 })
-                setOnClickListener { agent = kind; failure = ""; pop(this); refresh() }
+                setOnClickListener { agent = kind; failure = ""; model = ""; modelName = "Default"; pop(this); refresh() }
             }, LinearLayout.LayoutParams(px(96), ViewGroup.LayoutParams.WRAP_CONTENT).apply { marginEnd = px(10) })
         }
         sheet.addView(HorizontalScrollView(activity).apply { isHorizontalScrollBarEnabled = false; addView(chips) }, wide(10))
+        // The model: a pill saying which, a list to pick from (loaded for the agent picked)
+        val modelPill = TextView(activity).apply {
+            setTextColor(colour(R.color.cyan)); textSize = 14f
+            background = rounded(colour(R.color.navy), 18f, 1, colour(R.color.surface_high))
+            setPadding(px(16), px(10), px(16), px(10))
+            setOnClickListener {
+                text = "Loading models…"
+                loadModels(agent) { list ->
+                    refresh()
+                    ModelPicker(activity, "${agent.replaceFirstChar { it.uppercase() }}'s model", list, withDefault = true) { id, name ->
+                        model = id; modelName = name; refresh()
+                    }.show()
+                }
+            }
+        }
+        sheet.addView(modelPill, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT, ViewGroup.LayoutParams.WRAP_CONTENT)
+            .apply { topMargin = px(10) })
+        modelRefresh = { modelPill.text = "✦ Model: $modelName  ▾" }
 
         sheet.addView(label("FOLDER"), wide(18))
         box.apply {
@@ -228,7 +252,7 @@ class NewChatSheet(
             go.isEnabled = false
             go.text = "Starting ${agent.replaceFirstChar { it.uppercase() }}…"
             go.animate().alpha(0.7f).setDuration(150).start()
-            start(path, agent, typed.isNotEmpty()) { why ->
+            start(path, agent, model, typed.isNotEmpty()) { why ->
                 if (why == null) close()  // this sheet's own close: never a newer sheet's
                 else { failure = why; refresh() }
             }
@@ -311,4 +335,51 @@ class ChatActionsSheet(
         }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         setOnClickListener { pop(this); then() }
     }.also { it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = px(8) } }
+}
+
+/**
+ * A model to pick (the user's wish, 2026-11-16): the agent's models as rows, a box filtering them (the Cursor CLI
+ * lists hundreds), and "Default" first when starting (the agent's own choice).
+ */
+class ModelPicker(
+    activity: Activity,
+    private val title: String,
+    private val models: List<JSONObject>,  // {id, name}
+    private val withDefault: Boolean,
+    private val picked: (id: String, name: String) -> Unit,
+) : BottomPanel(activity) {
+    fun show() {
+        val sheet = open(title, if (withDefault) "Default is the agent's own setting" else "Switches it now, mid-chat")
+        val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val box = EditText(activity).apply {
+            hint = "Filter models"
+            setHintTextColor(colour(R.color.muted)); setTextColor(colour(R.color.text)); textSize = 15f; setSingleLine()
+            background = rounded(colour(R.color.navy), 16f, 1, colour(R.color.surface_high))
+            setPadding(px(16), px(12), px(16), px(12))
+        }
+        fun list(query: String) {
+            rows.removeAllViews()
+            val q = query.trim().lowercase()
+            val shown = (if (withDefault) listOf(JSONObject().put("id", "").put("name", "Default")) else emptyList()) +
+                models.filter { q.isEmpty() || q in it.optString("name").lowercase() || q in it.optString("id").lowercase() }
+            for (m in shown.take(80)) rows.addView(TextView(activity).apply {
+                text = m.optString("name")
+                setTextColor(colour(R.color.text)); textSize = 16f
+                setPadding(px(16), px(14), px(16), px(14))
+                background = rounded(colour(R.color.navy), 14f)
+                setOnClickListener { pop(this); picked(m.optString("id"), m.optString("name")); close() }
+            }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = px(6) })
+        }
+        box.addTextChangedListener(object : TextWatcher {
+            override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+            override fun afterTextChanged(s: Editable?) = list(s?.toString() ?: "")
+        })
+        if (models.size > 8) sheet.addView(box, wide(14))
+        sheet.addView(ScrollView(activity).apply { isVerticalScrollBarEnabled = false; addView(rows) },
+            wide(10, (activity.resources.displayMetrics.heightPixels * 0.5).toInt()))
+        sheet.addView(quiet("Cancel") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
+        list("")
+    }
 }
