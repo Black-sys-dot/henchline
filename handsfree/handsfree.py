@@ -390,6 +390,8 @@ def main() -> int:
     command, args = (sys.argv[1], sys.argv[2:]) if len(sys.argv) > 1 else ("status", [])
     if command == "type-into-cursor":  # internal: routing.deliver runs it in a child process
         return 0 if routing.type_into_cursor(*args) else 1
+    if command == "cursor-model":  # internal: the call server switches a Cursor editor chat's model with it
+        return 0 if routing.pick_cursor_model(*args) else 1
     if command == "run":
         return run()
     if command == "on":

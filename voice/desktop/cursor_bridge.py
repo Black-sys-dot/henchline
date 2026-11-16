@@ -89,6 +89,18 @@ def cursor_title(chat: str) -> str:
         return ""
 
 
+def chat_model(chat: str) -> str:
+    """The model a Cursor editor chat uses ("grok-4.7"), from Cursor's own store, read only."""
+    if not CHAT_ID.fullmatch(chat):
+        return ""
+    try:
+        with sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=1) as db:
+            row = db.execute("select value from cursorDiskKV where key = ?", (f"composerData:{chat}",)).fetchone()
+        return str((json.loads(row[0]).get("modelConfig") or {}).get("modelName") or "") if row else ""
+    except (sqlite3.Error, ValueError, TypeError, AttributeError):
+        return ""
+
+
 def chat_title(chat: str) -> str:
     """A chat's name for the phone: Cursor's own title for it (the user's catch, 2026-11-16: the phone's didn't
     match the IDE's), else a few words of the first thing asked in it (its transcript)."""
@@ -106,7 +118,8 @@ def chat_title(chat: str) -> str:
         asked = re.search(r"<user_query>\s*(.*?)\s*(?:</user_query>|$)", text, re.S)
         asked_words = asked.group(1) if asked else text
         # Not Henchline's own tag and one-time introduction, which can be the first thing a chat was sent
-        asked_words = re.sub(r"^\s*\[[^\]]*\]\s*(\(Henchline, said once:.*?How it all works: \S+\)\s*)?", "", asked_words, flags=re.S)
+        asked_words = re.sub(r"^\s*\[[^\]]*\]\s*(\(Henchline, said once:.*?How it all works: \S+\)\s*)?", "",
+                             asked_words, flags=re.S)
         words = asked_words.split()
         return " ".join(words[:6]) + ("…" if len(words) > 6 else "")
     return ""

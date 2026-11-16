@@ -18,8 +18,10 @@ ALT = 0xFFE9
 RETURN = 0xFF0D
 F12 = 0xFFC9
 V = 0x76
+SLASH = 0x2F
 
-KEY_NAMES = {"ctrl": CONTROL, "shift": SHIFT, "alt": ALT, "return": RETURN, "f12": F12, "v": V}  # Desktop.press
+KEY_NAMES = {"ctrl": CONTROL, "shift": SHIFT, "alt": ALT, "return": RETURN, "f12": F12, "v": V,  # Desktop.press
+             "slash": SLASH}
 
 _CLIENT_MESSAGE = 33
 _SUBSTRUCTURE = (1 << 20) | (1 << 19)  # SubstructureRedirect | SubstructureNotify

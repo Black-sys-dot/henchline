@@ -286,6 +286,13 @@ def type_into_cursor(wid: str, message: str) -> bool:
     return False
 
 
+def pick_cursor_model(wid: str, name: str) -> bool:
+    """In the Cursor window's chat on screen (the bridge opened it): its model picker (ctrl+/ with the chat box
+    focused), the model's name typed into it, Enter on the first match. Run in a child process, as typing is."""
+    return desktop().paste_into(wid, name, ("ctrl", "alt", "shift", "f12"), ("ctrl", "slash"), ("ctrl", "v"),
+                                ("return",))
+
+
 SNIPPET = Path(__file__).resolve().parents[2] / "agents/AGENTS-snippet.md"
 PHONE = (Heard.TEXTED, Heard.VOICE_NOTE, Heard.SHARED)
 INTRO = ("(Henchline, said once: I'm writing from my phone and can't see this screen. Answer [phone …] messages with "

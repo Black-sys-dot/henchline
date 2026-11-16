@@ -591,7 +591,8 @@ async def crew_models(request: web.Request) -> web.Response:
         if target is None:
             return web.json_response({"note": "That agent isn't known to the laptop."}, status=404)
         agent = target.agent
-        switchable = agent in ("claude", "cursor") and bool(target.tab)  # Codex's /model only opens a picker
+        # Codex's /model only opens a picker; a Cursor editor chat switches through its window (the bridge)
+        switchable = (agent in ("claude", "cursor") and bool(target.tab)) or bool(cursor_bridge.chat_of(target.session))
         now = await loop.run_in_executor(None, model_in_use, target)
     else:
         now = ""
@@ -630,6 +631,12 @@ def model_in_use(target: Speaker) -> str:
                                             if not re.fullmatch(r"\d{8}", p)]
                         return f"{family.capitalize()} {'.'.join(version)}".strip()
         return ""
+    if target.in_editor and (chat := cursor_bridge.chat_of(target.session)):  # Cursor's store: its id, named
+        used = cursor_bridge.chat_model(chat)
+        listed = tmux.models("cursor")  # its store has the family ("grok-4.7"); the list, each effort of it
+        named = next((m["name"] for m in listed if m["id"] == used), "") or \
+            next((m["name"] for m in listed if m["id"].startswith(used + "-")), "")
+        return named or used
     if target.tab.owner != tmux.OWNER:
         return ""
     lines = tmux.out("capture-pane", "-p", "-t", target.tab.address).splitlines()
@@ -641,8 +648,42 @@ def model_in_use(target: Speaker) -> str:
     return ""
 
 
+def switch_editor_model(target: Speaker, model: dict) -> str:
+    """A Cursor editor chat: opened through the bridge, its model picker typed into in its window, and the model it
+    then uses read back from Cursor's store."""
+    chat = cursor_bridge.chat_of(target.session)
+    if not chat or not cursor_bridge.open_chat(target.where, chat):
+        return "I couldn't open that Cursor chat (is its window open?)."
+    wid = routing.cursor_window(target.where)
+    if not wid:
+        return "I can't find Cursor's window for that chat."
+    words = []
+    for word in model["name"].split():
+        if word.lower() in CURSOR_TRIM:
+            break
+        words.append(word)
+    name = " ".join(words) or model["name"]
+    before = cursor_bridge.chat_model(chat)
+    picked = subprocess.run([sys.executable, str(HERE.parent / "handsfree/handsfree.py"), "cursor-model", wid, name],
+                            timeout=20).returncode == 0
+    if not picked:
+        return "Cursor's window didn't stay in front (or the laptop is locked): not switched."
+    for _ in range(8):  # Cursor writes its store a moment later
+        time.sleep(0.5)
+        now = cursor_bridge.chat_model(chat)
+        if now and now != before:
+            break
+    if now == before and not model["id"].startswith(before):
+        return f"Cursor's picker didn't take {name}: it still uses {before}."
+    if not (model["id"].startswith(now) or now.startswith(model["id"])):
+        return f"Switched, but Cursor picked {now} (its best match for {name})."
+    return ""
+
+
 def switch_model(target: Speaker, model: dict) -> str:
     """Types the agent's own /model into its terminal; "" when done, else why not."""
+    if target.in_editor:
+        return switch_editor_model(target, model)
     terminals = desktop().terminals
     if not terminals.agent_running(target.tab):
         return "That agent isn't running."
@@ -709,8 +750,9 @@ async def crew_model(request: web.Request) -> web.Response:
     except (ValueError, AttributeError):
         raise web.HTTPBadRequest(text="expected JSON")
     target = next((s for s in recent_speakers() if s.session == session), None)
-    if target is None or not target.tab:
-        return web.json_response({"note": "Only an agent in a terminal can switch models from here."}, status=400)
+    if target is None or not (target.tab or cursor_bridge.chat_of(target.session)):
+        return web.json_response({"note": "Only an agent in a terminal or a Cursor chat can switch models from here."},
+                                 status=400)
     loop = asyncio.get_running_loop()
     model = next((m for m in await loop.run_in_executor(None, tmux.models, target.agent) if m["id"] == wanted), None)
     if model is None:
