@@ -648,10 +648,16 @@ def claude_context(target: Speaker) -> str:
 
 
 def claude_effort(target: Speaker) -> str:
-    """The effort a Claude session last answered at ("medium"), from its session log's request settings."""
+    """The effort a Claude session runs at ("medium"): as Claude reports it to its status line, else as its last
+    answer was asked for in its session log."""
     uuid = target.session.removeprefix("claude-")
     if not re.fullmatch(r"[0-9a-f-]{36}", uuid):
         return ""
+    reported = read_json(Path.home() / ".local/state/ptt/claude-status" / f"{uuid}.json").get("effort")
+    if isinstance(reported, dict):
+        reported = reported.get("level") or reported.get("value")
+    if isinstance(reported, str) and reported:
+        return reported
     for log_file in (Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"):
         try:
             with log_file.open("rb") as f:
