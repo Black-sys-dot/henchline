@@ -19,13 +19,20 @@ the extension host alone keeps the old version).
   keys the chat by the first (`cursor-<id>`) and names it by Cursor's title for it (read only from Cursor's store,
   `state.vscdb`), so several chats in one window are told apart.
 - Each Cursor window runs the extension, which listens on a private socket in
-  `~/.local/state/ptt/cursor-bridge/` (folder 0700, socket 0600) and accepts exactly two requests:
-  `{"open": "<chat id>"}` (Cursor's `composer.openComposer`) and `{"cycle": "<chat id>"}` (Cursor's
-  `composer.cycleModel`, only when that chat is the one selected). No text and no other command.
+  `~/.local/state/ptt/cursor-bridge/` (folder 0700, socket 0600) and accepts a few requests about one chat by
+  its id: open it (Cursor's `composer.openComposer`), stop it, and set its model (below). No text and no other
+  command.
 - Cursor says yes to any id, so Henchline picks the window itself: the one whose workspace folder is the project
   holding that chat's transcript (`~/.cursor/projects/<project>/agent-transcripts/<id>`). No such window, or two:
   nothing is typed, and the phone says why.
-- Then Henchline types into the window as before (the chat box, paste, Enter).
+- Then the words go in through Cursor's debugging port: Henchline finds that chat's input box on the page by its
+  id, puts the words in and presses Enter there. No keys on the desktop, no window raised or focused, and it
+  works with the screen locked. `./install.sh agents` adds `--remote-debugging-port=9333` to Cursor's launcher
+  (`~/.local/share/applications/cursor.desktop`); it takes effect when Cursor next starts. The port listens on
+  localhost, but while it is open any program or user on this computer can drive Cursor through it (agents
+  included, Cursor's own too). Focus inside Cursor moves to the chat box for that moment and is put back.
+- Without the port (Cursor started another way), Henchline brings the window forward and types into it as before
+  (the chat box, paste, Enter), which needs the screen unlocked.
 - The phone shows each chat's model (with its effort) from Cursor's store, and switches it with Cursor's own "Switch
   to Model Slug" (`{"model": "<chat id>", "config": {...}}`), only when that chat is the selected one. As when the
   model is changed in Cursor itself, it also becomes Cursor's default for new chats. The effort and fast picked
@@ -36,9 +43,11 @@ the extension host alone keeps the old version).
 
 ## Limits
 
-- Linux and X11, like the rest of Henchline. A locked screen can't be typed into.
+- Linux and X11, like the rest of Henchline. Without the debugging port, a locked screen can't be typed into.
 - Cursor's internal commands and its store's layout aren't a public API: a Cursor update can change them, and then
-  the bridge refuses rather than typing into the wrong chat.
+  the bridge refuses rather than typing into the wrong chat. The same holds for its page: the debugging-port path
+  finds a chat's box by the chat id on the page (`data-composer-id`) and checks the words are in that box before
+  pressing Enter, so a changed page means nothing is sent, and the phone says why.
 
 ## Thought bubbles
 

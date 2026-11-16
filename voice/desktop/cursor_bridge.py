@@ -178,12 +178,13 @@ def params_of(chat: str) -> list[dict]:
     return [p for p in (picked.get("parameters") or []) if isinstance(p, dict) and "id" in p]
 
 
-def open_chat(workspace: str, chat: str) -> bool:
+def open_chat(workspace: str, chat: str, strict: bool = False) -> bool:
     """Brings that chat to the front in the one Cursor window that has it: the window whose workspace folder is
     the project holding the chat's transcript (Cursor's own commands say yes to any id, 2026-11-16). False when no
     window has it: then nothing may be typed, or the words would land in whatever chat is on screen. (workspace:
-    the chat's label, kept for the callers; the transcript decides.)"""
-    if not CHAT_ID.fullmatch(chat) or not ask_window(chat, {"open": chat}):
+    the chat's label, kept for the callers; the transcript decides.) strict: about to type with keys, so that chat
+    must be the focused one (the last of those open side by side), not only open."""
+    if not CHAT_ID.fullmatch(chat) or not ask_window(chat, {"open": chat, "strict": strict}):
         return False
     time.sleep(0.4)  # Cursor moving its focus to that chat, before anything is typed
     return True

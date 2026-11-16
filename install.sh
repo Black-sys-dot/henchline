@@ -213,6 +213,29 @@ PYEOF
       python3 "$root/cursor-bridge/pack.py" "$vsix" && cursor --install-extension "$vsix" >/dev/null 2>&1 \
         && say "Cursor: Henchline bridge extension installed (each chat its own on the phone)"
       rm -f "$vsix"
+      # Cursor's debugging port (localhost): Henchline types into an IDE chat by its id and sends it with a real
+      # Enter there, with no keys on the desktop, even with the screen locked. Cursor's own launcher, with the
+      # port added; it takes effect when Cursor next starts. While it is open, any program or user on this
+      # computer can drive Cursor through it.
+      if python3 - "$HOME/.local/share/applications/cursor.desktop" <<'PYEOF'
+import re, sys
+from pathlib import Path
+mine = Path(sys.argv[1])
+source = mine if mine.exists() else Path("/usr/share/applications/cursor.desktop")
+if not source.exists():
+    sys.exit(1)
+lines = source.read_text().splitlines()
+# The program itself (…/cursor), not a word inside a longer path (cursor.AppImage); once only
+edited = [re.sub(r"^(Exec=\S*/cursor)(?=\s|$)(?!.*--remote-debugging-port)", r"\1 --remote-debugging-port=9333", line)
+          for line in lines]
+if not any(re.match(r"Exec=.*--remote-debugging-port", line) for line in edited):
+    sys.exit(1)  # a launcher this doesn't know (an AppImage, env …): left alone
+mine.parent.mkdir(parents=True, exist_ok=True)
+mine.write_text("\n".join(edited) + "\n")
+PYEOF
+      then say "Cursor: starts with its debugging port 9333 (localhost) from its next launch"
+      else say "Cursor: add --remote-debugging-port=9333 to how you start Cursor, for its chats with the screen locked"
+      fi
     fi
     say "Cursor: rule ~/.cursor/rules/voice.mdc, chat-focus key ctrl+alt+shift+f12"
   fi
@@ -268,6 +291,9 @@ remove_call() {
 }
 
 remove_agents() {
+  # Cursor's launcher without the debugging port again (the copy install made; Cursor's own file is untouched)
+  launcher="$HOME/.local/share/applications/cursor.desktop"
+  if [ -f "$launcher" ]; then sed -i 's/ --remote-debugging-port=9333//' "$launcher"; fi
   remove_link "$share/talkback/skill"
   remove_link "$HOME/.claude/skills/talkback"
   remove_link "$HOME/.cursor/skills/talkback"
@@ -284,6 +310,7 @@ remove_agents() {
 # --- arguments ---------------------------------------------------------------
 
 action=install
+for arg in "$@"; do case "$arg" in -h|--help) sed -n '2,7p' "$0"; exit 0 ;; esac; done
 if [ "${1:-}" = remove ]; then action=remove; shift; fi
 if [ $# -eq 0 ]; then sed -n '2,7p' "$0"; exit 1; fi
 for piece in "$@"; do

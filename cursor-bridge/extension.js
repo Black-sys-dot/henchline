@@ -1,8 +1,9 @@
-// Henchline's bridge inside Cursor: each window listens on a private Unix socket and takes three requests about
+// Henchline's bridge inside Cursor: each window listens on a private Unix socket and takes a few requests about
 // one agent chat, by its id: {"open"} brings it to the front (Cursor's composer.openComposer), {"cycle"} moves it
 // to its next model (composer.cycleModel, only when it is the selected chat), {"stop"} stops what it's doing
-// (composer.cancelComposerStep), {"model", "config"} sets its model (cursorai.action.switchToModelSlug). Henchline then types into the chat as it always has. Nothing else is accepted:
-// no text, no other command. The socket and its note are only the user's (0700 folder, 0600 files), under
+// (composer.cancelComposerStep), {"model", "config"} sets its model (cursorai.action.switchToModelSlug). Henchline
+// then writes into the chat itself (through Cursor's debugging port, else with keys). Nothing else is accepted: no
+// text, no other command. The socket and its note are only the user's (0700 folder, 0600 files), under
 // ~/.local/state/ptt/cursor-bridge/.
 const fs = require("fs");
 const net = require("net");
@@ -84,9 +85,15 @@ function activate(context) {
         await vscode.commands.executeCommand("composer.openComposer", asked.open);
         // The chat words will be typed into must be the selected one now (Henchline picked this window by the
         // chat's transcript; a chat in another window, or focus moved, says no)
+        // (Cursor lists every chat open side by side, in pane order, not the focused one last: a second chat
+        // open beside it refused every text to the first, 2026-11-16. openComposer has just made this one the
+        // selected chat in its pane, so it must be among them.)
+        // {"strict": true} (Henchline about to type with keys, which go to the focused chat) keeps the old rule:
+        // the last listed. Sending through Cursor's debugging port finds the box by id, so it needs only "open".
         const selected = await vscode.commands.executeCommand("composer.getOrderedSelectedComposerIds");
-        const last = Array.isArray(selected) ? selected[selected.length - 1] : undefined;
-        answer = last === asked.open ? { ok: true } : { ok: false, why: "another chat is selected", selected };
+        const listed = Array.isArray(selected) ? selected : [];
+        const open = asked.strict === true ? listed[listed.length - 1] === asked.open : listed.includes(asked.open);
+        answer = open ? { ok: true } : { ok: false, why: "another chat is selected", selected };
       } catch (e) {
         answer = { ok: false, why: String(e && e.message ? e.message : e) };
       }
