@@ -490,8 +490,9 @@ class MainActivity : Activity() {
         fun project(name: String) = name.substringAfter(", ", "").removePrefix("in ").ifEmpty { "home" }
         var chats = names.map { (session, name) -> Chat(session, name.substringBefore(","), project(name), Chats.last(this, session), "") }
         // Chats an agent texted lately that the laptop's crew list doesn't name: named from the session ("cursor-_tmp");
-        // older ones stay out of the list (long-press clears one that's in it)
-        chats = chats + Chats.sessions(this).filter { s -> s !in names && (Chats.last(this, s)?.optLong("at") ?: 0) > System.currentTimeMillis() - 3 * 86_400_000L }.map { session ->
+        // older ones stay out of the list (long-press clears one that's in it). Not hands-free's own: it is the
+        // switchboard, not an agent (its "Now talking to …" notices from calls, 2026-11-16)
+        chats = chats + Chats.sessions(this).filter { s -> s !in names && !s.startsWith("handsfree-") && (Chats.last(this, s)?.optLong("at") ?: 0) > System.currentTimeMillis() - 3 * 86_400_000L }.map { session ->
             val agent = session.substringBefore("-").replaceFirstChar { it.uppercase() }
             Chat(session, agent, "not on the crew list", Chats.last(this, session), "")  // its key can't say its folder
         }
