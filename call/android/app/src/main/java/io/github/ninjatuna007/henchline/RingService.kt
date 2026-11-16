@@ -43,7 +43,7 @@ class RingService : PushService() {
                 Chats.add(this, session, JSONObject().put("from", from).put("text", ring.optString("why")).put("mine", false))
             Chats.add(this, session, JSONObject().put("from", from).put("file", file))
             Files.notify(this, ring.optString("agent", "handsfree"), ring.optString("why"), file.optString("url"),
-                file.optString("name", "file"), file.optString("type", "application/octet-stream"), file.optLong("size"))
+                file.optString("name", "file"), file.optString("type", "application/octet-stream"), file.optLong("size"), ring.optString("session"))
             return
         }
         if (CallService.Bus.service != null) return  // on a call already: the agent is heard there

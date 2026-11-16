@@ -29,6 +29,7 @@ object Files {
     const val NAME = "file_name"
     const val TYPE = "file_type"
     const val SIZE = "file_size"
+    const val SESSION = "file_session"
 
     val client: OkHttpClient = OkHttpClient.Builder().readTimeout(60, TimeUnit.SECONDS).build()
 
@@ -53,7 +54,8 @@ object Files {
     /** Opened from its copy in Downloads/Henchline when it is there already (the user's catch, 2026-11-16: every
      *  tap downloaded it again), else saved there first and then opened; `note` hears how it went (on the main
      *  thread). size: the file's size, to know it again among copies saved before this was remembered. */
-    fun open(context: Context, url: String, name: String, type: String, size: Long = 0, note: (String) -> Unit) {
+    fun open(context: Context, url: String, name: String, type: String, size: Long = 0, session: String = "",
+             note: (String) -> Unit) {
         val address = resolve(context, url) ?: return note("That file isn't from your laptop's address, so I didn't open it.")
         val main = android.os.Handler(context.mainLooper)
         Thread {
@@ -65,6 +67,7 @@ object Files {
                 main.post { note("Couldn't download $name: ${e.message ?: "no connection"} (is Tailscale on?)") }
                 return@Thread
             }
+            Media.record(context, saved, address, name, session)  // which chat it came from
             main.post {
                 try {
                     context.startActivity(Intent(Intent.ACTION_VIEW).setDataAndType(saved, type)
@@ -116,7 +119,7 @@ object Files {
     }
 
     /** Named by the link's SHA-256: two links never share a file (its copy may be saved under the other's name). */
-    private fun cacheFile(context: Context, address: String) = File(context.cacheDir, "previews/" +
+    fun cacheFile(context: Context, address: String) = File(context.cacheDir, "previews/" +
         java.security.MessageDigest.getInstance("SHA-256").digest(address.toByteArray()).joinToString("") { "%02x".format(it) })
 
     private fun download(context: Context, url: String, name: String, type: String): Uri {
@@ -206,7 +209,8 @@ object Files {
     }
 
     /** An agent sent a file while no call was up, or while the call screen wasn't showing. */
-    fun notify(context: Context, agent: String, words: String, url: String, name: String, type: String, size: Long) {
+    fun notify(context: Context, agent: String, words: String, url: String, name: String, type: String, size: Long,
+               session: String = "") {
         val manager = context.getSystemService(NotificationManager::class.java)
         manager.createNotificationChannel(NotificationChannel(CHANNEL, "Files from your crew", NotificationManager.IMPORTANCE_HIGH))
         // Files from one agent within a minute are one notification, as a messaging app's ("Claude sent you 5
@@ -221,7 +225,7 @@ object Files {
             .putInt("$agent.id", id).apply()
         val who = IncomingActivity.nameOf(agent)
         val open = if (count == 1) Intent(context, MainActivity::class.java).setAction(MainActivity.OPEN_FILE)
-            .putExtra(URL, url).putExtra(NAME, name).putExtra(TYPE, type).putExtra(SIZE, size)
+            .putExtra(URL, url).putExtra(NAME, name).putExtra(TYPE, type).putExtra(SIZE, size).putExtra(SESSION, session)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
         else Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)  // the chat, with its album
         val title = if (count == 1) "$who sent you $name" else "$who sent you $count ${if (pictures) "pictures" else "files"}"

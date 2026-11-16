@@ -396,7 +396,7 @@ class CallService : Service() {
                     val line = message.getJSONObject("chat")
                     Files.notify(this@CallService, line.optString("from").lowercase(), line.optString("text"),
                         file.optString("url"), file.optString("name", "file"),
-                        file.optString("type", "application/octet-stream"), file.optLong("size"))
+                        file.optString("type", "application/octet-stream"), file.optLong("size"), line.optString("session"))
                 }
                 message?.optString("delivered")?.takeIf { it.isNotEmpty() }?.let { id ->  // typed into the agent
                     Chats.setStatus(this@CallService, message.optString("session").ifEmpty { lastSession }, id, "delivered")

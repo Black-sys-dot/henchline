@@ -1163,7 +1163,9 @@ class MainActivity : Activity() {
     /** A chat line: the agent's henchman and a bubble on the left, yours on the right, notes in the middle. */
     private fun say(from: String, words: String, mine: Boolean = false, note: Boolean = false, session: String = "",
                     keep: Boolean = true, status: String = "", at: Long = System.currentTimeMillis()): TextView {
-        if (keep && !note) Chats.add(this, session, JSONObject().put("from", from).put("text", words).put("mine", mine))
+        // Kept: the line's own time, by which a long-press finds it to delete
+        val at = if (keep && !note) JSONObject().put("from", from).put("text", words).put("mine", mine)
+            .also { Chats.add(this, session, it) }.optLong("at", at) else at
         if (!note && at > 0) dayLine(at)
         val bubble = TextView(this).apply {
             if (!note) bubbleAt[this] = at
@@ -1191,7 +1193,7 @@ class MainActivity : Activity() {
             row.addView(ImageView(this).apply { setImageResource(avatarOf(session.ifEmpty { from })) },
                 LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) })
         }
-        if (!note) swipeToReply(row, words)
+        if (!note) swipeToReply(row, words) { messageMenu(session.ifEmpty { current }, listOf(at), words) }
         row.addView(bubble, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT).apply { if (!note) width = LinearLayout.LayoutParams.WRAP_CONTENT })
         if (mine && !note) {  // you: the boss the crew works for
@@ -1930,10 +1932,72 @@ class MainActivity : Activity() {
 
     /** Long-press on a chat: clear it on this phone, or (for an agent started from here) end that agent, asked again
      *  first. Agents the user started on the laptop are never ended from the phone. */
+    /** Rows drawn since `before` (a picture, an album, a call): held, the message's menu. Their own taps (a picture
+     *  opening whole) stay; their holds open the menu. */
+    private fun menuOn(before: Int, session: String, ats: List<Long>) {
+        if (ats.none { it > 0 }) return
+        val hold = View.OnLongClickListener { messageMenu(session, ats); true }
+        fun on(view: View) {
+            if (view.isClickable) view.setOnLongClickListener(hold)
+            (view as? android.view.ViewGroup)?.let { group -> for (k in 0 until group.childCount) on(group.getChildAt(k)) }
+        }
+        for (k in before until chat.childCount) chat.getChildAt(k).let { row -> row.setOnLongClickListener(hold); on(row) }
+    }
+
+    /** Held on a message: copy it, open its file elsewhere, or delete it from this phone, with the files it saved
+     *  if no other message has them (the user's wish, 2026-11-16). */
+    private fun messageMenu(session: String, ats: List<Long>, words: String? = null) {
+        val kept = Chats.load(this, session)
+        // A line shown as it arrived (kept by the call, not this screen) has the time it was kept: found by its words
+        val lines = kept.filter { it.optLong("at") in ats }.ifEmpty {
+            words?.let { w -> kept.lastOrNull { it.optString("text") == w } }?.let { listOf(it) } ?: emptyList() }
+        if (lines.isEmpty()) return
+        val ats = lines.map { it.optLong("at") }
+        val first = lines.first()
+        val file = first.optJSONObject("file")
+        val mine = first.optBoolean("mine")
+        val saved = Media.onlyIn(this, session, Media.savedFor(this, lines), except = ats.toSet())
+        val title = when {
+            lines.size > 1 -> "${lines.size} pictures"
+            file != null -> file.optString("name", "File")
+            first.optBoolean("note") -> "Call"
+            mine -> "Your message"
+            else -> "${IncomingActivity.nameOf(first.optString("from").lowercase())}'s message"
+        }
+        val time = android.text.format.DateFormat.getMediumDateFormat(this).format(java.util.Date(first.optLong("at"))) + ", " +
+            android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(first.optLong("at")))
+        val words = lines.mapNotNull { it.optString("text").takeIf { t -> t.isNotEmpty() && !it.optBoolean("note") } }
+            .joinToString("\n").ifEmpty { null }
+        val open: (() -> Unit)? = file?.let { f -> {
+            Files.open(this, f.getString("url"), f.optString("name", "file"), f.optString("type", "application/octet-stream"),
+                f.optLong("size"), session) { say("", it, note = true) }
+        } }
+        panel = MessageSheet(this, title, time, words, open, mine, saved.size) { alsoFiles ->
+            val removed = Chats.remove(this, session, ats.toSet())
+            Media.dropPreviews(this, removed)
+            if (alsoFiles) deleted(saved, Media.delete(this, saved))
+            if (session == current) showHistory()
+            showCrew()
+        }.also { it.show() }
+    }
+
+    /** Saved files that Android wouldn't let go (saved by an earlier install of the app): the user is told. */
+    private fun deleted(saved: List<Media.Saved>, gone: Int) {
+        if (gone < saved.size) android.widget.Toast.makeText(this,
+            "${saved.size - gone} saved file${if (saved.size - gone == 1) "" else "s"} couldn't be deleted: remove ${if (saved.size - gone == 1) "it" else "them"} in Files, Downloads/Henchline",
+            android.widget.Toast.LENGTH_LONG).show()
+    }
+
     private fun chatMenu(session: String, project: String, agent: String) {
+        val lines = Chats.load(this, session)
+        val saved = Media.onlyIn(this, session, Media.savedFor(this, lines), except = lines.map { it.optLong("at") }.toSet())
         panel = ChatActionsSheet(this, agent, project.replace("_", " "), startedHere(session), gone = session !in names,
-            onClear = {
+            savedFiles = saved.size,
+            onClear = { alsoFiles ->
                 Chats.clear(this, session)
+                Media.forget(this, session)
+                Media.dropPreviews(this, lines)
+                if (alsoFiles) deleted(saved, Media.delete(this, saved))
                 if (session == current) showHistory()
                 showCrew()
             },
@@ -1970,18 +2034,27 @@ class MainActivity : Activity() {
     }
 
     /** A message dragged to the right far enough is the one being replied to, as in a messaging app. */
-    private fun swipeToReply(row: View, words: String) {
+    private fun swipeToReply(row: View, words: String, onLong: (() -> Unit)? = null) {
         var startX = 0f
         var startY = 0f
         var dragging = false
+        var longDone = false
+        val slop = android.view.ViewConfiguration.get(this).scaledTouchSlop
+        // Held still: the message's menu (the row takes every touch for the swipe, so it sees the hold itself)
+        val held = Runnable { longDone = true; row.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); onLong?.invoke() }
         row.setOnTouchListener { view, event ->
             when (event.actionMasked) {
                 // Kept from the start (a row that doesn't take the DOWN never sees the drag); the list still
                 // scrolls, as the ScrollView takes over a vertical move
-                MotionEvent.ACTION_DOWN -> { startX = event.rawX; startY = event.rawY; dragging = false; true }
+                MotionEvent.ACTION_DOWN -> {
+                    startX = event.rawX; startY = event.rawY; dragging = false; longDone = false
+                    if (onLong != null) view.postDelayed(held, android.view.ViewConfiguration.getLongPressTimeout().toLong())
+                    true
+                }
                 MotionEvent.ACTION_MOVE -> {
                     val dx = event.rawX - startX
                     val dy = event.rawY - startY
+                    if (kotlin.math.abs(dx) > slop || kotlin.math.abs(dy) > slop) view.removeCallbacks(held)
                     if (!dragging && dx > dp(12) && dx > 2 * kotlin.math.abs(dy)) {  // sideways, not a slow scroll
                         dragging = true
                         view.parent.requestDisallowInterceptTouchEvent(true)
@@ -1990,7 +2063,8 @@ class MainActivity : Activity() {
                     dragging
                 }
                 MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
-                    if (dragging && view.translationX >= dp(72)) setQuote(words)
+                    view.removeCallbacks(held)
+                    if (dragging && !longDone && view.translationX >= dp(72)) setQuote(words)
                     view.animate().translationX(0f).setDuration(150).start()
                     dragging.also { dragging = false }
                 }
@@ -2028,13 +2102,19 @@ class MainActivity : Activity() {
             val line = history[i]
             var end = i + 1  // pictures sent together: one album
             while (end < history.size && sameAlbum(history[end - 1], history[end])) end++
-            if (end - i >= 2) { album(history.subList(i, end), current); i = end; continue }
+            val before = chat.childCount
+            if (end - i >= 2) {
+                album(history.subList(i, end), current)
+                menuOn(before, current, history.subList(i, end).map { it.optLong("at") })
+                i = end; continue
+            }
             val file = line.optJSONObject("file")
-            if (file != null) fileCard(line.optString("from"), file, current, keep = false)
-            else if (line.has("thumb")) picture(line.getString("thumb"), line.optString("text"), current)
+            if (file != null) fileCard(line.optString("from"), file, current, keep = false, at = line.optLong("at"))
+            else if (line.has("thumb")) { picture(line.getString("thumb"), line.optString("text"), current); menuOn(before, current, listOf(line.optLong("at"))) }
             else if (line.optBoolean("note")) {  // a kept note: a call and its length
                 dayLine(line.optLong("at"))
                 callBubble(line)
+                menuOn(before, current, listOf(line.optLong("at")))
             } else {
                 val bubble = say(line.optString("from"), line.optString("text"), mine = line.optBoolean("mine"),
                     session = current, keep = false, at = line.optLong("at"),
@@ -2092,7 +2172,7 @@ class MainActivity : Activity() {
             addView(words, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
         }
         card.addView(line, LinearLayout.LayoutParams(width, LinearLayout.LayoutParams.WRAP_CONTENT))
-        card.setOnClickListener { Files.open(this, url, name, type, size) { say("", it, note = true) } }
+        card.setOnClickListener { Files.open(this, url, name, type, size, current) { say("", it, note = true) } }
         // A PDF's first page, fetched once (opening it later copies that, not the laptop again); not for a big one
         // (a known size only: one of unknown size could be anything)
         if ((type == "application/pdf" || kind == "PDF") && size in 1..25_000_000) {
@@ -2111,8 +2191,8 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun fileCard(from: String, file: JSONObject, session: String, keep: Boolean = true) {
-        if (keep) Chats.add(this, session, JSONObject().put("from", from).put("file", file))
+    private fun fileCard(from: String, file: JSONObject, session: String, keep: Boolean = true, at: Long = 0) {
+        val at = if (keep) JSONObject().put("from", from).put("file", file).also { Chats.add(this, session, it) }.optLong("at") else at
         val url = file.getString("url")
         val name = file.optString("name", "file")
         val type = file.optString("type", "application/octet-stream")
@@ -2121,7 +2201,11 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setBackgroundResource(R.drawable.bubble_agent)
             setPadding(dp(10), dp(10), dp(10), dp(10))
-            setOnLongClickListener { Files.open(this@MainActivity, url, name, type, size) { say("", it, note = true) }; true }
+            setOnLongClickListener {  // the message's menu: open elsewhere, copy, delete
+                if (at > 0) messageMenu(session.ifEmpty { current }, listOf(at))
+                else Files.open(this@MainActivity, url, name, type, size, session) { say("", it, note = true) }
+                true
+            }
         }
         val label = TextView(this).apply {
             text = "$name · ${Files.sizeText(size)}"
@@ -2286,7 +2370,7 @@ class MainActivity : Activity() {
             val pic = pics[at]
             title.text = if (pics.size > 1) "${at + 1} / ${pics.size} · ${pic.name}" else pic.name
             save.visibility = if (pic.url != null) View.VISIBLE else View.GONE  // yours is on your phone already
-            save.setOnClickListener { pic.url?.let { u -> Files.open(this@MainActivity, u, pic.name, pic.type) { say("", it, note = true) } } }
+            save.setOnClickListener { pic.url?.let { u -> Files.open(this@MainActivity, u, pic.name, pic.type, session = current) { say("", it, note = true) } } }
         }
         pager.onTap = {  // hidden, it takes no taps either (Back and Save were reachable unseen)
             if (bar.alpha > 0.5f) bar.animate().alpha(0f).setDuration(150).withEndAction { bar.visibility = View.INVISIBLE }.start()
@@ -2438,6 +2522,7 @@ class MainActivity : Activity() {
         val url = intent.getStringExtra(Files.URL) ?: return
         val name = intent.getStringExtra(Files.NAME) ?: "file"
         val type = intent.getStringExtra(Files.TYPE) ?: "application/octet-stream"
+        val from = intent.getStringExtra(Files.SESSION) ?: ""  // the chat it came in, for deleting it with that chat
         intent.action = null
         val note: (String) -> Unit = { android.widget.Toast.makeText(this, it, android.widget.Toast.LENGTH_SHORT).show() }
         when {
@@ -2447,13 +2532,13 @@ class MainActivity : Activity() {
                 val row = audioRow(url, name, intent.getLongExtra(Files.SIZE, 0)) as LinearLayout
                 holder.addView(row)
                 AlertDialog.Builder(this).setTitle(name).setView(holder)
-                    .setPositiveButton("Save and open") { _, _ -> Files.open(this, url, name, type, intent.getLongExtra(Files.SIZE, 0), note) }
+                    .setPositiveButton("Save and open") { _, _ -> Files.open(this, url, name, type, intent.getLongExtra(Files.SIZE, 0), from, note) }
                     .setNegativeButton("Close", null)
                     .setOnDismissListener { stopSound() }
                     .show()
                 row.getChildAt(0).performClick()  // it starts playing
             }
-            else -> Files.open(this, url, name, type, intent.getLongExtra(Files.SIZE, 0), note)
+            else -> Files.open(this, url, name, type, intent.getLongExtra(Files.SIZE, 0), from, note)
         }
     }
 

@@ -16,6 +16,7 @@ object Chats {
     private fun file(context: Context, session: String) =
         File(context.filesDir, "chats/" + session.replace(Regex("[^A-Za-z0-9._-]"), "_") + ".jsonl")
 
+    private val lastAt = HashMap<String, Long>()  // each chat's newest "at" given out
     private val lasts = HashMap<String, JSONObject?>()  // each chat's newest line, for the list: no file re-read
 
     /** A chat's newest line (the list's preview), read from its file once and then kept up to date. */
@@ -32,7 +33,9 @@ object Chats {
         lasts[session] = line
         val chat = file(context, session)
         chat.parentFile?.mkdirs()
-        chat.appendText(line.put("at", System.currentTimeMillis()).toString() + "\n")
+        // Never two lines at the same millisecond (a text and its file kept together): "at" names a line to delete
+        val at = maxOf(System.currentTimeMillis(), (lastAt[session] ?: 0L) + 1).also { lastAt[session] = it }
+        chat.appendText(line.put("at", at).toString() + "\n")
         if (chat.length() > 512 * 1024) {  // now and then, the oldest go
             val lines = chat.readLines()
             if (lines.size > KEEP) {  // written aside, then swapped in: a crash mid-write keeps the old chat
@@ -79,6 +82,24 @@ object Chats {
         file(context, session).delete()
         lasts.remove(session)
         sweep(context)
+    }
+
+    /** Lines deleted on this phone ("Delete for me"), by when they were added: the removed ones. */
+    @Synchronized
+    fun remove(context: Context, session: String, ats: Set<Long>): List<JSONObject> {
+        val chat = file(context, session)
+        if (session.isEmpty() || !chat.exists() || ats.isEmpty()) return emptyList()
+        val removed = ArrayList<JSONObject>()
+        val kept = chat.readLines().filter { raw ->
+            val line = try { JSONObject(raw) } catch (_: Exception) { null }
+            if (line != null && line.optLong("at", -1) in ats) { removed.add(line); false } else true
+        }
+        val aside = File(chat.path + ".new")
+        aside.writeText(if (kept.isEmpty()) "" else kept.joinToString("\n", postfix = "\n"))
+        aside.renameTo(chat)
+        lasts[session] = kept.lastOrNull { it.isNotBlank() }?.let { try { JSONObject(it) } catch (_: Exception) { null } }
+        sweep(context)
+        return removed
     }
 
     /** A line's words changed in place: a voice message once the laptop has heard it. */

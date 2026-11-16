@@ -82,6 +82,38 @@ open class BottomPanel(protected val activity: Activity) {
         s.animate().translationY(s.height.toFloat()).setDuration(200).withEndAction { done() }.start()
     }
 
+    /** A row with an icon, a title and a line under it, as the chat's and a message's long-press sheets show. */
+    protected fun actionRow(icon: String, title: String, detail: String, colourId: Int, then: () -> Unit) = LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+        setPadding(px(14), px(14), px(14), px(14))
+        background = rounded(colour(R.color.navy), 16f)
+        addView(TextView(activity).apply { text = icon; textSize = 20f }, LinearLayout.LayoutParams(px(38), ViewGroup.LayoutParams.WRAP_CONTENT))
+        addView(LinearLayout(activity).apply {
+            orientation = LinearLayout.VERTICAL
+            addView(TextView(activity).apply { text = title; setTextColor(colour(colourId)); textSize = 16f; typeface = Typeface.DEFAULT_BOLD })
+            if (detail.isNotEmpty()) addView(TextView(activity).apply { text = detail; setTextColor(colour(R.color.muted)); textSize = 12f })
+        }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        setOnClickListener { pop(this); then() }
+    }.also { it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = px(8) } }
+
+    /** Asked again in the same sheet, in red, before deleting: with the files saved from it (Downloads/Henchline)
+     *  offered too, ticked, when there are some (the user's wish, 2026-11-16). */
+    protected fun deleteConfirm(rows: LinearLayout, question: String, files: Int, button: String, then: (alsoFiles: Boolean) -> Unit) {
+        rows.removeAllViews()
+        rows.addView(TextView(activity).apply { text = question; setTextColor(colour(R.color.text)); textSize = 15f })
+        val also = android.widget.CheckBox(activity).apply {
+            text = if (files == 1) "Also delete its saved file from Downloads/Henchline"
+                   else "Also delete its $files saved files from Downloads/Henchline"
+            setTextColor(colour(R.color.text)); textSize = 14f; isChecked = true
+            buttonTintList = android.content.res.ColorStateList.valueOf(colour(R.color.cyan))
+        }
+        if (files > 0) rows.addView(also, wide(12))
+        val go = primary(button, colour(R.color.hang), Color.WHITE)
+        go.setOnClickListener { close(); then(files > 0 && also.isChecked) }
+        rows.addView(go, wide(16, px(52)))
+        pop(go)
+    }
+
     protected fun label(words: String) = TextView(activity).apply {
         text = words; setTextColor(colour(R.color.muted)); textSize = 12f; letterSpacing = 0.08f; typeface = Typeface.DEFAULT_BOLD
     }
@@ -310,7 +342,8 @@ class ChatActionsSheet(
     private val subtitle: String,
     private val canEnd: Boolean,
     private val gone: Boolean,  // its agent is no longer on the laptop's crew list
-    private val onClear: () -> Unit,
+    private val savedFiles: Int,  // files saved from this chat that no other chat has
+    private val onClear: (alsoFiles: Boolean) -> Unit,
     private val onRemove: () -> Unit,
     private val onEnd: (done: (String?) -> Unit) -> Unit,
 ) : BottomPanel(activity) {
@@ -319,7 +352,8 @@ class ChatActionsSheet(
         val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         sheet.addView(rows, wide(16))
         if (!gone) rows.addView(row("🧹", "Clear chat", "On this phone only: the agent keeps its conversation", R.color.text) {
-            onClear(); close()
+            deleteConfirm(rows, "Clear the chat with $title on this phone? The agent keeps its conversation.",
+                savedFiles, "Clear chat", onClear)
         })
         // Always there: an agent ended on the laptop may still be on the phone's last list (2026-11-16)
         rows.addView(row("🗑", "Remove chat", "From this phone's list; it comes back only if the agent is still running", R.color.text) {
@@ -527,4 +561,40 @@ class CursorModelMenu(
         addView(TextView(activity).apply { text = "$value  ›"; setTextColor(colour(R.color.cyan)); textSize = 15f })
         setOnClickListener { pop(this); then() }
     }.also { it.layoutParams = LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply { bottomMargin = px(6) } }
+}
+
+/**
+ * Long-press on a message (the user's wish, 2026-11-16): copy its words, open its file in another app, or delete it
+ * from this phone, with the file it saved. There is no deleting for everyone: words typed into an agent are in its
+ * own conversation at once, and the sheet says so.
+ */
+class MessageSheet(
+    activity: Activity,
+    private val title: String,
+    private val subtitle: String,
+    private val words: String?,  // something to copy
+    private val onOpen: (() -> Unit)?,  // a file: saved, and opened in another app
+    private val mine: Boolean,
+    private val savedFiles: Int,  // its saved copies that no other message has
+    private val onDelete: (alsoFiles: Boolean) -> Unit,
+) : BottomPanel(activity) {
+    fun show() {
+        val sheet = open(title, subtitle)
+        val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        sheet.addView(rows, wide(16))
+        if (!words.isNullOrEmpty()) rows.addView(actionRow("📋", "Copy", "", R.color.text) {
+            val clip = activity.getSystemService(android.content.ClipboardManager::class.java)
+            clip.setPrimaryClip(android.content.ClipData.newPlainText("Henchline", words))
+            close()
+        })
+        onOpen?.let { open -> rows.addView(actionRow("📂", "Open in another app", "Saved to Downloads/Henchline first", R.color.text) {
+            close(); open()
+        }) }
+        rows.addView(actionRow("🗑", "Delete for me", if (mine) "From this phone: the agent already has your words"
+                else "From this phone only", R.color.hang) {
+            deleteConfirm(rows, "Delete this from the chat on this phone?", savedFiles, "Delete", onDelete)
+        })
+        sheet.addView(quiet("Cancel") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
+    }
 }
