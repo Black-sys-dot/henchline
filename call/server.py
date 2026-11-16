@@ -468,7 +468,9 @@ def trusted_folders() -> list[Path]:
             return (Path.home() / ".claude/projects" / re.sub(r"[^A-Za-z0-9]", "-", str(folder))).stat().st_mtime
         except OSError:
             return 0.0
-    return sorted((f for f in found if f.is_dir()), key=used, reverse=True)[:30]
+    # Not a hidden folder's insides (~/.claude/jobs/…: an agent's own scratch folders, which once showed up here)
+    shown = (f for f in found if f.is_dir() and not any(part.startswith(".") for part in f.parts))
+    return sorted(shown, key=used, reverse=True)[:30]
 
 
 def notice(title: str, words: str) -> None:
