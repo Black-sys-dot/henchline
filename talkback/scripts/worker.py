@@ -20,6 +20,7 @@ import time
 from pathlib import Path
 
 from voice import spool
+from voice.agents import AGENT_VOICES, DEFAULT_VOICE
 from voice.state import (BY_HANDSFREE, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing, Speaker,
                          last_speaker, log, mic_busy, read_json, speaker_sink, target_session_since,
                          target_since)
@@ -28,9 +29,7 @@ THREADS = int(os.environ.get("TALKBACK_THREADS", "4"))  # CPU threads: 4 measure
 RATE = 24000
 PAUSE = 0.25  # seconds between sentences
 PIECE = 0.1  # seconds of audio written between checks of the mic
-VOICES = {"claude": "af_heart", "cursor": "af_bella", "codex": "bf_alice",
-          BY_HANDSFREE: "bm_george"}  # system notices: the user's "Jarvis" voice, not an agent's
-DEFAULT_VOICE = "af_sky"  # any other agent
+VOICES = {**AGENT_VOICES, BY_HANDSFREE: "bm_george"}  # system notices: the user's "Jarvis" voice, not an agent's
 SYSTEM = {BY_HANDSFREE}  # notices that neither introduce themselves nor take the user's replies
 TAGS = re.compile(r"\[(?:laugh|chuckle|sigh|gasp|groan|cough|sniff|shush|clear throat|whispering)\]\s*")
 PLAYER = ["pacat", "--playback", "--raw", "--format=float32le", f"--rate={RATE}", "--channels=1",

@@ -40,6 +40,7 @@ sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
 from voice import files  # noqa: E402
+from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
 from voice.state import (BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
                          CALL_PINNED, CALL_RANG_BACK, PHASE,
@@ -1388,9 +1389,12 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                     continue
                 if nudged < len(NUDGES):
                     log(HANDSFREE_LOG, f"call: quiet, nudging ({nudged + 1})")
-                    words = NUDGES[nudged]
+                    # A Henchline notice in the agent's own voice: never "Claude here, from …" and never a change to
+                    # the agent's record (said as the agent, it was introduced as a new one, from the call
+                    # server's folder, 2026-11-16)
+                    words, voice = NUDGES[nudged], AGENT_VOICES.get(target.agent, DEFAULT_VOICE)
                     await loop.run_in_executor(None, lambda: subprocess.run(
-                        [str(routing.SAY), "--agent", target.agent, "--session", target.session, words],
+                        [str(routing.SAY), "--agent", BY_HANDSFREE, "--session", BY_HANDSFREE, "--voice", voice, words],
                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=10))
                     nudged += 1
                     quiet_since = time.monotonic()

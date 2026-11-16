@@ -24,6 +24,9 @@ AGENT_PROCESSES = [
     (re.compile(r"(^|/)gemini$"), "gemini"),
     (re.compile(r"(^|/)opencode$"), "opencode"),
 ]
+# Each agent's talkback voice (Kokoro), so the user knows who speaks; any other agent gets the default
+AGENT_VOICES = {"claude": "af_heart", "cursor": "af_bella", "codex": "bf_alice"}
+DEFAULT_VOICE = "af_sky"
 SPOKEN_TO = ("claude", "cursor", "codex")  # agents hands-free can switch to by name
 CURSOR_EDITOR = re.compile(r"(^|/)cursor$")  # the editor itself, not its CLI agent
 CLAUDE_DAEMON = b"bg-pty-host"  # Claude Code's background-session host

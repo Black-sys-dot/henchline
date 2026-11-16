@@ -63,6 +63,7 @@ class MainActivity : Activity() {
     // any other chat can be read and texted meanwhile, and a bar leads back to the call
     private var callSession = ""
     private var callFrom = ""  // the chat a call was started from: the call goes to its agent
+    private var followRing = false  // a ring answered: the screen goes to the ringer's chat once the laptop says who
 
     /** The chat shown is the call's: the talk button, hang-up and the call's state belong to it. */
     private fun onCall() = CallService.Bus.connected && (callSession.isEmpty() || current == callSession)
@@ -435,7 +436,11 @@ class MainActivity : Activity() {
             return
         }
         state.text = "Connecting…"
-        callFrom = current  // the call goes to the agent of the chat it was started from
+        // A call you start goes to the agent of the chat it was started from; a ring answered (reply) goes to the
+        // agent that rang, which the laptop routes by the ring itself: the chat open then must not pull it away (a
+        // ring from one Claude went to another whose chat was on screen, 2026-11-16). The phone follows to its chat.
+        callFrom = if (reply == null) current else ""
+        followRing = reply != null
         callSession = current
         show(chatScreen)
         startForegroundService(Intent(this, CallService::class.java).putExtra(CallService.SERVER, server)
@@ -569,9 +574,11 @@ class MainActivity : Activity() {
         }
         prefs().edit().putString("crew", list.toString()).apply()  // to pick from, and text, off a call
         val now = status.optString("current")
-        val following = current.isEmpty() || current == callSession  // looking at the call: it follows the switch
-        if (now.isNotEmpty() && now != callSession) {
+        // Looking at the call (or answering a ring, once): the screen follows the switch
+        val following = followRing || current.isEmpty() || current == callSession
+        if (now.isNotEmpty() && (now != callSession || followRing)) {
             callSession = now
+            followRing = false
             if (following && now != current) {
                 current = now
                 prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
