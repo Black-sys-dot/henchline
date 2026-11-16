@@ -583,8 +583,44 @@ async def crew_models(request: web.Request) -> web.Response:
             return web.json_response({"note": "That agent isn't known to the laptop."}, status=404)
         agent = target.agent
         switchable = agent in ("claude", "cursor") and bool(target.tab)  # Codex's /model only opens a picker
-    return web.json_response({"agent": agent, "switch": switchable,
+        now = await loop.run_in_executor(None, model_in_use, target)
+    else:
+        now = ""
+    if request.query.get("only") == "now":  # a chat opening: just what it is using, not the whole list
+        return web.json_response({"agent": agent, "switch": switchable, "now": now})
+    return web.json_response({"agent": agent, "switch": switchable, "now": now,
                               "models": await loop.run_in_executor(None, tmux.models, agent)})
+
+
+def cursor_model(lines: list[str]) -> str:
+    """The model the Cursor CLI's status line shows ("Claude Opus 5.5 300K Medium   …   Run Everything")."""
+    status = next((line.strip() for line in reversed(lines) if "Run Everything" in line or " · MAX" in line), "")
+    return re.split(r"\s{2,}| · ", status)[0] if status else ""
+
+
+def model_in_use(target: Speaker) -> str:
+    """The model an agent is using now, when it can be seen: Claude's from its session log (any terminal), the
+    Cursor CLI's and Codex's from their status line (tmux panes only: a Konsole tab's screen can't be read)."""
+    if target.agent == "claude":
+        uuid = target.session.removeprefix("claude-")
+        if re.fullmatch(r"[0-9a-f-]{36}", uuid):
+            for log_file in (Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl"):
+                with log_file.open("rb") as f:
+                    f.seek(max(0, log_file.stat().st_size - 200_000))
+                    found = re.findall(rb'"model":"(claude-[a-z0-9-]+)"', f.read())
+                if found:  # claude-opus-5-5 → Opus 5.5
+                    family, *version = found[-1].decode().removeprefix("claude-").split("-")
+                    return f"{family.capitalize()} {'.'.join(version)}".strip()
+        return ""
+    if target.tab.owner != tmux.OWNER:
+        return ""
+    lines = tmux.out("capture-pane", "-p", "-t", target.tab.address).splitlines()
+    if target.agent == "cursor":
+        return cursor_model(lines)
+    if target.agent == "codex":  # "gpt-5.6-sol xhigh · ~/pc_diagnostics"
+        found = [m.group(1) for line in lines if (m := re.match(r"\s*(\S+(?: \S+)?) · [~/]", line))]
+        return found[-1] if found else ""
+    return ""
 
 
 def switch_model(target: Speaker, model: dict) -> str:
@@ -613,7 +649,10 @@ def switch_model(target: Speaker, model: dict) -> str:
         if before is None or text.count(line) != 1:
             return (f"Switched, but Claude also made {model['name']} your default for new sessions "
                     "(change it with /model).")
-        settings.write_text(text.replace(line, f'"model": {json.dumps(before)}'))
+        aside = settings.with_name(settings.name + ".henchline")  # written aside, then swapped in: never half a file
+        aside.write_text(text.replace(line, f'"model": {json.dumps(before)}'))
+        os.chmod(aside, settings.stat().st_mode & 0o777)
+        aside.replace(settings)
         return ""
     if target.agent == "cursor":  # its picker, filtered by the model's own name, then Enter on the first match
         words = []
@@ -627,17 +666,18 @@ def switch_model(target: Speaker, model: dict) -> str:
             return "Couldn't type into it."
         if target.tab.owner != tmux.OWNER:  # a Konsole tab: its screen can't be read back
             return f"Switched, to Cursor's best match for {name}."
-        time.sleep(1.5)
-        lines = tmux.out("capture-pane", "-p", "-t", target.tab.address).splitlines()
-        if any(line.strip().startswith("Filter:") for line in lines[-30:]):  # no match: its list is open
-            tmux.tmux("send-keys", "-t", target.tab.address, "Escape")
-            return f"Cursor has no model called {name}: left as it was."
-        # Its status line shows the model now in use ("Claude Opus 5.5 300K Medium   …   Run Everything")
-        status = next((line.strip() for line in reversed(lines) if "Run Everything" in line or " · MAX" in line), "")
-        now = re.split(r"\s{2,}| · ", status)[0] if status else ""
-        if now and not re.match(re.escape(name) + r"(\s|$)", now, re.I):
-            return f"Switched, but Cursor picked {now} (its best match for {name})."
-        return ""
+        now = ""
+        for _ in range(8):  # its status line can take a moment to show the new model
+            time.sleep(0.5)
+            lines = tmux.out("capture-pane", "-p", "-t", target.tab.address).splitlines()
+            if any(line.strip().startswith("Filter:") for line in lines[-30:]):  # no match: its list is open
+                tmux.tmux("send-keys", "-t", target.tab.address, "Escape")
+                return f"Cursor has no model called {name}: left as it was."
+            # Its status line shows the model in use ("Claude Opus 5.5 300K Medium   …   Run Everything")
+            now = cursor_model(lines)
+            if now and re.match(re.escape(name) + r"(\s|$)", now, re.I):
+                return ""
+        return f"Switched, but Cursor picked {now} (its best match for {name})." if now else ""
     return "Codex switches models only in its own picker: start a new chat with the model instead."
 
 

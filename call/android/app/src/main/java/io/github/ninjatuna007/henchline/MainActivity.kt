@@ -1091,8 +1091,22 @@ class MainActivity : Activity() {
         showCrew()
         show(chatScreen)
         if (current.isNotEmpty()) { Messages.seen(this, current); markRead(current) }  // opened: read
-        // The model last switched to from here, if any (the agent may have been switched on the laptop since)
-        findViewById<TextView>(R.id.modelChip).text = prefs().getString("model_$session", null)?.let { "✦ $it" } ?: "✦ Model"
+        showModel(session)
+    }
+
+    /** The chat's model chip: the model the agent is using now, as the laptop sees it (the user's wish,
+     *  2026-11-16); until it answers, the one last switched to from here. */
+    private fun showModel(session: String) {
+        val chip = findViewById<TextView>(R.id.modelChip)
+        chip.text = prefs().getString("model_$session", null)?.let { "✦ $it" } ?: "✦ Model"
+        if (session.isEmpty() || Files.origin(this) == null) return
+        ask("/crew/models?only=now&session=" + android.net.Uri.encode(session), null) { answer ->
+            val now = answer.optString("now")
+            if (now.isNotEmpty() && session == current) {
+                chip.text = "✦ $now"
+                prefs().edit().putString("model_$session", now).apply()
+            }
+        }
     }
 
     /** Pull down on the list: the laptop looks for every agent running (as "switch me to" does) and lists them. */
@@ -1183,12 +1197,13 @@ class MainActivity : Activity() {
                 "codex" -> "Codex switches models only in its own picker: start a new chat with the model."
                 else -> "This agent can't switch models from the phone."
             })
-            panel = ModelPicker(this, "Switch model", modelsOf(answer), withDefault = false) { id, name ->
+            val now = answer.optString("now")
+            panel = ModelPicker(this, if (now.isNotEmpty()) "Now on $now" else "Switch model", modelsOf(answer), withDefault = false) { id, name ->
                 ask("/crew/model", JSONObject().put("session", session).put("model", id)) { done ->
                     if (done.optBoolean("ok")) {
                         say("", "✦ Switched to $name", note = true)
                         prefs().edit().putString("model_$session", name).apply()
-                        findViewById<TextView>(R.id.modelChip).text = "✦ $name"
+                        showModel(session)  // what it really uses now (Cursor may pick a near match)
                         done.optString("note").takeIf { it.isNotEmpty() }?.let(toast)  // e.g. press Enter in Konsole
                     } else toast(done.optString("note").ifEmpty { "Didn't switch." })
                 }
