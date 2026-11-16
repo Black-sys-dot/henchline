@@ -15,16 +15,49 @@ through it.
 from __future__ import annotations
 
 import asyncio
+import fcntl
 import importlib.util
 import json
 import os
 import re
+import threading
 import urllib.request
 
 PORT = int(os.environ.get("HENCHLINE_CURSOR_DEBUG_PORT", "9333"))
 CHAT_ID = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
 SUBMIT_WAIT = 5.0  # seconds for the box to empty after Enter: Cursor took it
 WHOLE_SEND = 20.0  # seconds for all of it, connecting included
+
+
+class _FocusLock:
+    """One focus change in Cursor at a time, across Henchline's processes (hands-free and the call server): a
+    delivery focuses the box it writes into, and stop or a model switch focuses its chat to make it Cursor's
+    selected one; interleaved, either could act on the other's chat."""
+
+    def __init__(self) -> None:
+        self.thread = threading.Lock()
+
+    def __enter__(self):
+        self.thread.acquire()
+        try:
+            from voice.state import STATE
+            STATE.mkdir(parents=True, exist_ok=True)
+            self.file = open(STATE / "cursor-focus.lock", "a")
+            fcntl.flock(self.file, fcntl.LOCK_EX)
+        except BaseException:
+            self.thread.release()
+            raise
+        return self
+
+    def __exit__(self, *_) -> None:
+        try:
+            fcntl.flock(self.file, fcntl.LOCK_UN)
+            self.file.close()
+        finally:
+            self.thread.release()
+
+
+FOCUS = _FocusLock()
 
 
 def page_of(where: str) -> str:
@@ -44,6 +77,53 @@ def available(where: str) -> bool:
     """The port answers for that window, and the websocket client is installed (it comes with the call piece and
     the hands-free one; without it, Cursor chats go the keyed way)."""
     return importlib.util.find_spec("aiohttp") is not None and bool(page_of(where))
+
+
+def focus_chat(where: str, chat: str) -> bool:
+    """Focus in that chat's box, left there, and seen to hold: Cursor's selected chat is the last focused, so its
+    stop and model commands then act on this one wherever its pane is. Cursor's own focusComposer doesn't move
+    focus while its window isn't the desktop's focused one (2026-11-16), so the box is focused on the page."""
+    url = page_of(where) if CHAT_ID.fullmatch(chat) else ""
+    if not url:
+        return False
+    check = ("(() => { const f = document.activeElement && document.activeElement.closest('[data-composer-id]');"
+             " return f ? f.getAttribute('data-composer-id') : ''; })()")
+
+    async def focus() -> bool:
+        import aiohttp
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with session.ws_connect(url, max_msg_size=0) as ws:
+                page = _Page(ws)
+                if await page.js(_focus(chat)) is None:
+                    return False
+                return await page.js(check) == chat
+    try:
+        return asyncio.run(asyncio.wait_for(focus(), 10))
+    except Exception:  # unreachable or closed mid-way: not proven
+        return False
+
+
+def chat_status(where: str, chat: str) -> str:
+    """What that chat is doing by its part of the page ("generating", "completed", "cancelled", …), or "" when it
+    isn't on the page or the port can't be reached."""
+    url = page_of(where) if CHAT_ID.fullmatch(chat) else ""
+    if not url:
+        return ""
+
+    async def ask() -> str:
+        import aiohttp
+
+        async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
+            async with session.ws_connect(url, max_msg_size=0) as ws:
+                return str(await _Page(ws).js(
+                    f"(() => {{ const e = document.querySelector("
+                    f"'[data-composer-id=\"{chat}\"][data-composer-status]');"
+                    " return e ? e.getAttribute('data-composer-status') || '' : ''; })()") or "")
+    try:
+        return asyncio.run(asyncio.wait_for(ask(), 10))
+    except Exception:
+        return ""
 
 
 def same_words(a: str, b: str) -> bool:
@@ -153,6 +233,7 @@ def send(where: str, chat: str, message: str) -> str:
     if not url:
         return "Cursor's debugging port isn't open for that window"
     try:
-        return asyncio.run(asyncio.wait_for(_send(url, chat, message), WHOLE_SEND))
+        with FOCUS:
+            return asyncio.run(asyncio.wait_for(_send(url, chat, message), WHOLE_SEND))
     except Exception as e:  # a page closed or reloaded mid-send, a timeout, a closed socket: refused, never raised
         return f"Cursor's debugging port: {str(e) or type(e).__name__}"

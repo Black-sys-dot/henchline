@@ -990,7 +990,14 @@ async def crew_stop(request: web.Request) -> web.Response:
     loop = asyncio.get_running_loop()
     if target.in_editor:
         chat = cursor_bridge.chat_of(target.session)
-        stopped = bool(chat) and await loop.run_in_executor(None, cursor_bridge.ask_window, chat, {"stop": chat})
+        # Cursor's stop on an idle chat rejects all its pending edits: only a chat that is working is stopped
+        if chat and not await loop.run_in_executor(None, cursor_bridge.working, chat):
+            return web.json_response({"note": "That chat isn't working on anything, so nothing was stopped "
+                                              "(its pending edits are left as they are)."}, status=409)
+        stopped = bool(chat) and await loop.run_in_executor(None, cursor_bridge.ask_selected, chat, {"stop": chat})
+        if not stopped and cursor_bridge.last_why == "not working":
+            return web.json_response({"note": "That chat had just finished, so nothing was stopped "
+                                              "(its pending edits are left as they are)."}, status=409)
         if not stopped and cursor_bridge.last_why == "not a chat id":
             return web.json_response({"note": "Cursor runs an older Henchline bridge: Reload Window in Cursor."},
                                      status=409)

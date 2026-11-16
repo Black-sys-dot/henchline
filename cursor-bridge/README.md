@@ -34,12 +34,16 @@ the extension host alone keeps the old version).
 - Without the port (Cursor started another way), Henchline brings the window forward and types into it as before
   (the chat box, paste, Enter), which needs the screen unlocked.
 - The phone shows each chat's model (with its effort) from Cursor's store, and switches it with Cursor's own "Switch
-  to Model Slug" (`{"model": "<chat id>", "config": {...}}`), only when that chat is the selected one. As when the
+  to Model Slug" (`{"model": "<chat id>", "config": {...}}`), on that chat as below. As when the
   model is changed in Cursor itself, it also becomes Cursor's default for new chats. The effort and fast picked
   go with it, and the chat's context size stays when the model does. The chat's model is read back from the store:
   the phone says so if Cursor didn't take it.
-- The phone's stop button runs Cursor's own stop (`composer.cancelComposerStep`) on that chat, once the bridge has
-  brought it to the front and it is the selected one.
+- The phone's stop button runs Cursor's own stop (`composer.cancelComposerStep`) on that chat, only while it is
+  working (its stop on an idle chat would reject all its pending edits).
+- Stop and model switches act on Cursor's selected chat, the one last focused. With the debugging port, Henchline
+  focuses that chat's box on the page and checks it holds focus, then asks with `"focused": true`, so a chat in
+  any pane works; focus stays in that box afterwards. Without the port, only the chat Cursor lists last is
+  accepted.
 
 ## Limits
 

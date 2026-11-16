@@ -2,7 +2,7 @@
   "name": "henchline-cursor-bridge",
   "displayName": "Henchline bridge",
   "description": "Lets Henchline open a Cursor chat by its id before typing into it, so a phone message reaches the right chat.",
-  "version": "0.1.11",
+  "version": "0.1.12",
   "publisher": "henchline",
   "license": "MIT",
   "engines": { "vscode": "^1.80.0" },

@@ -15,6 +15,7 @@ import sqlite3
 import time
 from pathlib import Path
 
+from voice.desktop import cursor_cdp
 from voice.state import STATE
 
 DIR = STATE / "cursor-bridge"
@@ -41,6 +42,19 @@ def owner_of(chat: str) -> str:
 last_why = ""  # what the bridge said when it said no ("not a chat id" from an older bridge, before a reload)
 
 
+def windows_of(project: str) -> list[tuple[Path, dict]]:
+    """The Cursor windows (their bridge note, and what it says) whose workspace folder is that project."""
+    found = []
+    for note in DIR.glob("*.json"):
+        try:
+            window = json.loads(note.read_text())
+        except (OSError, ValueError):
+            continue
+        if project in {project_of(f) for f in window.get("folders", []) if isinstance(f, str)}:
+            found.append((note, window))
+    return found
+
+
 def ask_window(chat: str, request: dict) -> bool:
     """Sends one request to the one Cursor window that has the chat (see open_chat); True when it said yes."""
     global last_why
@@ -48,14 +62,7 @@ def ask_window(chat: str, request: dict) -> bool:
     project = owner_of(chat)
     if not project:
         return False
-    owners = []
-    for note in DIR.glob("*.json"):
-        try:
-            window = json.loads(note.read_text())
-        except (OSError, ValueError):
-            continue
-        if project in {project_of(f) for f in window.get("folders", []) if isinstance(f, str)}:
-            owners.append(note)
+    owners = [note for note, _ in windows_of(project)]
     if len(owners) != 1:  # none, or two windows on that project: which has the chat can't be told, so neither
         return False
     try:
@@ -74,6 +81,47 @@ def ask_window(chat: str, request: dict) -> bool:
         return bool(said.get("ok"))
     except (OSError, ValueError):
         return False
+
+
+def ask_selected(chat: str, request: dict) -> bool:
+    """A request for Cursor's commands that act on its selected chat (stop, model): the chat opened, then its box
+    focused through the debugging port and seen to hold focus, so it is the selected one wherever its pane is
+    ({"focused"}); without the port, the bridge's old rule (only the last chat listed) refuses rather than act on
+    another."""
+    global last_why
+    where = workspace_of(chat)
+    if where and cursor_cdp.available(where):
+        with cursor_cdp.FOCUS:  # nothing else moves focus in Cursor between proving it and acting on it
+            if ask_window(chat, {"open": chat}) and cursor_cdp.focus_chat(where, chat):
+                # A stop again checked at the last moment: the chat may have finished meanwhile, and Cursor's stop
+                # on an idle chat rejects all its pending edits
+                if "stop" in request and cursor_cdp.chat_status(where, chat) != "generating":
+                    last_why = "not working"
+                    return False
+                return ask_window(chat, {**request, "focused": True})
+    return ask_window(chat, request)
+
+
+def workspace_of(chat: str) -> str:
+    """The workspace label of the one Cursor window that has that chat, "" when none or two do."""
+    project = owner_of(chat)
+    windows = windows_of(project) if project else []
+    return str(windows[0][1].get("workspace") or "") if len(windows) == 1 else ""
+
+
+def working(chat: str) -> bool:
+    """Is that chat generating now? By its part of Cursor's page when the port is open (live), else by Cursor's
+    store (written a little late). Its stop on an idle chat would reject all its pending edits instead."""
+    where = workspace_of(chat)
+    status = cursor_cdp.chat_status(where, chat) if where else ""
+    if status:
+        return status == "generating"
+    # Cursor's store, written late: a chat that just finished can still read "generating" there, so it must say
+    # so twice, a second apart
+    if str(composer(chat).get("status") or "") != "generating":
+        return False
+    time.sleep(1)
+    return str(composer(chat).get("status") or "") == "generating"
 
 
 EFFORTS = ("xhigh", "high", "medium", "low")
@@ -129,7 +177,7 @@ def set_model(chat: str, model: str, params: list[dict]) -> str:
     before = chat_model(chat)
     if not before:
         return "Cursor's record of that chat can't be read, so a switch couldn't be checked: not switched."
-    if not ask_window(chat, {"model": chat, "config": {"modelId": model, "params": picked}}):
+    if not ask_selected(chat, {"model": chat, "config": {"modelId": model, "params": picked}}):
         if last_why == "not a chat id":
             return "Cursor runs an older Henchline bridge: Reload Window in Cursor, then try again."
         return f"Cursor didn't take it ({last_why or 'no answer'}): still on {before}."

@@ -1,10 +1,10 @@
 // Henchline's bridge inside Cursor: each window listens on a private Unix socket and takes a few requests about
 // one agent chat, by its id: {"open"} brings it to the front (Cursor's composer.openComposer), {"cycle"} moves it
-// to its next model (composer.cycleModel, only when it is the selected chat), {"stop"} stops what it's doing
-// (composer.cancelComposerStep), {"model", "config"} sets its model (cursorai.action.switchToModelSlug). Henchline
-// then writes into the chat itself (through Cursor's debugging port, else with keys). Nothing else is accepted: no
-// text, no other command. The socket and its note are only the user's (0700 folder, 0600 files), under
-// ~/.local/state/ptt/cursor-bridge/.
+// to its next model (composer.cycleModel), {"stop"} stops what it's doing (composer.cancelComposerStep),
+// {"model", "config"} sets its model
+// (cursorai.action.switchToModelSlug). Henchline writes into the chat itself (through Cursor's debugging port,
+// else with keys). Nothing else is accepted: no text, no other command. The socket and its note are only the
+// user's (0700 folder, 0600 files), under ~/.local/state/ptt/cursor-bridge/.
 const fs = require("fs");
 const net = require("net");
 const os = require("os");
@@ -15,6 +15,17 @@ const DIR = path.join(os.homedir(), ".local/state/ptt/cursor-bridge");
 const CHAT_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 let server = null;
 let files = [];
+
+// Cursor's stop and model commands act on its selected chat: the most recently focused of those open. Asked with
+// {"focused": true}, Henchline has just focused this chat's box through Cursor's debugging port and seen it hold
+// focus, so it is the selected one wherever its pane is; then it need only be open. Without
+// that, the old rule: the chat must be the last listed (refuses a chat in the left pane, never the wrong one).
+async function actsOn(chat, focused) {
+  if (!focused) await vscode.commands.executeCommand("composer.openComposer", chat);
+  const selected = await vscode.commands.executeCommand("composer.getOrderedSelectedComposerIds");
+  const listed = Array.isArray(selected) ? selected : [];
+  return { ok: focused ? listed.includes(chat) : listed[listed.length - 1] === chat, selected };
+}
 
 function activate(context) {
   fs.mkdirSync(DIR, { recursive: true, mode: 0o700 });
@@ -38,12 +49,10 @@ function activate(context) {
         }
         if (typeof asked.stop === "string" && CHAT_ID.test(asked.stop)) {
           // The phone's stop button: that chat stops what it's doing, as its own stop button does
-          await vscode.commands.executeCommand("composer.openComposer", asked.stop);
-          // As for cycle: Cursor's stop takes no chat id and works on the selected chat, which must be this one
-          const selected = await vscode.commands.executeCommand("composer.getOrderedSelectedComposerIds");
-          const last = Array.isArray(selected) ? selected[selected.length - 1] : undefined;
-          if (last !== asked.stop) {
-            conn.end(JSON.stringify({ ok: false, why: "another chat is selected", selected }) + "\n");
+          // Cursor's stop takes no chat id and works on the selected chat, which must be this one
+          const check = await actsOn(asked.stop, asked.focused === true);
+          if (!check.ok) {
+            conn.end(JSON.stringify({ ok: false, why: "another chat is selected", selected: check.selected }) + "\n");
             return;
           }
           await vscode.commands.executeCommand("composer.cancelComposerStep");
@@ -53,11 +62,9 @@ function activate(context) {
         if (typeof asked.model === "string" && CHAT_ID.test(asked.model) && asked.config && typeof asked.config.modelId === "string") {
           // A chat's model, by Cursor's own "Switch to Model Slug": it sets the selected chat's model and, as a
           // change made in Cursor itself does, the default for new chats
-          await vscode.commands.executeCommand("composer.openComposer", asked.model);
-          const selected = await vscode.commands.executeCommand("composer.getOrderedSelectedComposerIds");
-          const last = Array.isArray(selected) ? selected[selected.length - 1] : undefined;
-          if (last !== asked.model) {
-            conn.end(JSON.stringify({ ok: false, why: "another chat is selected", selected }) + "\n");
+          const check = await actsOn(asked.model, asked.focused === true);
+          if (!check.ok) {
+            conn.end(JSON.stringify({ ok: false, why: "another chat is selected", selected: check.selected }) + "\n");
             return;
           }
           const config = { modelId: String(asked.config.modelId), params: Array.isArray(asked.config.params) ? asked.config.params : [] };
