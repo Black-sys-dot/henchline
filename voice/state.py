@@ -57,6 +57,7 @@ CALL_RINGER = STATE / "call.ringer"  # who rang the user last (session, when): t
 CALL_RANG_BACK = STATE / "call.rang_back"  # a quiet call last rung back then: one per chain
 CALL_HANGUP = STATE / "call.hangup"  # end the phone call once talkback is done: the user said so, or an agent
 VOICE_NOTES = STATE / "voicenotes"
+CALL_TOLD = STATE / "call.told"  # a file per agent session already reminded, in this call, how to be on a call
 INTRODUCED = STATE / "introduced"  # a file per agent session already told, once, how phone messages work
 SPAWNED = STATE / "spawned.json"  # tmux panes of agents started from the phone: only these can be ended from it
 CHAT_KEY = re.compile(r"-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")  # a Cursor chat's own key

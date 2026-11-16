@@ -53,5 +53,19 @@ class Meanings(unittest.TestCase):
         self.assertEqual(routing.meaning("yes"), Meaning.MESSAGE)
 
 
+class OnACall(unittest.TestCase):
+    """The first words an agent gets in a call carry how to be on a call, once per call."""
+
+    def test_once_per_call_and_only_on_a_call(self):
+        speaker = routing.Speaker("claude-1234", "claude", "x")
+        with mock.patch.object(routing, "in_call", return_value=True):
+            self.assertIn("stay responsive", routing.on_a_call(speaker, routing.Heard.CALL))
+            self.assertEqual(routing.on_a_call(speaker, routing.Heard.TEXTED), "")  # a text isn't the call
+            routing.told_on_call(speaker, routing.Heard.CALL)
+            self.assertEqual(routing.on_a_call(speaker, routing.Heard.CALL), "")
+        with mock.patch.object(routing, "in_call", return_value=False):
+            self.assertEqual(routing.on_a_call(routing.Speaker("claude-5678", "claude", "x"), routing.Heard.CALL), "")
+
+
 if __name__ == "__main__":
     unittest.main()

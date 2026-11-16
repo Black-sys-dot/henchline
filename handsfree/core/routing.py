@@ -18,8 +18,8 @@ from pathlib import Path
 
 from voice.agents import SPOKEN_TO, identity, process
 from voice.desktop import current as desktop, cursor_bridge, cursor_cdp
-from voice.state import (BY_HANDSFREE, CALL_PINNED, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent, Speaker,
-                         in_call, last_speaker, log, recent_speakers)
+from voice.state import (BY_HANDSFREE, CALL_PINNED, CALL_TOLD, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent,
+                         Speaker, in_call, last_speaker, log, recent_speakers)
 
 SAY = Path(__file__).resolve().parents[2] / "talkback/scripts/say.py"
 AFTER_SWITCH = 30.0  # seconds to start talking after "Now talking to …"
@@ -303,6 +303,28 @@ def introduce(speaker: Speaker | None, heard: Heard) -> str:
     return INTRO
 
 
+CALL_NOTE = ("(Henchline, once per call: we're on a phone call, so stay responsive. Say out loud at once that you've "
+             "got it and what you'll do, then do it, and while you work tell me in a sentence what you're up to "
+             "every minute or so, until it's done. If I say not to talk, stay quiet; if I hang up, carry on and text "
+             "me or ring me back when it's done.) ")
+CALLED = (Heard.CALL, Heard.PUSHED, Heard.TYPED)
+
+
+def on_a_call(speaker: Speaker | None, heard: Heard) -> str:
+    """The first words an agent gets in a call carry how to be on a call (the user's wish, 2026-11-16: acknowledge,
+    say what you'll do, then keep them posted), once per call: the call server empties CALL_TOLD as a call starts."""
+    if speaker is None or heard not in CALLED or not speaker.session or "/" in speaker.session \
+            or not in_call() or (CALL_TOLD / speaker.session).exists():
+        return ""
+    return CALL_NOTE
+
+
+def told_on_call(speaker: Speaker, heard: Heard) -> None:
+    if heard in CALLED and speaker.session and "/" not in speaker.session and in_call():
+        CALL_TOLD.mkdir(parents=True, exist_ok=True)
+        (CALL_TOLD / speaker.session).touch()
+
+
 def introduced(speaker: Speaker, heard: Heard) -> None:
     """Marked once delivered: a file per session, so the call server and hands-free never write over each other."""
     if heard in PHONE and speaker.session and "/" not in speaker.session:
@@ -330,7 +352,7 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
     can't, says why out loud and leaves the reason in why_not(), for the phone to show too."""
     _why.words = ""
     speaker = to or last_speaker()
-    message = f"{heard.tag} {introduce(speaker, heard)}{text}"
+    message = f"{heard.tag} {introduce(speaker, heard)}{on_a_call(speaker, heard)}{text}"
     if speaker is None:
         log(HANDSFREE_LOG, "nobody to send to")
         refuse("I heard you, but no agent has spoken yet.")
@@ -352,6 +374,7 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
                 return False
             Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
             introduced(speaker, heard)
+            told_on_call(speaker, heard)
             return True
         # Without the port: that chat to the front, then keys into the raised window (needs the screen unlocked)
         if chat and not cursor_bridge.open_chat(speaker.where, chat, strict=True):
@@ -370,6 +393,7 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
         if ok:
             Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
             introduced(speaker, heard)
+            told_on_call(speaker, heard)
         if not ok and desktop().locked():
             refuse("The laptop's screen is locked, so I can't type into Cursor. "
                    "Agents in a terminal still get your words.")
@@ -392,5 +416,6 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None) -> bool:
     log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.address}")
     Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
     introduced(speaker, heard)
+    told_on_call(speaker, heard)
     return True
 
