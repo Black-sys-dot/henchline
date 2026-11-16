@@ -96,10 +96,15 @@ object Files {
         val since = prefs.getLong("remembering_since", 0L).takeIf { it > 0 }
             ?: (System.currentTimeMillis() / 1000).also { prefs.edit().putLong("remembering_since", it).apply() }
         return try {
+            // Its name, or Android's "name (1).pdf" when that name was taken: the exact size says it is this file
+            val dot = name.lastIndexOf('.').takeIf { it > 0 } ?: name.length
+            val renamed = name.substring(0, dot).replace("%", "\\%").replace("_", "\\_") + " (%)" +
+                name.substring(dot).replace("%", "\\%").replace("_", "\\_")
             resolver.query(MediaStore.Downloads.EXTERNAL_CONTENT_URI, arrayOf(MediaStore.Downloads._ID),
-                "${MediaStore.Downloads.DISPLAY_NAME} = ? AND ${MediaStore.Downloads.SIZE} = ? AND " +
+                "(${MediaStore.Downloads.DISPLAY_NAME} = ? OR ${MediaStore.Downloads.DISPLAY_NAME} LIKE ? ESCAPE '\\') AND " +
+                    "${MediaStore.Downloads.SIZE} = ? AND " +
                     "${MediaStore.Downloads.RELATIVE_PATH} LIKE ? AND ${MediaStore.Downloads.DATE_ADDED} < ?",
-                arrayOf(name, size.toString(), "${Environment.DIRECTORY_DOWNLOADS}/Henchline%", since.toString()),
+                arrayOf(name, renamed, size.toString(), "${Environment.DIRECTORY_DOWNLOADS}/Henchline%", since.toString()),
                 "${MediaStore.Downloads.DATE_ADDED} DESC")?.use { rows ->
                 if (!rows.moveToFirst()) null
                 else android.content.ContentUris.withAppendedId(MediaStore.Downloads.EXTERNAL_CONTENT_URI, rows.getLong(0))
