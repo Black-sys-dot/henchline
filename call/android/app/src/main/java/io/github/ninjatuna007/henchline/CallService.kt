@@ -124,6 +124,12 @@ class CallService : Service() {
     private val attributes get() = if (clear) MEDIA else VOICE
     private var wakeLock: PowerManager.WakeLock? = null
     @Volatile private var running = false
+    @Volatile private var link = 0  // which connection is the call's now: a dropped one's late words are ignored
+    @Volatile private var lostAt = 0L  // when the connection dropped mid-call: reconnecting, for RECONNECT_FOR
+    private var server = ""
+    // One for the call and its reconnects. Pings every 5 s: a dropped connection is noticed in seconds, not half a
+    // minute (the stall was heard as garbled catching-up, 2026-11-16)
+    private val client by lazy { OkHttpClient.Builder().pingInterval(5, TimeUnit.SECONDS).build() }
     @Volatile private var ended = false  // the screen was already told why the call ended
     private var reply: String? = null  // an answered ring's report-back address: told if the call can't connect
     @Volatile private var startedAt = 0L  // when the laptop answered: the call's length, for the history
@@ -312,18 +318,45 @@ class CallService : Service() {
             .setAudioAttributes(attributes).build().also { audio.requestAudioFocus(it) }
     }
 
-    private fun connect(server: String) {
+    /** The connection dropped mid-call (walking about, Wi-Fi to mobile data; the user's catch, 2026-11-16: the
+     *  call just ended in a pocket): connect again every 2 s, the audio still running, and the laptop hands the
+     *  call over to the new connection. After RECONNECT_FOR, the call ends as before. */
+    private fun reconnect() {
+        val now = System.currentTimeMillis()
+        if (lostAt == 0L) {
+            lostAt = now
+            android.util.Log.i("Henchline", "call: connection dropped, reconnecting")
+            Bus.listener?.invoke("""{"reconnecting": true}""")
+        }
+        if (now - lostAt > RECONNECT_FOR) {
+            fail("The connection dropped and didn't come back.")
+            return
+        }
+        android.os.Handler(mainLooper).postDelayed({ if (running && !ended) connect(server, resume = true) }, 2000)
+    }
+
+    private fun connect(server: String, resume: Boolean = false) {
+        this.server = server
+        val me = ++link
         val base = Uri.parse(server)
         if (base.scheme != "https") {  // Android refuses plain http, and the call page needs https for the mic
             fail("The address must start with https:// (the laptop's `tailscale serve` name). Long-press Call.")
             return
         }
         val origin = "${base.scheme}://${base.authority}"  // the server lets only its own page's origin in
-        val url = origin.replaceFirst("http", "ws") + "/call"
-        val client = OkHttpClient.Builder().pingInterval(15, TimeUnit.SECONDS).build()
+        val url = origin.replaceFirst("http", "ws") + "/call" + if (resume) "?resume=1" else ""
         val request = Request.Builder().url(url).header("Origin", origin).build()
         socket = client.newWebSocket(request, object : WebSocketListener() {
             override fun onOpen(webSocket: WebSocket, response: Response) {
+                if (me != link) { webSocket.close(1000, null); return }
+                if (lostAt > 0) {  // back: the audio never stopped, the laptop kept the agent
+                    lostAt = 0
+                    android.util.Log.i("Henchline", "call: reconnected")
+                    webSocket.send(org.json.JSONObject().put("sound", if (clear) "clear" else "call").toString())
+                    if (talking) webSocket.send(org.json.JSONObject().put("push", true).toString())  // the laptop forgot
+                    Bus.listener?.invoke("""{"reconnecting": false}""")
+                    return
+                }
                 Bus.connected = true
                 startedAt = System.currentTimeMillis()
                 Calls.add(this@CallService, org.json.JSONObject().put("id", "call-$startedAt").put("kind", "call")
@@ -339,6 +372,7 @@ class CallService : Service() {
             }
 
             override fun onMessage(webSocket: WebSocket, text: String) {
+                if (me != link) return
                 val message = try { org.json.JSONObject(text) } catch (_: Exception) { null }
                 if (message?.has("agents") == true) Bus.lastAgents = text
                 else if (message?.has("mode") == true) Bus.lastMode = text
@@ -371,6 +405,7 @@ class CallService : Service() {
             }
 
             override fun onMessage(webSocket: WebSocket, bytes: ByteString) {
+                if (me != link) return
                 heard.offer(bytes.toByteArray())
                 got.incrementAndGet()
                 while (heard.size > MAX_BEHIND) { heard.poll(); dropped.incrementAndGet() }  // over a second behind: drop the oldest
@@ -378,10 +413,14 @@ class CallService : Service() {
 
             override fun onClosing(webSocket: WebSocket, code: Int, reason: String) {
                 webSocket.close(1000, null)
+                if (me != link) return  // the dropped connection, closed by the laptop as the new one took over
+                if (lostAt > 0 && running && !ended) { reconnect(); return }  // "busy": the old one not gone yet
                 fail(reason.ifEmpty { "Call ended" })  // "busy: another call is up", or the server stopping
             }
 
             override fun onFailure(webSocket: WebSocket, t: Throwable, response: Response?) {
+                if (me != link) return
+                if (Bus.connected && running && !ended) { reconnect(); return }  // mid-call: try again
                 // A self-signed certificate (call/server.py --host tailscale) fails here: the app trusts only
                 // real ones, so it needs the `tailscale serve` address
                 fail("Couldn't reach the call: ${t.message}")
@@ -419,7 +458,8 @@ class CallService : Service() {
                             fail("The microphone stopped working (error $got).")
                             break
                         }
-                        if (got > 0) socket?.send(buffer.toByteString(0, got))
+                        // Not while reconnecting: queued, it all arrived at once and was taken down late as the user's
+                        if (got > 0 && lostAt == 0L) socket?.send(buffer.toByteString(0, got))
                     }
                 } finally {
                     if (mic.recordingState == AudioRecord.RECORDSTATE_RECORDING) mic.stop()
@@ -514,6 +554,7 @@ class CallService : Service() {
     private fun fail(why: String) {
         if (ended) return
         ended = true
+        android.util.Log.i("Henchline", "call ended: $why")  // the screen's note isn't kept: this is, in the phone's log
         if (!Bus.connected) {  // answered, but the laptop is out of reach
             Reply.send(reply, "unreachable")
             Calls.outcome(this, reply, "unreachable")
@@ -584,6 +625,7 @@ class CallService : Service() {
         val HEADSETS = intArrayOf(AudioDeviceInfo.TYPE_BLE_HEADSET, AudioDeviceInfo.TYPE_BLUETOOTH_SCO,
             AudioDeviceInfo.TYPE_WIRED_HEADSET, AudioDeviceInfo.TYPE_USB_HEADSET)
         const val STOP = "stop"
+        const val RECONNECT_FOR = 30_000L  // ms a dropped call keeps trying to come back
         const val TALK = "talk"
         val TALK_KEYS = setOf(android.view.KeyEvent.KEYCODE_HEADSETHOOK, android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE,
             android.view.KeyEvent.KEYCODE_MEDIA_PLAY, android.view.KeyEvent.KEYCODE_MEDIA_PAUSE)

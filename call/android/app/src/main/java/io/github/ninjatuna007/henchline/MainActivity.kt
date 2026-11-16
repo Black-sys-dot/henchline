@@ -542,6 +542,14 @@ class MainActivity : Activity() {
                 showCallBar()
                 if (buttonOnly) CallService.Bus.service?.send(JSONObject().put("button_only", true).toString())
             }
+            status.has("reconnecting") -> {  // the connection dropped mid-call: the bar says so until it's back
+                callWords = if (status.getBoolean("reconnecting")) "reconnecting…" else ""
+                // Back: the laptop starts each connection on an open line, so hold-to-talk is said again
+                if (!status.getBoolean("reconnecting") && buttonOnly)
+                    CallService.Bus.service?.send(JSONObject().put("button_only", true).toString())
+                findViewById<TextView>(R.id.callStatus).text = if (callWords.isNotEmpty()) " · $callWords" else ""
+                if (onCall() && callWords.isNotEmpty()) state.text = subtitle("Reconnecting…")
+            }
             status.has("closed") -> {
                 (panel as? CallMenu)?.close()  // the call's menu goes with the call
                 callSession = ""

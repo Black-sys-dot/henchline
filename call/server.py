@@ -1292,10 +1292,23 @@ async def sent_file(request: web.Request) -> web.StreamResponse:
     return web.FileResponse(path, headers=files.headers(path))
 
 
+LIVE: list[web.WebSocketResponse] = []  # this server's call connection, while one is up
+
+
 async def call(request: web.Request) -> web.WebSocketResponse:
     trusted(request)
-    ws = web.WebSocketResponse(heartbeat=15)
+    ws = web.WebSocketResponse(heartbeat=15, timeout=2)  # closing a dropped one doesn't wait 10 s for a reply
     await ws.prepare(request)
+    # The phone back after its connection dropped (walking about, Wi-Fi to mobile data; the user's catch,
+    # 2026-11-16): the old connection may not have noticed yet, so this one takes over, with the same agent
+    resume = request.query.get("resume") == "1"
+    if resume and LIVE and in_call():
+        log(HANDSFREE_LOG, "call: the phone reconnected: taking over from the dropped connection")
+        await LIVE[-1].close(message=b"replaced by the phone reconnecting")
+        for _ in range(50):
+            if not in_call():
+                break
+            await asyncio.sleep(0.1)
     if in_call():
         await ws.close(message=b"busy: another call is up")
         return ws
@@ -1307,16 +1320,18 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             "parec", "--raw", f"--device={PHONE_SPEAKER_MONITOR}", "--format=s16le", f"--rate={SPEAKER_RATE}",
             "--channels=1", "--latency-msec=40", "--client-name=phone-call", stdout=asyncio.subprocess.PIPE)
         CALL_HANGUP.unlink(missing_ok=True)  # a hang-up asked for when no call was up is not for this one
-        CALL_PINNED.unlink(missing_ok=True)  # the last call's pick: this call starts with whoever spoke last
+        if not resume:  # a call back after a drop goes on as it was: same agent, etiquette already told
+            CALL_PINNED.unlink(missing_ok=True)  # the last call's pick: this call starts with whoever spoke last
+            for told in CALL_TOLD.glob("*"):  # this call reminds each agent afresh how to be on a call
+                told.unlink(missing_ok=True)
         blank_words()  # words a killed server never blanked
-        for told in CALL_TOLD.glob("*"):  # this call reminds each agent afresh how to be on a call
-            told.unlink(missing_ok=True)
         for stale in CALL_MIRROR.glob("*.json"):  # terminal lines from before this call
             stale.unlink(missing_ok=True)
         write_json(CALL, {"from": request.remote or "", "pid": os.getpid(),
                           "cmdline": Path("/proc/self/cmdline").read_text()})
         await asyncio.get_running_loop().run_in_executor(None, turn_on_handsfree, False)  # with talkback
-        log(HANDSFREE_LOG, "phone call started")
+        log(HANDSFREE_LOG, "phone call resumed" if resume else "phone call started")
+        LIVE.append(ws)
 
         async def to_phone() -> None:
             while not ws.closed:
@@ -1426,6 +1441,8 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                 elif msg.type == WSMsgType.ERROR:
                     break
         finally:
+            if ws in LIVE:
+                LIVE.remove(ws)
             CALL_PUSH.unlink(missing_ok=True)
             CALL_BUTTON_ONLY.unlink(missing_ok=True)  # the next call starts with an open line again
             CALL_HANGUP.unlink(missing_ok=True)  # the phone went first: the hang-up is moot
