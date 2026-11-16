@@ -42,8 +42,12 @@ class RingService : PushService() {
             if (ring.optString("why").isNotEmpty())
                 Chats.add(this, session, JSONObject().put("from", from).put("text", ring.optString("why")).put("mine", false))
             Chats.add(this, session, JSONObject().put("from", from).put("file", file))
-            Files.notify(this, ring.optString("agent", "handsfree"), ring.optString("why"), file.optString("url"),
-                file.optString("name", "file"), file.optString("type", "application/octet-stream"), file.optLong("size"), ring.optString("session"))
+            // The chat on screen shows it at once, with no banner; any other chat gets the notification (the user's
+            // catch, 2026-11-16: a PDF came as a notification first and reached the open chat only later)
+            if (session.isEmpty() || Messages.viewing != session)
+                Files.notify(this, ring.optString("agent", "handsfree"), ring.optString("why"), file.optString("url"),
+                    file.optString("name", "file"), file.optString("type", "application/octet-stream"), file.optLong("size"), session)
+            CallService.Bus.listener?.invoke("""{"reload": true}""")
             return
         }
         if (CallService.Bus.service != null) return  // on a call already: the agent is heard there

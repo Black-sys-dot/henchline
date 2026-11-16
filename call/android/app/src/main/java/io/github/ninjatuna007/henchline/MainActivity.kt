@@ -596,7 +596,7 @@ class MainActivity : Activity() {
             }
             status.has("agents") -> showAgents(status)
             status.has("delivered") -> tick(status.getString("delivered"), "delivered")  // in place: no jump
-            status.has("reload") -> showHistory()  // a share was put in the kept chat (UploadService)
+            status.has("reload") -> { showHistory(); if (listScreen.visibility == View.VISIBLE) showCrew() }  // a share or a file kept in a chat
             status.has("talking") ->  // the earbuds or the notification started or ended a turn
                 android.widget.Toast.makeText(this, if (status.getBoolean("talking")) "Talking: tap again to send" else "Sent",
                     android.widget.Toast.LENGTH_SHORT).show()
