@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import re
 import socket
+import sqlite3
 import time
 from pathlib import Path
 
@@ -75,11 +76,26 @@ def open_chat(workspace: str, chat: str) -> bool:
     return False
 
 
+STATE_DB = Path.home() / ".config/Cursor/User/globalStorage/state.vscdb"
+
+
+def cursor_title(chat: str) -> str:
+    """The chat's title as Cursor shows it ("Ozer's PR review rules"), from Cursor's own store, read only."""
+    try:
+        with sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=1) as db:
+            row = db.execute("select value from cursorDiskKV where key = ?", (f"composerData:{chat}",)).fetchone()
+        return str(json.loads(row[0]).get("name") or "").strip() if row else ""
+    except (sqlite3.Error, ValueError, TypeError, AttributeError):
+        return ""
+
+
 def chat_title(chat: str) -> str:
-    """A few words naming a Cursor chat, from the first thing the user asked in it (its transcript), so several
-    chats in one window can be told apart on the phone."""
+    """A chat's name for the phone: Cursor's own title for it (the user's catch, 2026-11-16: the phone's didn't
+    match the IDE's), else a few words of the first thing asked in it (its transcript)."""
     if not CHAT_ID.fullmatch(chat):
         return ""
+    if title := cursor_title(chat):
+        return title
     for transcript in (Path.home() / ".cursor/projects").glob(f"*/agent-transcripts/{chat}/{chat}.jsonl"):
         try:
             with transcript.open("rb") as f:
@@ -88,7 +104,10 @@ def chat_title(chat: str) -> str:
         except (OSError, ValueError, KeyError, TypeError):
             continue
         asked = re.search(r"<user_query>\s*(.*?)\s*(?:</user_query>|$)", text, re.S)
-        words = (asked.group(1) if asked else text).split()
+        asked_words = asked.group(1) if asked else text
+        # Not Henchline's own tag and one-time introduction, which can be the first thing a chat was sent
+        asked_words = re.sub(r"^\s*\[[^\]]*\]\s*(\(Henchline, said once:.*?How it all works: \S+\)\s*)?", "", asked_words, flags=re.S)
+        words = asked_words.split()
         return " ".join(words[:6]) + ("…" if len(words) > 6 else "")
     return ""
 
