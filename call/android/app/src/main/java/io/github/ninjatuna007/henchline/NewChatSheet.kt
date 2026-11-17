@@ -34,6 +34,75 @@ fun hideKeyboard(activity: Activity) {
     focus.clearFocus()
 }
 
+/**
+ * A sheet that a downward drag pulls down, and past a quarter of its height (or flung) closes: what its grey handle
+ * promises (the user's catch, 2026-11-17: the handle did nothing). A drag inside a list that can still scroll up
+ * scrolls the list instead; taps, holds and sideways drags stay with what's in the sheet.
+ */
+class DragSheet(context: android.content.Context, private val onDismiss: () -> Unit) : LinearLayout(context) {
+    private val slop = android.view.ViewConfiguration.get(context).scaledTouchSlop
+    private var startX = 0f
+    private var startY = 0f
+    private var dragging = false
+    private var velocity: android.view.VelocityTracker? = null
+
+    /** Whether something scrollable under that point could still scroll up: then the drag is the list's. */
+    private fun listCanScrollUp(group: android.view.ViewGroup, x: Float, y: Float): Boolean {
+        val hit = android.graphics.Rect()
+        for (i in 0 until group.childCount) {
+            val child = group.getChildAt(i)
+            if (child.visibility != View.VISIBLE || !child.getGlobalVisibleRect(hit) || !hit.contains(x.toInt(), y.toInt())) continue
+            if (child.canScrollVertically(-1)) return true
+            if (child is android.view.ViewGroup && listCanScrollUp(child, x, y)) return true
+        }
+        return false
+    }
+
+    override fun onInterceptTouchEvent(event: android.view.MotionEvent): Boolean {
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> { startX = event.rawX; startY = event.rawY; dragging = false }
+            android.view.MotionEvent.ACTION_MOVE -> {
+                val dy = event.rawY - startY
+                if (!dragging && dy > slop && dy > 2 * kotlin.math.abs(event.rawX - startX) &&
+                    !listCanScrollUp(this, startX, startY)) {
+                    dragging = true
+                    velocity = android.view.VelocityTracker.obtain()
+                }
+            }
+        }
+        return dragging
+    }
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: android.view.MotionEvent): Boolean {
+        // A touch on the sheet itself (its handle, its title, between rows) comes here, not through the intercept
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_DOWN -> { startX = event.rawX; startY = event.rawY; dragging = false }
+            android.view.MotionEvent.ACTION_MOVE -> if (!dragging) {
+                val dy = event.rawY - startY
+                if (dy > slop && dy > 2 * kotlin.math.abs(event.rawX - startX)) {
+                    dragging = true
+                    velocity = android.view.VelocityTracker.obtain()
+                }
+            }
+        }
+        if (!dragging) return super.onTouchEvent(event)
+        velocity?.addMovement(event)
+        when (event.actionMasked) {
+            android.view.MotionEvent.ACTION_MOVE -> translationY = (event.rawY - startY).coerceAtLeast(0f)
+            android.view.MotionEvent.ACTION_UP, android.view.MotionEvent.ACTION_CANCEL -> {
+                velocity?.computeCurrentVelocity(1000)
+                val flung = (velocity?.yVelocity ?: 0f) > 1500 * resources.displayMetrics.density
+                velocity?.recycle(); velocity = null
+                dragging = false
+                if (event.actionMasked == android.view.MotionEvent.ACTION_UP && (translationY > height / 4f || flung)) onDismiss()
+                else animate().translationY(0f).setDuration(180).start()
+            }
+        }
+        return true
+    }
+}
+
 open class BottomPanel(protected val activity: Activity) {
     protected val dp = activity.resources.displayMetrics.density
     protected fun px(v: Int) = (v * dp).toInt()
@@ -52,7 +121,7 @@ open class BottomPanel(protected val activity: Activity) {
         close(animate = false)
         hideKeyboard(activity)  // every sheet above it, not behind it (the model picker was, 2026-11-16)
         val root = FrameLayout(activity).apply { setBackgroundColor(Color.parseColor("#99000000")); alpha = 0f }
-        val sheet = LinearLayout(activity).apply {
+        val sheet = DragSheet(activity) { close() }.apply {
             orientation = LinearLayout.VERTICAL
             background = GradientDrawable().apply {
                 setColor(colour(R.color.surface))
