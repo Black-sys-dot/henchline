@@ -42,7 +42,7 @@ from routing import Heard  # noqa: E402
 from voice import commands, files, pickup, reminders, usage  # noqa: E402
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
-from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
+from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_STAY_ON, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
                          CALL_PINNED, CALL_RANG_BACK, CALL_TOLD, PHASE,
                          SPAWNED, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
                          CALL_PORT, CALL_PUSH,
@@ -284,6 +284,8 @@ async def from_page(message: dict, ear: Ear) -> str:
         flag(CALL_PUSH, message["push"])
     elif "button_only" in message:
         flag(CALL_BUTTON_ONLY, message["button_only"])
+    elif "stay_on" in message:
+        flag(CALL_STAY_ON, message["stay_on"])
     elif "switch" in message:
         await asyncio.get_running_loop().run_in_executor(None, switch, message["switch"])
     elif words := message.get("chat", "").strip():
@@ -1564,6 +1566,11 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                 if now_heard != heard or phase_now()[0] is not Phase.IDLE:
                     heard, quiet_since, nudged = now_heard, time.monotonic(), 0
                     continue
+                # Stay on (the user's wish, 2026-11-17: on the line while the agent works, outdoors, for as long as
+                # they like): never asked after, never hung up on
+                if CALL_STAY_ON.exists():
+                    quiet_since, nudged = time.monotonic(), 0  # switched off later: asked after from the first nudge
+                    continue
                 if Playing.now() is not None or any(SPOOL.glob("*.json")):
                     quiet_since = time.monotonic()
                     continue
@@ -1616,6 +1623,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                 LIVE.remove(ws)
             CALL_PUSH.unlink(missing_ok=True)
             CALL_BUTTON_ONLY.unlink(missing_ok=True)  # the next call starts with an open line again
+            CALL_STAY_ON.unlink(missing_ok=True)  # and is asked after when it goes quiet
             CALL_HANGUP.unlink(missing_ok=True)  # the phone went first: the hang-up is moot
             sender.cancel()
             shower.cancel()

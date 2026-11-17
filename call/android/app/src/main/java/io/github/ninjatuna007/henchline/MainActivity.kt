@@ -58,6 +58,7 @@ class MainActivity : Activity() {
 
     private val main = Handler(Looper.getMainLooper())
     private var buttonOnly = false  // a noisy place: only holding the button gets in
+    private var stayOn = false  // the call stays up however quiet it gets, until hung up (the user's wish, 2026-11-17)
     private var current = ""  // the chat shown: texts and voice messages go to its agent
     // The call and the chats are apart, as a messaging app's (the user's wish, 2026-11-16): the call is with callSession;
     // any other chat can be read and texted meanwhile, and a bar leads back to the call
@@ -601,12 +602,15 @@ class MainActivity : Activity() {
                 showConnected(onCall())
                 showCallBar()
                 if (buttonOnly) CallService.Bus.service?.send(JSONObject().put("button_only", true).toString())
+                if (stayOn) CallService.Bus.service?.send(JSONObject().put("stay_on", true).toString())
             }
             status.has("reconnecting") -> {  // the connection dropped mid-call: the bar says so until it's back
                 callWords = if (status.getBoolean("reconnecting")) "reconnecting…" else ""
                 // Back: the laptop starts each connection on an open line, so hold-to-talk is said again
                 if (!status.getBoolean("reconnecting") && buttonOnly)
                     CallService.Bus.service?.send(JSONObject().put("button_only", true).toString())
+                if (!status.getBoolean("reconnecting") && stayOn)
+                    CallService.Bus.service?.send(JSONObject().put("stay_on", true).toString())
                 findViewById<TextView>(R.id.callStatus).text = if (callWords.isNotEmpty()) " · $callWords" else ""
                 if (onCall() && callWords.isNotEmpty()) state.text = subtitle("Reconnecting…")
             }
@@ -1178,7 +1182,7 @@ class MainActivity : Activity() {
             speaker = service.speaker, where = service.where,
             earbuds = android.os.Build.VERSION.SDK_INT >= 31 && service.headsetAvailable(),
             onRoute = { to -> route(to) },
-            clear = service.clear, clearAllowed = service.where != "earpiece", buttonOnly = buttonOnly,
+            clear = service.clear, clearAllowed = service.where != "earpiece", buttonOnly = buttonOnly, stayOn = stayOn,
             onSwitch = { session ->
                 // The laptop is told, and the phone follows at once: that agent's chat, loaded, and the bar's name
                 // (it waited for the laptop's next word, then didn't load the chat, 2026-11-16)
@@ -1194,6 +1198,12 @@ class MainActivity : Activity() {
                 if (buttonOnly != only) {
                     buttonOnly = only
                     service.send(JSONObject().put("button_only", buttonOnly).toString())
+                }
+            },
+            onStayOn = { on ->
+                if (stayOn != on) {
+                    stayOn = on
+                    service.send(JSONObject().put("stay_on", stayOn).toString())
                 }
             },
             onHangUp = { hangUp() }).also { it.show() }

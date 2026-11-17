@@ -28,10 +28,12 @@ class CallMenu(
     private val clear: Boolean,
     private val clearAllowed: Boolean = true,  // on the earpiece: call sound only, the choice greyed out
     private val buttonOnly: Boolean,
+    private val stayOn: Boolean = false,
     private val onSwitch: (String) -> Unit,
     private val onSpeaker: (Boolean) -> Unit,
     private val onClear: (Boolean) -> Unit,
     private val onButtonOnly: (Boolean) -> Unit,
+    private val onStayOn: (Boolean) -> Unit = {},
     private val onHangUp: () -> Unit,
 ) : BottomPanel(activity) {
     fun show() {
@@ -50,6 +52,8 @@ class CallMenu(
             if (!clearAllowed) { alpha = 0.4f; for (i in 0 until childCount) getChildAt(i).isEnabled = false }
         }, wide(8, px(48)))
         sheet.addView(choice("Open line", "Hold to talk", !buttonOnly) { onButtonOnly(!it); close() }, wide(8, px(48)))
+        // Stay on: no "are you still there?" and no hang-up when quiet; with Hold to talk, a walkie-talkie
+        sheet.addView(choice("Stay on", "Check on me", stayOn) { onStayOn(it); close() }, wide(8, px(48)))
         val hang = primary("Hang up", colour(R.color.hang), Color.WHITE).apply { setOnClickListener { close(); onHangUp() } }
         sheet.addView(hang, wide(20, px(52)))
     }
