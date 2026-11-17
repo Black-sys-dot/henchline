@@ -159,6 +159,7 @@ class NewChatSheet(
     private val folders: List<JSONObject>,  // {path, name}
     private val agents: List<String>,
     private val loadModels: (agent: String, then: (JSONObject) -> Unit) -> Unit,  // {models} or {menu}
+    private val cursorChats: (() -> Unit)? = null,  // a Cursor chat you already have, instead of a new agent
     private val start: (folder: String, agent: String, model: String, params: Map<String, String>, typed: Boolean,
                         done: (String?) -> Unit) -> Unit,
 ) : BottomPanel(activity) {
@@ -173,6 +174,8 @@ class NewChatSheet(
 
     fun show() {
         val sheet = open("New chat", "Starts an agent on your laptop, in its own tmux window")
+        cursorChats?.let { show -> sheet.addView(actionRow("💬", "Open a Cursor chat you already have",
+            "Any chat in Cursor's list, quiet ones too", R.color.cyan) { close(); show() }, wide(12)) }
         sheet.addView(label("AGENT"), wide(20))
         val chips = LinearLayout(activity).apply { orientation = LinearLayout.HORIZONTAL }
         val go = primary("")
@@ -677,6 +680,183 @@ class LaterSheet(
                 text = "Nothing scheduled in this chat."; setTextColor(colour(R.color.muted)); textSize = 14f
             })
         }
+        sheet.addView(quiet("Close") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
+    }
+}
+
+/**
+ * Every Cursor chat the laptop has (the user's wish, 2026-11-17: a quiet chat in Cursor's list, "Lolo-tuper action
+ * update", couldn't be reached from the phone), newest first, with a search: picking one opens it in Cursor (its
+ * window too, when it's closed) and puts it on the crew.
+ */
+class CursorChatsSheet(
+    activity: Activity,
+    private val chats: List<JSONObject>,  // {session, name, where, updated, status, open}
+    private val pick: (session: String, done: (String?) -> Unit) -> Unit,
+) : BottomPanel(activity) {
+    fun show() {
+        val sheet = open("Cursor chats", "Opens it in Cursor on the laptop, then you can talk to it here")
+        val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val status = TextView(activity).apply { textSize = 13f; setTextColor(colour(R.color.muted)); visibility = View.GONE }
+        fun ago(ms: Long): String {
+            val minutes = (System.currentTimeMillis() - ms) / 60_000
+            return when {
+                ms <= 0 -> ""
+                minutes < 60 -> "${minutes.coerceAtLeast(1)} min ago"
+                minutes < 48 * 60 -> "${minutes / 60} h ago"
+                else -> "${minutes / (24 * 60)} days ago"
+            }
+        }
+        fun list(query: String) {
+            rows.removeAllViews()
+            val q = query.trim().lowercase()
+            val shown = chats.filter { q.isEmpty() || q in it.optString("name").lowercase() || q in it.optString("where").lowercase() }
+            for (chat in shown.take(80)) {
+                val busy = chat.optString("status") == "generating"
+                val detail = listOf(chat.optString("where").replace("_", " "), ago(chat.optLong("updated")),
+                    if (busy) "working" else if (chat.optBoolean("open")) "window open" else "").filter { it.isNotEmpty() }.joinToString(" · ")
+                rows.addView(actionRow(if (busy) "⚡" else "💬", chat.optString("name"), detail, R.color.text) {
+                    status.text = "Opening “${chat.optString("name")}” in Cursor…"
+                    status.setTextColor(colour(R.color.muted)); status.visibility = View.VISIBLE
+                    pick(chat.optString("session")) { why ->
+                        if (why == null) close()
+                        else { status.text = why; status.setTextColor(colour(R.color.hang)) }
+                    }
+                })
+            }
+            if (shown.isEmpty()) rows.addView(TextView(activity).apply {
+                text = if (chats.isEmpty()) "No Cursor chats found on the laptop." else "No chat matches."
+                setTextColor(colour(R.color.muted)); textSize = 13f; setPadding(px(4), px(12), px(4), px(12))
+            })
+        }
+        val box = EditText(activity).apply {
+            hint = "Search by name or project"
+            setHintTextColor(colour(R.color.muted)); setTextColor(colour(R.color.text)); textSize = 15f; setSingleLine()
+            background = rounded(colour(R.color.navy), 16f, 1, colour(R.color.surface_high))
+            setPadding(px(16), px(12), px(16), px(12))
+            addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun onTextChanged(s: CharSequence?, a: Int, b: Int, c: Int) {}
+                override fun afterTextChanged(s: Editable?) = list(s?.toString() ?: "")
+            })
+        }
+        sheet.addView(box, wide(14))
+        sheet.addView(ScrollView(activity).apply { isVerticalScrollBarEnabled = false; addView(rows) },
+            wide(10, (activity.resources.displayMetrics.heightPixels * 0.5).toInt()))
+        sheet.addView(status, wide(8))
+        sheet.addView(quiet("Close") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
+        list("")
+    }
+}
+
+/**
+ * An agent's usage as bars (the user's wish, 2026-11-17: not a text dump): each plan limit with when it resets, the
+ * context with what fills it, then a few notes. Green while there's room, amber past 70 %, red past 90 %.
+ */
+class UsageSheet(activity: Activity, private val usage: JSONObject) : BottomPanel(activity) {
+    private val palette = listOf(0xFF2BC4D9.toInt(), 0xFF8E7CFF.toInt(), 0xFFF5A623.toInt(), 0xFF3DBE6B.toInt(),
+        0xFFE5484D.toInt(), 0xFF5B9BFF.toInt(), 0xFFD77BD0.toInt(), 0xFF9AA3B0.toInt())
+
+    private fun level(percent: Double) = when {
+        percent >= 90 -> colour(R.color.hang)
+        percent >= 70 -> 0xFFF5A623.toInt()
+        else -> 0xFF3DBE6B.toInt()
+    }
+
+    private fun tokens(n: Long) = when {
+        n >= 1_000_000 -> String.format(java.util.Locale.US, "%.1fM", n / 1e6).replace(".0M", "M")
+        n >= 1_000 -> "${n / 1000}K"
+        else -> "$n"
+    }
+
+    private fun resets(at: Long): String {
+        if (at <= 0) return ""
+        val minutes = (at * 1000 - System.currentTimeMillis()) / 60_000
+        return when {
+            minutes <= 0 -> "Resets now"
+            minutes < 60 -> "Resets in $minutes min"
+            minutes < 24 * 60 -> "Resets in ${minutes / 60} h ${minutes % 60} min"
+            else -> "Resets " + android.text.format.DateFormat.format("EEE HH:mm", at * 1000)
+        }
+    }
+
+    /** A rounded track, filled to the share given, in segments when there are several. */
+    private fun bar(segments: List<Pair<Double, Int>>) = LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL
+        background = rounded(colour(R.color.surface_high), 6f)
+        clipToOutline = true
+        outlineProvider = android.view.ViewOutlineProvider.BACKGROUND
+        var used = 0.0
+        for ((share, tint) in segments) {
+            val part = share.coerceIn(0.0, 100.0 - used)
+            if (part <= 0) continue
+            used += part
+            addView(View(activity).apply { setBackgroundColor(tint) },
+                LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, part.toFloat()))
+        }
+        if (used < 100) addView(View(activity), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, (100 - used).toFloat()))
+    }
+
+    private fun heading(title: String, right: String, rightColour: Int) = LinearLayout(activity).apply {
+        orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM
+        addView(TextView(activity).apply { text = title; setTextColor(colour(R.color.text)); textSize = 16f; typeface = Typeface.DEFAULT_BOLD },
+            LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        addView(TextView(activity).apply { text = right; setTextColor(rightColour); textSize = 15f; typeface = Typeface.DEFAULT_BOLD })
+    }
+
+    private fun small(words: String) = TextView(activity).apply {
+        text = words; setTextColor(colour(R.color.muted)); textSize = 12f; setPadding(0, px(4), 0, 0)
+    }
+
+    fun show() {
+        val agent = usage.optString("agent").replaceFirstChar { it.uppercase() }
+        val sheet = open("$agent usage", usage.optString("model"))
+        val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        val limits = usage.optJSONArray("limits")
+        if (limits != null && limits.length() > 0) {
+            body.addView(label("PLAN LIMITS"), wide(16))
+            for (i in 0 until limits.length()) {
+                val limit = limits.getJSONObject(i)
+                val percent = limit.optDouble("percent")
+                body.addView(heading(limit.optString("label"), "${percent.toInt()}% used", level(percent)), wide(12))
+                body.addView(bar(listOf(percent to level(percent))), wide(6, px(12)))
+                resets(limit.optLong("resets")).takeIf { it.isNotEmpty() }?.let { body.addView(small(it)) }
+            }
+        }
+        usage.optJSONObject("context")?.let { context ->
+            val percent = context.optDouble("percent")
+            body.addView(label("CONTEXT"), wide(20))
+            val size = context.optLong("size")
+            val used = context.optLong("used")
+            body.addView(heading(if (size > 0) "${tokens(used)} of ${tokens(size)} tokens" else "Context",
+                "${percent.toInt()}%", level(percent)), wide(12))
+            val parts = context.optJSONArray("parts")
+            if (parts != null && parts.length() > 0 && size > 0) {
+                val list = (0 until parts.length()).map { parts.getJSONObject(it) }
+                body.addView(bar(list.mapIndexed { i, p -> 100.0 * p.optLong("tokens") / size to palette[i % palette.size] }), wide(6, px(14)))
+                for ((i, part) in list.withIndex()) body.addView(LinearLayout(activity).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                    addView(View(activity).apply { background = rounded(palette[i % palette.size], 3f) }, LinearLayout.LayoutParams(px(10), px(10)))
+                    addView(TextView(activity).apply {
+                        text = part.optString("label"); setTextColor(colour(R.color.text)); textSize = 13f; setPadding(px(8), 0, 0, 0)
+                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                    addView(TextView(activity).apply { text = tokens(part.optLong("tokens")); setTextColor(colour(R.color.muted)); textSize = 13f })
+                }, wide(6))
+                body.addView(small("Free: ${tokens((size - used).coerceAtLeast(0))}"))
+            } else {
+                body.addView(bar(listOf(percent to level(percent))), wide(6, px(12)))
+                if (size > 0) body.addView(small("Free: ${tokens((size - used).coerceAtLeast(0))}"))
+            }
+        }
+        val notes = usage.optJSONArray("notes")
+        if (notes != null && notes.length() > 0) {
+            body.addView(View(activity), wide(10, px(1)))
+            for (i in 0 until notes.length()) body.addView(small(notes.getString(i)))
+        }
+        sheet.addView(ScrollView(activity).apply { isVerticalScrollBarEnabled = false; addView(body) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         sheet.addView(quiet("Close") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
     }

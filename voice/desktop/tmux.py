@@ -292,6 +292,12 @@ class WithTmux(Terminals):
         done = tmux("send-keys", "-t", tab.address, "Escape")
         return bool(done and done.returncode == 0)
 
+    def agent_pid(self, tab: Tab) -> int:
+        if tab.owner != OWNER:
+            return self.inner.agent_pid(tab)
+        pid = pane_pid(tab)
+        return agent_in(pid) if pid else 0
+
     def agent_tabs(self) -> list[tuple[Tab, int]]:
         found = list(self.inner.agent_tabs())
         for line in out("list-panes", "-a", "-F", "#{pane_id} #{pane_pid}").splitlines():

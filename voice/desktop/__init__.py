@@ -70,6 +70,10 @@ class Terminals(ABC):
         can't be sent a key without its window in front says no."""
         return False
 
+    def agent_pid(self, tab: Tab) -> int:
+        """The pid of the agent that tab runs now (0: none). Terminals that can ask one tab override this."""
+        return next((pid for found, pid in self.agent_tabs() if found == tab), 0)
+
     def agent_tabs(self) -> list[tuple[Tab, int]]:
         """Every tab whose foreground program is an agent, with that program's pid: for finding an agent the user
         asks for that hasn't spoken yet. A terminal that can't be asked lists none."""

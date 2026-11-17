@@ -16,7 +16,7 @@ import time
 from enum import Enum
 from pathlib import Path
 
-from voice.agents import SPOKEN_TO, identity, process
+from voice.agents import SPOKEN_TO, identity, process, started
 from voice.desktop import current as desktop, cursor_bridge, cursor_cdp
 from voice.state import (BY_HANDSFREE, CALL_PINNED, CALL_TOLD, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent,
                          Speaker, in_call, last_speaker, log, recent_speakers)
@@ -123,10 +123,12 @@ def squash(words: str) -> str:
 
 
 def find(agent: str, where: str | None = None) -> Speaker | None:
-    """The most recent agent of that kind to speak, in that workspace if named."""
+    """The most recent agent of that kind to speak, in that workspace if named; one still running first (agents are
+    remembered for weeks, and an old one long gone mustn't win over the one open now)."""
     found = [s for s in recent_speakers() if s.agent == agent.lower()
              and (not where or squash(where) in squash(s.where) or squash(s.where) in squash(where))]
-    return max(found, key=lambda s: s.at) if found else None
+    running = [s for s in found if reachable(s)]
+    return max(running or found, key=lambda s: s.at) if found else None
 
 
 def discover(agent: str, where: str | None, tabs: list | None = None, windows: list | None = None) -> list[Speaker]:
@@ -154,7 +156,8 @@ def discover(agent: str, where: str | None, tabs: list | None = None, windows: l
             except OSError:
                 pass
         _, key = identity(agent, session or str(folder))
-        found.append(Speaker(key, agent, "home" if folder == Path.home() else folder.name, tab))
+        found.append(Speaker(key, agent, "home" if folder == Path.home() else folder.name, tab, pid=pid,
+                             born=started(pid)))
     if agent == "cursor":  # the editor: its window title ends "<workspace> - Cursor"
         for window in (desktop().windows("cursor") if windows is None else windows):
             name = window.title.removesuffix(" - Cursor").rsplit(" - ", 1)[-1]
@@ -262,10 +265,30 @@ def route(text: str, last_message: tuple[str, Heard] | None) -> bool:
     return False
 
 
+_tabs: tuple[float, list] = (0.0, [])  # every agent tab with its program's pid, asked again after a moment
+
+
 def reachable(speaker: Speaker) -> bool:
-    """Is that agent still running where its words would be typed: its terminal tab, or its Cursor window?"""
+    """Is that agent still running where its words would be typed: its terminal tab, or its Cursor window? In a tab,
+    the same kind of agent in the same folder: agents are remembered for weeks, and a tab id can be reused (tmux
+    numbers panes from 0 again after a restart) by another agent, which must not get this one's messages."""
+    global _tabs
     if speaker.tab:
-        return desktop().terminals.agent_running(speaker.tab)
+        if not desktop().terminals.agent_running(speaker.tab):
+            return False
+        if time.monotonic() - _tabs[0] > 2:
+            _tabs = (time.monotonic(), desktop().terminals.agent_tabs())
+        pid = next((pid for tab, pid in _tabs[1] if tab == speaker.tab), 0)
+        if speaker.pid:  # its own process, known: there exactly while that one runs in its tab
+            return pid == speaker.pid and started(pid) == speaker.born
+        running = process(pid) if pid else None
+        if not running or running.agent != speaker.agent:
+            return False
+        try:
+            folder = running.folder
+        except OSError:
+            return False
+        return not speaker.where or speaker.where == ("home" if folder == Path.home() else folder.name)
     return speaker.in_editor and bool(cursor_window(speaker.where))
 
 

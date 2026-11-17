@@ -88,6 +88,15 @@ def ancestors(start: int | None = None) -> list[Process]:
     return chain
 
 
+def started(pid: int) -> int:
+    """When a process started (clock ticks since boot): with its pid, it names that one process, never a later one
+    given the same pid. 0 when it isn't running."""
+    try:
+        return int(Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[19])
+    except (OSError, ValueError, IndexError):
+        return 0
+
+
 def nearest_agent() -> Process | None:
     return next((p for p in ancestors() if p.agent), None)
 

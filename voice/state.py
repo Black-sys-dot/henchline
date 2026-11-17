@@ -174,7 +174,10 @@ BY_PTT = "ptt"
 BY_HANDSFREE = "handsfree"
 
 STALE_PHASE = 300  # seconds after which a "recording" phase is a leftover from a crash
-SPEAKER_MEMORY = 24 * 3600  # how long an agent counts as reachable after it last spoke
+# How long an agent is remembered after it last spoke. Whether it is still there is asked of the desktop (its
+# terminal tab, its Cursor window: routing.reachable), not of a clock: a quiet chat a day old fell off the crew list
+# while its window was still open (the user's catch, 2026-11-17). This only bounds the list
+SPEAKER_MEMORY = 30 * 86400
 
 
 class Phase(str, Enum):
@@ -281,13 +284,40 @@ class Speaker:
     where: str = ""  # its workspace folder name
     tab: Tab = field(default_factory=Tab)  # its terminal tab, where hands-free types replies
     at: float = field(default_factory=time.time)
+    # The agent's own process in that tab, and when it started: it is there exactly while that process runs in that
+    # tab (the user's idea, 2026-11-17: know an agent by its identity, not by how long it's been quiet). 0: not known
+    pid: int = 0
+    born: int = 0
 
     @classmethod
     def load(cls, path: Path) -> Speaker | None:
         data = read_json(path)
         if not data.get("session") or not data.get("agent"):
             return None
-        return cls(data["session"], data["agent"], data.get("where", ""), tab_from(data), data.get("at", 0.0))
+        return cls(data["session"], data["agent"], data.get("where", ""), tab_from(data), data.get("at", 0.0),
+                   int(data.get("pid") or 0), int(data.get("born") or 0))
+
+    def pin(self) -> bool:
+        """Notes the agent's process in its tab (it is running: it just spoke or called), again when it changed (the
+        same session resumed in a new process). Only its own tab is asked: this runs before every talkback clip.
+        Whether the record changed."""
+        if not self.tab:
+            return False
+        from voice.agents import process, started
+        from voice.desktop import current as desktop  # here: the desktop imports this module
+
+        try:
+            pid = desktop().terminals.agent_pid(self.tab)
+        except Exception:  # noqa: BLE001 - only a better check later; the record is kept either way
+            return False
+        running = process(pid) if pid else None
+        if not running or running.agent != self.agent:
+            return False
+        born = started(pid)
+        if (pid, born) == (self.pid, self.born):
+            return False
+        self.pid, self.born = pid, born
+        return True
 
     def save(self, path: Path) -> None:
         write_json(path, {**asdict(self), "tab": [self.tab.owner, self.tab.address]})
@@ -304,6 +334,7 @@ class Speaker:
         same tab (or, in the Cursor editor, the same workspace) under another key goes: hands-free may have found
         it running before it spoke (routing.discover), and it must not show up twice."""
         self.at = time.time()
+        self.pin()
         # On a call where the user picked an agent, another one speaking doesn't take the call from it (Claude's
         # own clip moved a call opened from a Cursor chat back to Claude, 2026-11-16)
         pinned = CALL_PINNED.read_text().strip() if CALL_PINNED.exists() else ""

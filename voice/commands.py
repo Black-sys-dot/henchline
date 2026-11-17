@@ -1,8 +1,8 @@
 """The slash commands an agent takes, for the phone's "/" list: its own built-ins that work typed in from afar,
 the user's and the project's custom commands and skills, and the phone's own actions.
 
-Built-ins that only open a picker or an editor in the terminal (Claude's /model, /resume, /config) are left
-out: typed from the phone they would leave the terminal waiting on a key nobody can press. The model is
+Built-ins that only open a picker, a panel or an editor in the terminal (Claude's /model, /resume, /config,
+/usage) are left out: typed from the phone they would leave the terminal waiting on a key nobody can press. The model is
 switched by the phone's own /model instead.
 """
 
@@ -18,15 +18,17 @@ PHONE = [
     ("flush", "Clear this chat on the phone, with its saved files if you like"),
     ("call", "Call your crew"),
     ("later", "Send a message later: /later your words, then pick a time"),
+    ("usage", "Plan limits and context, as bars"),
+    ("context", "How full the context is, and what fills it"),
 ]
 
 BUILT_IN = {
     "claude": [
         ("compact", "Shrink the conversation into a summary (add what to keep after it)"),
         ("clear", "Start the conversation over"),
+        ("rename", "Name this session (add the name after it)"),
         ("context", "How full the context window is"),
         ("cost", "What this session has cost so far"),
-        ("usage", "Plan usage and limits"),
         ("review", "Review a pull request"),
         ("security-review", "Review the pending changes for security"),
         ("init", "Write a CLAUDE.md for this project"),
@@ -35,6 +37,7 @@ BUILT_IN = {
     "codex": [
         ("compact", "Shrink the conversation into a summary"),
         ("new", "Start a new conversation"),
+        ("rename", "Name this conversation (add the name after it)"),
         ("diff", "Show the changes made, untracked files too"),
         ("status", "Session settings and token use"),
         ("review", "Review the current changes"),

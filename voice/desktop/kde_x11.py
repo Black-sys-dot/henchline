@@ -74,6 +74,10 @@ class Konsole(AnyTerminal):
                 break  # several Claude tabs in that folder: do not guess
         return Tab()
 
+    def agent_pid(self, tab: Tab) -> int:
+        foreground = qdbus(tab.owner, tab.address, "foregroundProcessId")
+        return int(foreground) if foreground.isdigit() and (p := process(int(foreground))) and p.agent else 0
+
     def agent_running(self, tab: Tab) -> bool:
         """If the agent quit, the tab is a plain shell, and Enter after typed words would run them."""
         foreground = qdbus(tab.owner, tab.address, "foregroundProcessId")

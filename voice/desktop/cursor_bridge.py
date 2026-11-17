@@ -10,9 +10,12 @@ from __future__ import annotations
 import contextlib
 import json
 import re
+import shutil
 import socket
 import sqlite3
+import subprocess
 import time
+import urllib.parse
 from pathlib import Path
 
 from voice.desktop import cursor_cdp
@@ -306,6 +309,78 @@ def chat_title(chat: str) -> str:
         words = asked_words.split()
         return " ".join(words[:6]) + ("…" if len(words) > 6 else "")
     return ""
+
+
+WORKSPACES = Path.home() / ".config/Cursor/User/workspaceStorage"
+
+
+def folders_by_project() -> dict[str, str]:
+    """Every folder Cursor has opened, by its project name under ~/.cursor/projects."""
+    found = {}
+    for record in WORKSPACES.glob("*/workspace.json"):
+        try:
+            data = json.loads(record.read_text())
+        except (OSError, ValueError):
+            continue
+        # Folders only: a .code-workspace window is titled "<name> (Workspace)", which its chats' place can't match
+        uri = str(data.get("folder") or "") if isinstance(data, dict) else ""
+        if uri.startswith("file://"):
+            path = urllib.parse.unquote(uri.removeprefix("file://"))
+            if Path(path).exists():
+                found[project_of(path)] = path
+    return found
+
+
+def all_chats() -> list[dict]:
+    """Every Cursor editor chat that can be opened again, active or not (the user's wish, 2026-11-17: a quiet chat
+    in Cursor's list couldn't be reached from the phone), newest first: {chat, name, folder, updated (ms),
+    status}. A chat counts when Cursor still has its record and its transcript names a project folder that exists."""
+    owners: dict[str, str] = {}
+    for transcripts in (Path.home() / ".cursor/projects").glob("*/agent-transcripts"):
+        for chat_dir in transcripts.iterdir():
+            if CHAT_ID.fullmatch(chat_dir.name):
+                owners.setdefault(chat_dir.name, transcripts.parent.name)
+    folders = folders_by_project()
+    found = []
+    try:
+        with contextlib.closing(sqlite3.connect(f"file:{STATE_DB}?mode=ro", uri=True, timeout=2)) as db:
+            rows = db.execute("select key, value from cursorDiskKV where key like 'composerData:%'").fetchall()
+    except sqlite3.Error:
+        return []
+    for key, value in rows:
+        chat = str(key).removeprefix("composerData:")
+        folder = folders.get(owners.get(chat, ""))
+        if not folder:
+            continue
+        try:
+            data = json.loads(value)
+        except (ValueError, TypeError):
+            continue
+        if not isinstance(data, dict):
+            continue
+        found.append({"chat": chat, "name": str(data.get("name") or "").strip() or chat_title(chat) or "Untitled chat",
+                      "folder": folder, "updated": int(data.get("lastUpdatedAt") or data.get("createdAt") or 0),
+                      "status": str(data.get("status") or "")})
+    return sorted(found, key=lambda c: c["updated"], reverse=True)
+
+
+def open_anywhere(chat: str, folder: str, wait: float = 30.0) -> bool:
+    """That chat in front in its Cursor window, the window opened first when it isn't (Cursor's own launcher, the
+    folder as argument): True once the bridge in that window has it open."""
+    if not CHAT_ID.fullmatch(chat):
+        return False
+    if not windows_of(project_of(folder)):
+        launcher = shutil.which("cursor")
+        if not launcher:
+            return False
+        # The port the bridge reaches chats through (the desktop launcher's own flag), in case Cursor isn't running
+        subprocess.Popen([launcher, f"--remote-debugging-port={cursor_cdp.PORT}", folder], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                         stderr=subprocess.DEVNULL, start_new_session=True)
+        until = time.monotonic() + wait
+        while not windows_of(project_of(folder)) and time.monotonic() < until:
+            time.sleep(1)
+        time.sleep(2)  # the bridge listens a moment before Cursor's chats are loaded
+    return open_chat(Path(folder).name, chat)
 
 
 def installed() -> bool:

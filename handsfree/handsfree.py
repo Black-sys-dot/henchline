@@ -153,6 +153,14 @@ def caller(register: bool = False) -> Speaker | None:
     spoke last (a Cursor ring was announced and answered as Claude, 2026-11-15)."""
     agent, session = identity()
     known = Speaker.load(SPEAKERS / f"{session}.json")
+    if known and known.tab:  # this very agent is calling: from its own tab now (resumed in another, say), its process
+        from voice.desktop import current as desktop
+        here = desktop().terminals.tab_of_caller()
+        moved = bool(here) and here != known.tab
+        if moved:
+            known.tab, known.pid, known.born = here, 0, 0
+        if known.pin() or moved:
+            known.save(SPEAKERS / f"{session}.json")
     if known or agent == "agent":
         return known
     # Only a ring makes its caller known; a text or a file doesn't put it in the crew. Except a Cursor editor chat:
@@ -165,6 +173,7 @@ def caller(register: bool = False) -> Speaker | None:
     from voice.agents import agent_where
     from voice.desktop import current as desktop
     speaker = Speaker(session, agent, agent_where(), desktop().terminals.tab_of_caller())
+    speaker.pin()
     speaker.save(SPEAKERS / f"{session}.json")
     speaker.replaces_found()  # found running from a new chat before it texted: that chat follows it
     return speaker

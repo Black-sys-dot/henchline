@@ -2043,7 +2043,8 @@ class MainActivity : Activity() {
             }
             panel = NewChatSheet(this, (0 until folders.length()).map { folders.getJSONObject(it) },
                 (0 until agents.length()).map { agents.getString(it) },
-                loadModels = { agent, then -> ask("/crew/models?agent=$agent", null) { answer -> then(answer) } }
+                loadModels = { agent, then -> ask("/crew/models?agent=$agent", null) { answer -> then(answer) } },
+                cursorChats = { cursorChats() }
             ) { folder, agent, model, params, typed, done ->
                 ask("/crew/new", JSONObject().put("folder", folder).put("agent", agent).put("model", model)
                     .put("params", JSONObject(params as Map<*, *>)).put("typed", typed)) { started ->
@@ -2052,6 +2053,35 @@ class MainActivity : Activity() {
                     done(null)
                     takeCrew(started)
                     open(session)
+                }
+            }.also { it.show() }
+        }
+    }
+
+    /** /usage and /context: this chat's agent's plan limits and context, as bars (the user's wish, 2026-11-17: what
+     *  Claude's /usage shows in its terminal, on the phone, and the same for Codex and Cursor). */
+    private fun usage() {
+        val session = current.ifEmpty { return }
+        ask("/crew/usage?session=" + android.net.Uri.encode(session), null) { answer ->
+            if (!answer.has("agent")) return@ask android.widget.Toast.makeText(this,
+                answer.optString("note").ifEmpty { "No usage to show." }, android.widget.Toast.LENGTH_LONG).show()
+            panel = UsageSheet(this, answer).also { it.show() }
+        }
+    }
+
+    /** Any Cursor chat on the laptop, quiet ones too: picked, it opens in Cursor and its chat here. */
+    private fun cursorChats() {
+        ask("/crew/cursor-chats", null) { answer ->
+            val list = answer.optJSONArray("chats")
+                ?: return@ask android.widget.Toast.makeText(this, answer.optString("note").ifEmpty { "The laptop didn't list them." },
+                    android.widget.Toast.LENGTH_LONG).show()
+            panel = CursorChatsSheet(this, (0 until list.length()).map { list.getJSONObject(it) }) { session, done ->
+                ask("/crew/cursor-chats/open", JSONObject().put("session", session)) { opened ->
+                    val got = opened.optString("session")
+                    if (got.isEmpty()) return@ask done(opened.optString("note").ifEmpty { "It didn't open." })
+                    done(null)
+                    takeCrew(opened)
+                    open(got)
                 }
             }.also { it.show() }
         }
@@ -2206,6 +2236,7 @@ class MainActivity : Activity() {
         "stop" to "Stop what the agent is doing", "model" to "Switch the agent's model",
         "flush" to "Clear this chat on the phone, with its saved files if you like", "call" to "Call your crew",
         "later" to "Send a message later: /later your words, then pick a time",
+        "usage" to "Plan limits and context, as bars", "context" to "How full the context is, and what fills it",
     ).map { (name, about) -> JSONObject().put("name", name).put("about", about).put("kind", "phone") }
 
     private fun loadCommands(session: String) {
@@ -2259,6 +2290,7 @@ class MainActivity : Activity() {
             }
             "call" -> call()
             "later" -> later("")
+            "usage", "context" -> usage()
         }
     }
 
@@ -2899,7 +2931,7 @@ class MainActivity : Activity() {
                 prefs.edit().putString(CALL_KEY, it).apply()
             }
         }
-        val PHONE_COMMANDS = setOf("stop", "model", "flush", "call", "later")
+        val PHONE_COMMANDS = setOf("stop", "model", "flush", "call", "later", "usage", "context")
         const val OPEN_FILE = "io.github.ninjatuna007.henchline.OPEN_FILE"  // a file's notification, tapped
 
         /** Each agent's henchman, by its session (claude-…, cursor-…, codex-…) or its name. */

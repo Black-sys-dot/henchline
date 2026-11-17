@@ -39,7 +39,7 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
-from voice import commands, files, pickup, reminders  # noqa: E402
+from voice import commands, files, pickup, reminders, usage  # noqa: E402
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
 from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
@@ -301,7 +301,12 @@ async def from_page(message: dict, ear: Ear) -> str:
 
 
 def chat_named(speaker: Speaker) -> str:
-    """For one of several Cursor chats in a window: " · " and its first words, to tell them apart."""
+    """For one of several Cursor chats in a window: " · " and its first words, to tell them apart. For Claude: the
+    name its session was given (/rename, or Claude's own title for it), not one made up from its folder."""
+    if speaker.agent == "claude" and speaker.pid:
+        record = read_json(Path.home() / ".claude/sessions" / f"{speaker.pid}.json")
+        name = str(record.get("name") or "").strip() if isinstance(record, dict) else ""
+        return f" · {name}" if name and record.get("nameSource") != "derived" else ""
     chat = cursor_bridge.chat_of(speaker.session) if speaker.agent == "cursor" else ""
     title = cursor_bridge.chat_title(chat) if chat else ""
     return f" · {title}" if title else ""
@@ -594,6 +599,62 @@ async def crew_folders(request: web.Request) -> web.Response:
     return web.json_response({"folders": listed, "agents": tmux.available()})
 
 
+async def crew_usage(request: web.Request) -> web.Response:
+    """The phone's /usage and /context: that agent's plan limits and context, as numbers for bars (voice/usage.py):
+    {"agent", "model", "limits": [{label, percent, resets}], "context": {percent, size, used, parts}, "notes"}."""
+    trusted(request)
+    session = request.query.get("session", "")
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    if not target:
+        return web.json_response({"note": "That agent isn't on the crew."}, status=404)
+    loop = asyncio.get_running_loop()
+    if target.agent == "claude":
+        found = await loop.run_in_executor(None, usage.claude, session)
+    elif target.agent == "codex":
+        found = await loop.run_in_executor(None, usage.codex, session)
+    elif target.agent == "cursor" and cursor_bridge.chat_of(session):
+        found = usage.cursor(await loop.run_in_executor(None, cursor_bridge.composer, cursor_bridge.chat_of(session)))
+    else:
+        found = {}
+    if not found:
+        return web.json_response({"note": f"{target.agent.capitalize()} hasn't reported its usage here yet."})
+    return web.json_response({"agent": target.agent, **found})
+
+
+async def cursor_chats(request: web.Request) -> web.Response:
+    """Every Cursor editor chat that can be opened again, active or quiet, newest first (the user's wish,
+    2026-11-17): {"chats": [{session, name, where, updated, status, open}]}, open when its window is open now."""
+    trusted(request)
+    loop = asyncio.get_running_loop()
+    chats = await loop.run_in_executor(None, cursor_bridge.all_chats)
+    open_projects = {cursor_bridge.project_of(c["folder"]) for c in chats
+                     if cursor_bridge.windows_of(cursor_bridge.project_of(c["folder"]))}
+    return web.json_response({"chats": [
+        {"session": f"cursor-{c['chat']}", "name": c["name"], "where": Path(c["folder"]).name,
+         "updated": c["updated"], "status": c["status"],
+         "open": cursor_bridge.project_of(c["folder"]) in open_projects} for c in chats[:200]]})
+
+
+async def cursor_chat_open(request: web.Request) -> web.Response:
+    """One of those chats, opened in Cursor (its window first, when it's closed) and on the crew from now on:
+    {"session"} → {"session", "name"} and the crew, or {"note"} why not."""
+    trusted(request)
+    try:
+        chat = cursor_bridge.chat_of(str((await request.json()).get("session", "")))
+    except (ValueError, AttributeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    loop = asyncio.get_running_loop()
+    found = next((c for c in await loop.run_in_executor(None, cursor_bridge.all_chats) if c["chat"] == chat), None)
+    if not found:
+        return web.json_response({"note": "Cursor doesn't have that chat any more."}, status=404)
+    if not await loop.run_in_executor(None, cursor_bridge.open_anywhere, chat, found["folder"]):
+        return web.json_response({"note": "Cursor didn't open it: is the laptop unlocked, with Henchline's bridge "
+                                          "in Cursor?"})
+    speaker = Speaker(f"cursor-{chat}", "cursor", Path(found["folder"]).name)
+    await loop.run_in_executor(None, speaker.remember)
+    return web.json_response({"session": speaker.session, "name": found["name"], **await loop.run_in_executor(None, agents)})
+
+
 async def crew_new(request: web.Request) -> web.Response:
     """A new chat: the agent started in its own tmux window in one of those folders (nothing else: the phone names
     one from the list), registered, and its session returned with the crew."""
@@ -649,6 +710,9 @@ async def crew_new(request: web.Request) -> web.Response:
         if await loop.run_in_executor(None, desktop().terminals.agent_running, tab):
             break
         await asyncio.sleep(0.5)
+    # The pane is brand new: no record of that tab can be its agent (a pane id is reused after a tmux restart)
+    for old in [s for s in recent_speakers() if s.tab == tab]:
+        (SPEAKERS / f"{old.session}.json").unlink(missing_ok=True)
     await loop.run_in_executor(None, routing.discover_all)
     found = next((s for s in recent_speakers() if s.tab == tab), None)
     if found:
@@ -1710,6 +1774,9 @@ def main() -> int:
     app.router.add_get("/voice-note/{nid}", voice_note_status)
     app.router.add_post("/crew", crew)  # it registers what it finds: a POST
     app.router.add_get("/crew/folders", crew_folders)
+    app.router.add_get("/crew/cursor-chats", cursor_chats)
+    app.router.add_get("/crew/usage", crew_usage)
+    app.router.add_post("/crew/cursor-chats/open", cursor_chat_open)
     app.router.add_post("/crew/new", crew_new)
     app.router.add_post("/crew/end", crew_end)
     app.router.add_post("/crew/stop", crew_stop)
