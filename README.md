@@ -14,7 +14,7 @@ Talk to them at your desk without touching the keyboard, call them from your pho
 
 **At your desk**
 
-- 🎙 **Push-to-talk.** Hold the Copilot key (or any key), speak, let go: Whisper writes it down on your machine and it is typed into the agent you're looking at. A word you stress arrives as `*word*`; a tone that stands out arrives as `[tone: loud, fast]`, so the agent knows how you said it.
+- 🎙 **Push-to-talk.** Hold the Copilot key (or any key), speak, let go: it is written down on your machine as you speak and typed into the agent you're looking at. A word you stress arrives as `*word*`; a tone that stands out arrives as `[tone: loud, fast]`, so the agent knows how you said it.
 - 🔊 **They talk back.** Each agent speaks its replies aloud in its own voice (Claude, Cursor and Codex sound different), one at a time, never over each other, and goes quiet the moment you start talking.
 - 🙌 **Hands-free.** Say *"hey Claude"* (your own trained wake word) or tap your earbuds. Answer right after they speak, no wake word needed. Talk over a reply to cut it off. *"Over"* sends at once, *"give me a minute"* keeps listening.
 - 🔀 **Switch by voice.** *"Switch me to Cursor"*, *"hand it back to Claude"*, *"send that to Codex"*: fixed phrases, announced out loud, so a mishearing is undone with *"back to …"*.
@@ -91,18 +91,18 @@ Everything runs on your machine. These are the models Henchline uses, what each 
 
 | Model | What it does here | Runs on | Size | License | Installed by |
 |---|---|---|---|---|---|
-| [Whisper small](https://huggingface.co/Systran/faster-whisper-small) (via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)) | Push-to-talk and voice messages; hands-free's fallback; confirms the wake word and "over" | GPU on mains (NVIDIA), else CPU | ~480 MB | MIT | downloaded on first start (`./install.sh ptt`) |
-| [NVIDIA Nemotron Speech Streaming](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b) (as [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)'s int8 export) | Hands-free turns, written down while you talk | CPU | ~630 MB | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | `./install.sh handsfree` |
-| [Whistle](https://cactuscompute.com/blog/whistle) ([Cactus Compute](https://github.com/cactus-compute/cactus)) | Confirms the wake word fast while Whisper is on the CPU (battery) | CPU | 17 MB | Apache-2.0 | `./install.sh handsfree` |
+| [Whisper small](https://huggingface.co/Systran/faster-whisper-small) (via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)) | Voice messages from the phone; checks for your own words echoing back; the fallback when Nemotron or Whistle is missing | GPU on mains (NVIDIA), else CPU | ~480 MB | MIT | downloaded on first start (`./install.sh ptt`) |
+| [NVIDIA Nemotron Speech Streaming](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b) (as [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)'s int8 export) | Hands-free turns and push-to-talk, written down while you talk (and the "over" at the end) | CPU | ~630 MB | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | `./install.sh handsfree` |
+| [Whistle](https://cactuscompute.com/blog/whistle) ([Cactus Compute](https://github.com/cactus-compute/cactus)) | Confirms the wake word in about a tenth of a second | CPU | 17 MB | Apache-2.0 | `./install.sh handsfree` |
 | [Kokoro 82M](https://huggingface.co/hexgrad/Kokoro-82M) (via [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)) | Talkback: every agent's voice | CPU | ~350 MB | Apache-2.0 | `./install.sh talkback` |
 | [openWakeWord](https://github.com/dscripka/openWakeWord), with your own "hey Claude" / "hey Jarvis" detectors trained on it | Wake word detection | CPU | ~5 MB | Apache-2.0; its ready-made "hey Jarvis" model is [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (non-commercial) | `./install.sh handsfree`; your detectors: `handsfree/tools/wakeword_collect.py`, then `wakeword_train.py` |
 | [Silero VAD](https://github.com/snakers4/silero-vad) (bundled with faster-whisper) | Is someone speaking: turn ends, talk-over | CPU | ~1 MB | MIT | with faster-whisper (pip) |
 
-To fetch or refresh them all: `./install.sh all` (or the piece's name); `./doctor.py` says which are missing and the command that fixes it. To keep Whisper for hands-free turns instead of Nemotron, set `"streaming": false` in `~/.config/ptt/config.json`.
+To fetch or refresh them all: `./install.sh all` (or the piece's name); `./doctor.py` says which are missing and the command that fixes it. To use Whisper for turns and push-to-talk instead of Nemotron, set `"streaming": false` in `~/.config/ptt/config.json`.
 
 ## Push-to-talk
 
-Hold the Copilot key (or any key you choose), speak, let go: Whisper writes it down on your machine and it is typed into the window in front, with Enter. A stressed word arrives as `*word*`, an unusual tone as `[tone: loud, fast]`. Right-click the tray icon for language, power and the hotkey. More: [ptt/README.md](ptt/README.md).
+Hold the Copilot key (or any key you choose), speak, let go: it is written down on your machine as you speak and typed into the window in front, with Enter. A stressed word arrives as `*word*`, an unusual tone as `[tone: loud, fast]`. Right-click the tray icon for language, power and the hotkey. More: [ptt/README.md](ptt/README.md).
 
 ## Talkback
 
