@@ -67,9 +67,9 @@ def _backwards(path: Path, most: int = 4 * 1024 * 1024):
                     yield entry
 
 
-def claude_took(uuid: str, wanted: str, since: float, home: Path | None = None) -> bool:
+def claude_took(uuid: str, wanted: str, since: float, home: Path | None = None) -> float:
     """Claude Code took it in: a user turn with those words, or a queued message handed to it mid-turn. Not the
-    "enqueue" of a message typed while it works: that one is still waiting."""
+    "enqueue" of a message typed while it works: that one is still waiting. When it did (0.0: not yet)."""
     for log_file in ((home or Path.home()) / ".claude/projects").glob(f"*/{uuid}.jsonl"):
         for entry in _backwards(log_file):
             when = _when(entry)
@@ -82,12 +82,12 @@ def claude_took(uuid: str, wanted: str, since: float, home: Path | None = None) 
             else:
                 continue
             if says(said, wanted):
-                return True
-    return False
+                return when or time.time()
+    return 0.0
 
 
-def codex_took(folder_key: str, wanted: str, since: float, home: Path | None = None) -> bool:
-    """Codex took it in: a user message in the newest session log of that folder."""
+def codex_took(folder_key: str, wanted: str, since: float, home: Path | None = None) -> float:
+    """Codex took it in: a user message in the newest session log of that folder. When it did (0.0: not yet)."""
     root = (home or Path.home()) / ".codex/sessions"
     def mtime(path: Path) -> float:
         try:
@@ -112,13 +112,13 @@ def codex_took(folder_key: str, wanted: str, since: float, home: Path | None = N
             payload = entry.get("payload") or {}
             if entry.get("type") == "event_msg" and payload.get("type") == "user_message":
                 if says(str(payload.get("message", "")), wanted):
-                    return True
-        return False
-    return False
+                    return when or time.time()
+        return 0.0
+    return 0.0
 
 
-def took(agent: str, session: str, words: str, since: float | None = None) -> bool | None:
-    """True once that agent has taken in the message; False while it waits; None when that agent can't say."""
+def took(agent: str, session: str, words: str, since: float | None = None) -> float | None:
+    """When that agent took in the message (0.0: it still waits); None when that agent can't say."""
     wanted = key(words)
     if not wanted:  # nothing to know it by (only emoji, another script): can't say
         return None

@@ -330,7 +330,7 @@ def switch(session: str) -> None:
 
 
 # Messages typed into an agent that logs what it takes in (Claude, Codex), not yet taken in: id → (session, agent,
-# words, when). Taken in: id → (session, when). The phone asks with its working poll (two ticks), and keeps one
+# words, when). Taken in: id → (session, when the agent took it in). The phone asks with its working poll (two ticks), and keeps one
 # tick meanwhile (the agent may be busy: the message waits in its queue, the user's catch, 2026-11-16)
 WAITING: dict[str, tuple[str, str, str, float]] = {}
 TAKEN: dict[str, tuple[str, float]] = {}
@@ -350,19 +350,20 @@ def watch_pickup(mid: str, session: str, words: str) -> bool:
     return True
 
 
-def taken_in(session: str) -> list[str]:
-    """The phone's messages to that agent it has taken in since: checked now, kept an hour."""
+def taken_in(session: str) -> dict[str, float]:
+    """The phone's messages to that agent it has taken in since, with when it did: checked now, kept an hour."""
     now = time.time()
     with PICKUP_LOCK:
         mine = [(mid, v) for mid, v in WAITING.items() if v[0] == session]
-    taken = [mid for mid, (s, agent, words, since) in mine if pickup.took(agent, s, words, since)]  # unlocked: slow
+    taken = {mid: pickup.took(agent, s, words, since) for mid, (s, agent, words, since) in mine}  # unlocked: slow
     with PICKUP_LOCK:
-        for mid in taken:
-            WAITING.pop(mid, None)
-            TAKEN[mid] = (session, now)
+        for mid, at in taken.items():
+            if at:
+                WAITING.pop(mid, None)
+                TAKEN[mid] = (session, at)
         for old in [k for k, v in TAKEN.items() if now - v[1] > 3600]:
             TAKEN.pop(old, None)
-        return [mid for mid, (s, _) in TAKEN.items() if s == session]
+        return {mid: at for mid, (s, at) in TAKEN.items() if s == session}
 
 
 def typed(words: str, session: str, urgent: bool = False) -> tuple[bool, str]:
@@ -1247,9 +1248,10 @@ async def chat_working(request: web.Request) -> web.Response:
         working = await loop.run_in_executor(None, codex_working, target)
     with PICKUP_LOCK:
         watched = any(v[0] == session for v in WAITING.values()) or any(v[0] == session for v in TAKEN.values())
-    taken = await loop.run_in_executor(None, taken_in, session) if watched else []
+    taken = await loop.run_in_executor(None, taken_in, session) if watched else {}
+    # "taken_at": when each was taken in, so only the agent's lines after it count as its answer (blue)
     return web.json_response({"working": working, "doing": doing if working else "", "label": label if working else "",
-                              "taken": taken})
+                              "taken": list(taken), "taken_at": taken})
 
 
 async def crew_stop(request: web.Request) -> web.Response:

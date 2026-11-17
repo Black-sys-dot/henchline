@@ -64,11 +64,27 @@ object Chats {
     /** Your message's ticks, a messaging app's way: "sent" (one: the laptop has it), "delivered" (two: typed into the
      *  agent), "read" (two, blue: the agent has answered since). */
     @Synchronized
-    fun setStatus(context: Context, session: String, id: String, status: String, force: Boolean = false) =
-        rewrite(context, session) { line ->  // force: back to "waiting" (the laptop couldn't be reached after all)
-            if (line.optString("id") == id && (force || rank(status) > rank(line.optString("status")))) line.put("status", status)
-            else line
+    fun setStatus(context: Context, session: String, id: String, status: String, force: Boolean = false,
+                  takenAt: Long = 0): String {
+        // Taken in at takenAt (ms), and the agent has answered since: its reply reached the phone before word that it
+        // took this in (2026-11-17), so straight to blue, as readAll would have made it. Only lines after takenAt:
+        // an answer to an earlier message, while this one waited in the queue, isn't one to this
+        var mine = false
+        var answered = false
+        if (status == "delivered" && takenAt > 0) for (line in load(context, session)) {
+            if (line.optString("id") == id) mine = true
+            else if (mine && !line.optBoolean("mine") && !line.optBoolean("note") && line.optString("from").isNotEmpty()
+                && line.optLong("at") >= takenAt) answered = true
         }
+        val wanted = if (answered) "read" else status
+        var now = wanted
+        rewrite(context, session) { line ->  // force: back to "waiting" (the laptop couldn't be reached after all)
+            if (line.optString("id") != id) line
+            else if (force || rank(wanted) > rank(line.optString("status"))) line.put("status", wanted)
+            else line.also { now = it.optString("status") }
+        }
+        return now
+    }
 
     /** Every chat kept on the phone, by session: one an agent texted that the crew list doesn't name still shows
      *  (a Cursor text reached the notification but no chat, 2026-11-16). */

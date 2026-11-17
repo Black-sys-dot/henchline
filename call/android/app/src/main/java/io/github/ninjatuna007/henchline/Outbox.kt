@@ -41,6 +41,36 @@ object Outbox {
         save(context, all(context) + JSONObject().put("id", id).put("session", session).put("words", words)
             .put("at", System.currentTimeMillis()))
         schedule(context)
+        watch(context)
+    }
+
+    private var watching: android.net.ConnectivityManager.NetworkCallback? = null
+
+    /** Tailscale coming back on is a new network (a VPN) though the phone's own never dropped (2026-11-17: the job
+     *  then sat out its backoff): each change of network tries at once, while anything waits. */
+    @Synchronized
+    fun watch(context: Context) {
+        if (watching != null) return
+        val net = context.applicationContext.getSystemService(android.net.ConnectivityManager::class.java) ?: return
+        val app = context.applicationContext
+        val callback = object : android.net.ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: android.net.Network) {
+                Thread {
+                    Thread.sleep(1500)  // the tunnel's routes settle first
+                    val left = try { flush(app) } catch (_: Exception) { true }
+                    if (!left) unwatch(app)
+                }.start()
+            }
+        }
+        try { net.registerDefaultNetworkCallback(callback); watching = callback } catch (_: Exception) {}
+    }
+
+    @Synchronized
+    private fun unwatch(context: Context) {
+        val callback = watching ?: return
+        watching = null
+        try { context.getSystemService(android.net.ConnectivityManager::class.java)?.unregisterNetworkCallback(callback) }
+        catch (_: Exception) {}
     }
 
     @Synchronized
@@ -50,28 +80,39 @@ object Outbox {
 
     /** Sends what waits, oldest first; stops at the first that still can't reach the laptop. Off the main thread.
      *  Whether anything is left. */
+    private val again = java.util.concurrent.atomic.AtomicBoolean()  // asked while one ran: it tries once more
+
     fun flush(context: Context): Boolean {
-        if (!flushing.compareAndSet(false, true)) return all(context).isNotEmpty()
+        if (!flushing.compareAndSet(false, true)) { again.set(true); return all(context).isNotEmpty() }
         try {
-            for (item in all(context)) {
-                val id = item.optString("id")
-                val session = item.optString("session")
-                val words = item.optString("words")
-                val sent = Messages.text(context, session, words, id)
-                if (sent.offline) return true  // still away: the rest wait their turn behind it
-                if (sent.note.isEmpty()) {
-                    Chats.setStatus(context, session, id, if (sent.queued) "sent" else "delivered")
-                } else {
-                    Chats.setText(context, session, id, "$words  (${sent.note})")
-                    Chats.setStatus(context, session, id, "sent", force = true)
-                }
-                remove(context, id)
-                CallService.Bus.listener?.invoke("""{"reload": true}""")
+            while (true) {
+                again.set(false)
+                if (!flushOnce(context)) return false
+                if (!again.get()) return true  // still away, and nothing new to try for
             }
-            return false
         } finally {
             flushing.set(false)
         }
+    }
+
+    /** One pass, oldest first: whether anything is left. */
+    private fun flushOnce(context: Context): Boolean {
+        for (item in all(context)) {
+            val id = item.optString("id")
+            val session = item.optString("session")
+            val words = item.optString("words")
+            val sent = Messages.text(context, session, words, id)
+            if (sent.offline) return true  // still away: the rest wait their turn behind it
+            if (sent.note.isEmpty()) {
+                Chats.setStatus(context, session, id, if (sent.queued) "sent" else "delivered")
+            } else {
+                Chats.setText(context, session, id, "$words  (${sent.note})")
+                Chats.setStatus(context, session, id, "sent", force = true)
+            }
+            remove(context, id)
+            CallService.Bus.listener?.invoke("""{"reload": true}""")
+        }
+        return false
     }
 
     /** Android tries again by itself as soon as there is a network (and keeps backing off while it can't reach). */
