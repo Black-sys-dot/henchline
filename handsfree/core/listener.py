@@ -75,6 +75,7 @@ class Listener:
         if whistle.available():
             try:
                 self.whistle = whistle.Checker(HANDSFREE_LOG)
+                self.turns.whistle = self.whistle
             except Exception as exc:
                 log(HANDSFREE_LOG, f"whistle didn't load ({exc}): Whisper confirms wake words")
         self.last_check = ""
@@ -283,8 +284,9 @@ class Listener:
         if not self.wake.feed(samples):
             return False
         began = time.monotonic()
-        # On battery Whisper is on the CPU and took ~2.5 s to confirm; Whistle takes ~0.15 s there
-        by = "whistle" if self.whistle and self.transcriber.on_cpu else "whisper"
+        # Whistle first, always (~0.1 s, the GPU left asleep; the user's choice, 2026-11-17): Whisper on the CPU took
+        # ~2.5 s; Whisper is the fallback
+        by = "whistle" if self.whistle else "whisper"
         try:
             woke = (self.wake.confirm_by(self.whistle.hear) if by == "whistle"
                     else self.transcriber.run(self.wake.confirm))

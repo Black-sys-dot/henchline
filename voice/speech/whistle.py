@@ -1,4 +1,4 @@
-"""Whistle: a 17 MB speech model fast on the CPU, for confirming a wake word on battery.
+"""Whistle: a 17 MB speech model fast on the CPU, for the quick checks: the wake word, and "over".
 
 When the laptop runs on battery, Whisper is on the CPU, and confirming "hey Claude" took about 2.5 s there: the
 user felt it as a slow wake (2026-11-16). Cactus Compute's Whistle (Apache-2.0) does the same two seconds in about
@@ -36,7 +36,7 @@ class Checker:
         cactus.set_threads(THREADS)
         self.model = cactus.Whistle(weights=str(WEIGHTS))
         self.lock = threading.Lock()
-        log(log_to, f"whistle on the cpu for wake words on battery ({THREADS} threads)")
+        log(log_to, f"whistle on the cpu for wake words and quick checks ({THREADS} threads)")
 
     def hear(self, audio, hints: str | None) -> str:
         """16 kHz floats → words; hints: words to expect, space-separated, or None."""

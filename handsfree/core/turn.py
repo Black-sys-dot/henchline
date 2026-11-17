@@ -68,6 +68,7 @@ class Turn:
         self.read, self.show, self.echo_slipped, self.stop = read, show, echo_slipped, stop
         self.last_message: tuple[str, Heard] | None = None  # for "send that to …"
         self.live = None  # this turn, heard as it is recorded (Nemotron), when it is installed
+        self.whistle = None  # set by the listener: quick checks (the wake word, "over") without Whisper
         self.streamer = None
         if cfg.streaming and nemotron.available():
             try:
@@ -239,5 +240,17 @@ class Turn:
         return THINK_WINDOW if routing.THINK.search(text) else 0.0
 
     def ends_with_over(self, frames: list[np.ndarray]) -> bool:
-        """Quick look at the last few seconds: did they finish with "over"?"""
-        return bool(OVER.search(self.transcriber.quick_text(np.concatenate(frames[-OVER_TAIL:])).strip()))
+        """Did they finish with "over"? Nemotron's words so far say it at once, the turn being heard as it is
+        recorded (0.6 s of quiet has let its last word through); Whistle, else Whisper, looks at the tail."""
+        if self.live:
+            try:
+                return bool(OVER.search(self.live.so_far().strip()))
+            except Exception as exc:
+                log(HANDSFREE_LOG, f"nemotron's words so far failed ({exc})")
+        tail = np.concatenate(frames[-OVER_TAIL:])
+        if self.whistle:
+            try:
+                return bool(OVER.search(self.whistle.hear(tail, None).strip()))
+            except Exception as exc:
+                log(HANDSFREE_LOG, f"whistle failed ({exc}): Whisper checks for over")
+        return bool(OVER.search(self.transcriber.quick_text(tail).strip()))

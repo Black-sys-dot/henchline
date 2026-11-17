@@ -71,6 +71,7 @@ class Live:
         self.stream = recognizer.create_stream()
         self.frames: queue.Queue = queue.Queue()
         self.failed = False
+        self.lock = threading.Lock()  # decoding and a look at the words so far take turns
         self.thread = threading.Thread(target=self._decode, name="nemotron", daemon=True)
         self.thread.start()
 
@@ -81,9 +82,10 @@ class Live:
     def _decode(self) -> None:
         try:
             while (frame := self.frames.get()) is not None:
-                self.stream.accept_waveform(RATE, frame)
-                while self.recognizer.is_ready(self.stream):
-                    self.recognizer.decode_stream(self.stream)
+                with self.lock:
+                    self.stream.accept_waveform(RATE, frame)
+                    while self.recognizer.is_ready(self.stream):
+                        self.recognizer.decode_stream(self.stream)
         except Exception as exc:  # Whisper takes the turn instead
             self.failed = True
             log(self.log_to, f"nemotron failed: {exc}")
@@ -106,6 +108,11 @@ class Live:
         except Exception as exc:
             log(self.log_to, f"nemotron failed at the end: {exc}")
             return None
+
+    def so_far(self) -> str:
+        """The words heard until now (the last half second may still be coming): no second transcription needed."""
+        with self.lock:
+            return str(self.recognizer.get_result(self.stream))
 
     def cancel(self) -> None:
         self.frames.put(None)
