@@ -32,7 +32,7 @@ from voice import spool  # noqa: E402
 import worker  # noqa: E402
 from voice.agents import agent_where, identity  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
-from voice.state import HOLDS, PLAYING, SPOOL, TALKBACK_LOG, WORKER_PID, Playing, in_call, log  # noqa: E402
+from voice.state import AWAY, HOLDS, PLAYING, SPOOL, TALKBACK_LOG, WORKER_PID, Playing, in_call, log  # noqa: E402
 
 
 def spawn_worker() -> None:
@@ -98,6 +98,10 @@ def main() -> int:
         return 0
     text = text_from(args.words)
     if not text:
+        return 0
+    if AWAY.exists() and not in_call() and agent not in ("handsfree",):  # the agent learns it, and chooses a text
+        print("not said: the user is away and can't hear the laptop. Text them instead: handsfree text \"…\"")
+        log(TALKBACK_LOG, f"{agent}: not said, the user is away")
         return 0
     if spool.is_held(session):
         # Speaking again means the agent has moved on: what it had not said

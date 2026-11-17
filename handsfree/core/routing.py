@@ -19,7 +19,7 @@ from pathlib import Path
 from voice import snaps
 from voice.agents import SPOKEN_TO, identity, process, started
 from voice.desktop import current as desktop, cursor_bridge, cursor_cdp
-from voice.state import (BY_HANDSFREE, CALL_CUT_IN, CALL_INTERRUPT, CALL_PINNED, CALL_TOLD, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent,
+from voice.state import (AWAY, BY_HANDSFREE, CALL_CUT_IN, CALL_INTERRUPT, CALL_PINNED, CALL_TOLD, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent,
                          Speaker, in_call, last_speaker, log, recent_speakers)
 
 SAY = Path(__file__).resolve().parents[2] / "talkback/scripts/say.py"
@@ -49,7 +49,9 @@ class Heard(str, Enum):
         if self is Heard.SCHEDULED:
             return "[henchline · scheduled]"
         source = "phone" if self in (Heard.SHARED, Heard.TEXTED, Heard.VOICE_NOTE) else "hands-free"
-        return f"[{source} · {self.value}]"
+        # Away (the user's design, 2026-11-17): the agent is told, and chooses a text over talking
+        # (not on a call: there the user hears and talks)
+        return f"[{source} · {self.value}{' · away' if AWAY.exists() and not in_call() else ''}]"
 
 
 NAMES = "|".join(SPOKEN_TO)
@@ -372,7 +374,8 @@ def refuse(words: str) -> None:
     """A delivery that can't happen: said out loud, and kept for the phone (it said only "the laptop says why",
     out of the user's earshot, 2026-11-16)."""
     _why.words = words
-    if not getattr(_why, "quiet", False):  # a scheduled message failing: logged and retried, never said aloud
+    # A scheduled message failing (logged and retried) or the user away (the phone shows why): never said aloud
+    if not getattr(_why, "quiet", False) and not (AWAY.exists() and not in_call()):
         say(words)
 
 

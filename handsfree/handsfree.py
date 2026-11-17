@@ -74,7 +74,7 @@ from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import files  # noqa: E402
 from voice.speech import whisper  # noqa: E402
-from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_CHECK, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN, CALL_RING, CALL_RINGER,  # noqa: E402
+from voice.state import (ANNOUNCE, AWAY, BY_HANDSFREE, CALL_CHECK, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN, CALL_RING, CALL_RINGER,  # noqa: E402
                          CHAT_KEY, CLOSE, HANDSFREE_LOG, HANDSFREE_ON, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES, read_json,
                          recent_speakers,
                          LISTEN, SPEAKERS, Speaker, in_call, log,
@@ -92,7 +92,7 @@ RANG = Path.home() / ".local/state/ptt/call.rang"  # when the user was last rung
 
 
 def ring(why: str, now: bool = False, wait: bool = True, done: bool = False, as_session: str = "",
-         check: bool = False) -> int:
+         check: bool = False, urgent: bool = False) -> int:
     """An agent wants to talk: the phone rings (Henchline full-screen, or an ntfy notification whose Answer
     opens Henchline's call), then this waits for what happened. Henchline reports back on a one-time ntfy
     address carried in the ring (it works off Tailscale too):
@@ -106,6 +106,10 @@ def ring(why: str, now: bool = False, wait: bool = True, done: bool = False, as_
     if in_call():
         print("a phone call is up already")
         return 1
+    if AWAY.exists() and not now and not urgent:  # the user can't take a call: the agent learns it here
+        print("not rung: the user is away and can't take a call. Text them instead (handsfree text \"…\"). "
+              "If it truly can't wait, ring with --urgent.")
+        return 6
     if check:  # this ring needs them: the call asks after them if they go quiet. The usual call stays on.
         CALL_CHECK.parent.mkdir(parents=True, exist_ok=True)
         CALL_CHECK.touch()
@@ -564,11 +568,12 @@ def main() -> int:
         wait = "--no-wait" not in args
         done = "--done" in args
         check = "--check" in args
+        urgent = "--urgent" in args  # past Away: something that truly can't wait
         args, as_session = taken_as(args)
         if as_session is None:
             return 1
-        return ring(" ".join(a for a in args if a not in ("--now", "--no-wait", "--done", "--check")), now, wait, done,
-                    as_session, check)
+        return ring(" ".join(a for a in args if a not in ("--now", "--no-wait", "--done", "--check", "--urgent")), now,
+                    wait, done, as_session, check, urgent)
     if command == "remind":
         return remind(args)
     if command == "send":

@@ -84,8 +84,10 @@ class Voice:
         if calling and CALL_SILENT.exists():  # the line dropped: kept until the phone is back, or the call ends
             time.sleep(0.5)
             return
-        if AWAY.exists() and not calling:  # the user is away: a text, never the laptop's speakers
-            clip.for_call = True
+        if AWAY.exists() and not calling:  # queued before Away began: not said into an empty room
+            path.unlink(missing_ok=True)
+            log(TALKBACK_LOG, f"{clip.agent} clip dropped: the user is away (agents are told to text)")
+            return
         if clip.for_call and not calling:  # the call is over: not said aloud at the laptop, sent to the phone
             if clip.agent in SYSTEM:
                 path.unlink(missing_ok=True)
