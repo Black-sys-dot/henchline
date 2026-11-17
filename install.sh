@@ -149,6 +149,13 @@ install_handsfree() {  # the call needs it too: once is enough
   venv_python -c "from openwakeword.utils import download_models; download_models(['hey_jarvis'], '$share/handsfree')" \
     >/dev/null 2>&1 || say "The hey Jarvis model did not download (offline?): hey Claude still works once trained."
   install_nemotron
+  # Whistle (Cactus Compute, Apache-2.0, 17 MB): confirms the wake word fast on battery; without it, Whisper does
+  if [ ! -f "$share/handsfree/whistle/whistle.cact" ]; then
+    mkdir -p "$share/handsfree/whistle"
+    CACTUS_TELEMETRY=0 DO_NOT_TRACK=1 "$venv/bin/cactus" download whistle --out "$share/handsfree/whistle" >/dev/null 2>&1 &&
+      say "Whistle: fast wake words on battery" ||
+      say "Whistle didn't download (offline?): Whisper confirms wake words. Run ./install.sh handsfree again later."
+  fi
   mic=$(builtin_mic || true)
   mkdir -p "$units" "$HOME/.config/pipewire" "$bin"
   conf="$HOME/.config/pipewire/talkback-echo-cancel.conf"

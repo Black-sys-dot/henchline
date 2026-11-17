@@ -22,7 +22,7 @@ from sensing import (FRAME, PER_SECOND, RATE, EarbudButton, EchoWatch, Output, P
 from talkover import TalkOver, Verdict
 from turn import Mode, Turn
 from voicegate import VoiceGate
-from voice.speech import whisper
+from voice.speech import whisper, whistle
 from voice.spool import queued
 from voice.state import (BY_HANDSFREE, CALL_BUTTON_ONLY, CALL_PUSH, CLOSE, HANDSFREE_LOG, HANDSFREE_MODE, LISTEN,
                          PAUSE, PLAYING, WORKER_PID, in_call, log, mic_source, ptt_busy, release_phase)
@@ -71,6 +71,12 @@ class Listener:
         self.stream, self.source, self.opened, self.frames_read = None, "", 0.0, 0
         self.talkover = TalkOver(self.transcriber.quick_text)
         self.turns = Turn(cfg, self.transcriber, self.talkover, self.read, self.show, self.echo_slipped, stop)
+        self.whistle = None  # confirms wake words while Whisper is on the CPU (battery)
+        if whistle.available():
+            try:
+                self.whistle = whistle.Checker(HANDSFREE_LOG)
+            except Exception as exc:
+                log(HANDSFREE_LOG, f"whistle didn't load ({exc}): Whisper confirms wake words")
         self.last_check = ""
         self.mode = Mode.WAITING
         HANDSFREE_MODE.write_text(self.mode.value)
@@ -276,7 +282,18 @@ class Listener:
             return False
         if not self.wake.feed(samples):
             return False
-        if not self.transcriber.run(self.wake.confirm):
+        began = time.monotonic()
+        # On battery Whisper is on the CPU and took ~2.5 s to confirm; Whistle takes ~0.15 s there
+        by = "whistle" if self.whistle and self.transcriber.on_cpu else "whisper"
+        try:
+            woke = (self.wake.confirm_by(self.whistle.hear) if by == "whistle"
+                    else self.transcriber.run(self.wake.confirm))
+        except Exception as exc:  # Whistle failing: Whisper as before
+            log(HANDSFREE_LOG, f"whistle failed ({exc}): Whisper confirms")
+            by, woke = "whisper", self.transcriber.run(self.wake.confirm)
+        if woke:
+            log(HANDSFREE_LOG, f"wake word confirmed by {by} in {time.monotonic() - began:.2f}s")
+        if not woke:
             near = f", nearest {self.wake.near:.2f}" if self.wake.near is not None else ""
             log(HANDSFREE_LOG, f"wake candidate rejected ({self.wake.word}{near})")
             return False

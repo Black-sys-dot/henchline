@@ -255,6 +255,11 @@ class Wake:
 
     def confirm(self, whisper) -> bool:
         """Whether Whisper hears one of the nominated words; self.word says which."""
+        return self.confirm_by(lambda audio, hints: " ".join(seg.text for seg in whisper.transcribe(
+            audio, language="en", beam_size=1, vad_filter=False, hotwords=hints)[0]))
+
+    def confirm_by(self, hear) -> bool:
+        """Whether hear(audio, hints) hears one of the nominated words (Whisper, or Whistle on battery)."""
         words, self.nominated = sorted(self.nominated), set()
         for detector in self.detectors:  # whatever Whisper says, the word may still be coming: fire again on it
             if detector.word in words and detector.settle:
@@ -262,8 +267,7 @@ class Wake:
         self.word = "/".join(words)
         hints = " ".join(d.word for d in self.detectors if d.hint and d.word in words) or None
         audio = np.concatenate(self.ring).astype(np.float32) / 32768
-        segments, _ = whisper.transcribe(audio, language="en", beam_size=1, vad_filter=False, hotwords=hints)
-        text = " ".join(seg.text for seg in segments)
+        text = hear(audio, hints)
         close = {d.word for d in self.detectors if not d.hint}  # unhinted names are spelled freely; "Claude" exact
         heard = next((word for word in words
                       if (said(word, text) if word in close else re.search(rf"\b{word}\b", text, re.I))), "")
