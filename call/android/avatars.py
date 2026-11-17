@@ -16,6 +16,7 @@ FLAVOURS = {
     "handsfree": ("#1E6FE0", "#5FA4FF", "#00E5FF", "one"),  # the app's own blue
 }
 NAVY, METAL, DARK, PUPIL = "#0A1430", "#B9C6D6", "#0E1F44", "#062048"
+GUNMETAL, CUP, HEADSET_RIM = "#4B5563", "#2B2F3A", "#00B8D4"  # the boss's headset
 
 
 def shapes(body, light, glow, eyes):
@@ -75,10 +76,24 @@ def boss():
         ("circle", dict(cx=63, cy=50.5, r=3.4, fill="#FFFFFF")), ("circle", dict(cx=62.2, cy=51, r=1.7, fill=PUPIL)),
         ("path", dict(d="M51.5,49 Q49,60 43,67 Q52,68 56.5,62.5 Q57.5,55 55,49 Z", fill="#C8AE8E")),
         ("path", dict(d="M47,70.5 Q55,72.5 62,67.5", stroke="#2B2F3A", sw=2)),
-        ("path", dict(d="M31,47 A23,25 0,0 1,77 47", stroke=METAL, sw=2.2)),
-        ("rect", dict(x=74, y=44, w=7, h=11, fill=METAL, rx=3)),
-        ("path", dict(d="M77.5,55 Q76,68 66,71", stroke=METAL, sw=1.8)),
-        ("circle", dict(cx=65.5, cy=71.2, r=2.2, fill="#00E5FF")),
+    ]
+    # The headset, made to read at chat size (the user's pick, 2026-11-17, "the guy in the chair"): a gunmetal band
+    # outlined in the background's navy over the head, both ear cups and a mic capsule rimmed in cyan so they stand
+    # out from the dark, a cyan light on the right cup and at the mic
+    face += [
+        ("path", dict(d="M28.5,50 A25.5,28 0,0 1,79.5 50", stroke=NAVY, sw=6.2)),
+        ("path", dict(d="M28.5,50 A25.5,28 0,0 1,79.5 50", stroke=GUNMETAL, sw=4.2)),
+    ]
+    for x in (23.5, 75.5):
+        face += [("rect", dict(x=x, y=40, w=9, h=17, fill=HEADSET_RIM, rx=4.5)),
+                 ("rect", dict(x=x + 1.6, y=41.6, w=5.8, h=13.8, fill=CUP, rx=3))]
+    face += [
+        ("circle", dict(cx=80, cy=48.5, r=1.4, fill="#00E5FF")),
+        ("path", dict(d="M79,57 Q78,70 64,72.5", stroke=HEADSET_RIM, sw=3.4)),
+        ("path", dict(d="M79,57 Q78,70 64,72.5", stroke=GUNMETAL, sw=1.8)),
+        ("rect", dict(x=55.5, y=69.3, w=10, h=6.4, fill=HEADSET_RIM, rx=3.2)),
+        ("rect", dict(x=56.6, y=70.4, w=7.8, h=4.2, fill=CUP, rx=2.1)),
+        ("circle", dict(cx=57.9, cy=72.5, r=1.2, fill="#00E5FF")),
     ]
     out = [
         ("clip", dict(d=circle_path(54, 54, 54))),  # the coat and scarf go past the round edge: cut there
