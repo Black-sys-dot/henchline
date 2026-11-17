@@ -1439,6 +1439,80 @@ class MainActivity : Activity() {
                 }
             }
             showWorkingBubble(answer.optString("doing"), answer.optString("label"))
+            showWorkflowStrip(answer.optJSONObject("workflow"))
+        }
+    }
+
+    // --- Workflows: a Claude chat's multi-agent runs, watched from the phone (the user's wish, 2026-11-17) --------
+
+    private var flowRow: View? = null  // the strip at the bottom of the chat while a workflow runs in it
+    private var flowName: TextView? = null
+    private var flowPhase: TextView? = null
+    private var flowBar: LinearLayout? = null
+
+    /** The run going on now: its name, its phase and a bar, below the chat's last line (and below the working
+     *  bubble); a tap opens its sheet. Gone when nothing runs. */
+    private fun showWorkflowStrip(flow: JSONObject?) {
+        if (flow == null) {
+            flowRow?.let { (it.parent as? android.view.ViewGroup)?.removeView(it) }
+            flowRow = null
+            return
+        }
+        val draw = UsageDraw(this)
+        if (flowRow == null) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setBackgroundResource(R.drawable.bubble_agent)
+                setPadding(dp(14), dp(10), dp(14), dp(12))
+                setOnClickListener { workflows() }
+            }
+            flowName = TextView(this).apply { setTextColor(getColor(R.color.text)); textSize = 15f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+            flowPhase = TextView(this).apply { setTextColor(getColor(R.color.muted)); textSize = 13f }
+            flowBar = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+            card.addView(flowName); card.addView(flowPhase)
+            card.addView(flowBar, LinearLayout.LayoutParams(dp(220), LinearLayout.LayoutParams.WRAP_CONTENT).apply { topMargin = dp(8) })
+            flowRow = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.START or Gravity.BOTTOM
+                setPadding(0, dp(4), 0, dp(4))
+                addView(ImageView(this@MainActivity).apply { setImageResource(avatarOf(current)) },
+                    LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) })
+                addView(card)
+            }
+        }
+        val done = flow.optInt("done")
+        val total = flow.optInt("total").coerceAtLeast(1)
+        flowName?.text = "⚙ " + flow.optString("name")
+        flowPhase?.text = listOfNotNull(
+            if (flow.optInt("phases") > 0) "Phase ${flow.optInt("at").coerceAtLeast(1)}/${flow.optInt("phases")}" else null,
+            flow.optString("phase").ifEmpty { null }, "$done/${flow.optInt("total")} agents  ›").joinToString(" · ")
+        flowBar?.removeAllViews()
+        flowBar?.addView(draw.bar(listOf(100.0 * done / total to 0xFF2BC4D9.toInt())),
+            LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(8)))
+        // Just above the working bubble, which stays the very last row (both moving to the end swapped them)
+        val row = flowRow!!
+        val bubble = workingRow?.takeIf { it.parent === chat }
+        val wanted = if (bubble != null) chat.indexOfChild(bubble) - (if (row.parent === chat) 1 else 0) else
+            chat.childCount - (if (row.parent === chat) 1 else 0)
+        if (row.parent !== chat || chat.indexOfChild(row) != wanted) {
+            (row.parent as? android.view.ViewGroup)?.removeView(row)
+            val at = workingRow?.takeIf { it.parent === chat }?.let { chat.indexOfChild(it) } ?: chat.childCount
+            chat.addView(row, at, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT))
+            chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
+        }
+    }
+
+    /** The chat's newest workflow (or /workflow): its phases and agents, kept up to date while the sheet is open. */
+    private fun workflows() {
+        val session = current.ifEmpty { return }
+        ask("/chat/workflows?session=" + android.net.Uri.encode(session), null) { answer ->
+            val runs = answer.optJSONArray("runs")
+            if (runs == null || runs.length() == 0) return@ask android.widget.Toast.makeText(this,
+                "No workflow has run in this chat.", android.widget.Toast.LENGTH_LONG).show()
+            val sheet = WorkflowSheet(this, runs.getJSONObject(0),
+                refresh = { then -> ask("/chat/workflows?session=" + android.net.Uri.encode(session), null) { again ->
+                    again.optJSONArray("runs")?.takeIf { it.length() > 0 }?.let { then(it.getJSONObject(0)) } } },
+                askClaude = { words -> text.setText(words); text.setSelection(text.length()); text.requestFocus() })
+            panel = sheet.also { it.show() }
         }
     }
 
@@ -2498,6 +2572,7 @@ class MainActivity : Activity() {
         "flush" to "Clear this chat on the phone, with its saved files if you like", "call" to "Call your crew",
         "later" to "Send a message later: /later your words, then pick a time",
         "usage" to "Plan limits and context, as bars", "context" to "How full the context is, and what fills it",
+        "workflow" to "This chat's workflows: phases and agents, live",
     ).map { (name, about) -> JSONObject().put("name", name).put("about", about).put("kind", "phone") }
 
     private fun loadCommands(session: String) {
@@ -2552,6 +2627,7 @@ class MainActivity : Activity() {
             "call" -> call()
             "later" -> later("")
             "usage", "context" -> usage()
+            "workflow" -> workflows()
         }
     }
 
@@ -3211,7 +3287,7 @@ class MainActivity : Activity() {
                 prefs.edit().putString(CALL_KEY, it).apply()
             }
         }
-        val PHONE_COMMANDS = setOf("stop", "model", "flush", "call", "later", "usage", "context")
+        val PHONE_COMMANDS = setOf("stop", "model", "flush", "call", "later", "usage", "context", "workflow")
         const val OPEN_FILE = "io.github.ninjatuna007.henchline.OPEN_FILE"  // a file's notification, tapped
 
         /** Each agent's henchman, by its session (claude-…, cursor-…, codex-…) or its name. */

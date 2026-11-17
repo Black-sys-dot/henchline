@@ -39,7 +39,7 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
-from voice import commands, files, pickup, reminders, usage  # noqa: E402
+from voice import commands, files, pickup, reminders, usage, workflows  # noqa: E402
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
 from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_SILENT, CALL_STAY_ON, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
@@ -632,6 +632,15 @@ async def crew_usage(request: web.Request) -> web.Response:
     if not found:
         return web.json_response({"note": f"{target.agent.capitalize()} hasn't reported its usage here yet."})
     return web.json_response({"agent": target.agent, **found})
+
+
+async def chat_workflows(request: web.Request) -> web.Response:
+    """A Claude chat's newest workflow runs, each with its phases and agents (voice/workflows.py): the phone's
+    workflow sheet and /workflow."""
+    trusted(request)
+    session = request.query.get("session", "")
+    found = await asyncio.get_running_loop().run_in_executor(None, workflows.runs, session)
+    return web.json_response({"runs": found})
 
 
 async def usage_overview(request: web.Request) -> web.Response:
@@ -1336,8 +1345,10 @@ async def chat_working(request: web.Request) -> web.Response:
         watched = any(v[0] == session for v in WAITING.values()) or any(v[0] == session for v in TAKEN.values())
     taken = await loop.run_in_executor(None, taken_in, session) if watched else {}
     # "taken_at": when each was taken in, so only the agent's lines after it count as its answer (blue)
+    # A workflow running in that Claude session: the strip at the bottom of its chat
+    flow = await loop.run_in_executor(None, workflows.live, session) if target and target.agent == "claude" else None
     return web.json_response({"working": working, "doing": doing if working else "", "label": label if working else "",
-                              "taken": list(taken), "taken_at": taken})
+                              "taken": list(taken), "taken_at": taken, "workflow": flow})
 
 
 async def crew_stop(request: web.Request) -> web.Response:
@@ -1822,6 +1833,7 @@ def main() -> int:
     app.router.add_get("/crew/cursor-chats", cursor_chats)
     app.router.add_get("/crew/usage", crew_usage)
     app.router.add_get("/usage", usage_overview)
+    app.router.add_get("/chat/workflows", chat_workflows)
     app.router.add_post("/crew/cursor-chats/open", cursor_chat_open)
     app.router.add_post("/crew/new", crew_new)
     app.router.add_post("/crew/end", crew_end)

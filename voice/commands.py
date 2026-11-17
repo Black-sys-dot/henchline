@@ -20,6 +20,7 @@ PHONE = [
     ("later", "Send a message later: /later your words, then pick a time"),
     ("usage", "Plan limits and context, as bars"),
     ("context", "How full the context is, and what fills it"),
+    ("workflow", "This chat's workflows: phases and agents, live"),
 ]
 
 BUILT_IN = {

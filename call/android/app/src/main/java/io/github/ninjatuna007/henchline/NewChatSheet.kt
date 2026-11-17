@@ -114,6 +114,7 @@ open class BottomPanel(protected val activity: Activity) {
 
     private var root: FrameLayout? = null
     private var sheet: LinearLayout? = null
+    protected var subtitleView: TextView? = null  // the line under the title, for sheets that update it
     val isOpen get() = root?.parent != null
 
     /** A fresh panel with its handle, title and a line under it; what goes in it is added to the returned layout. */
@@ -136,9 +137,9 @@ open class BottomPanel(protected val activity: Activity) {
             text = title; setTextColor(colour(R.color.text)); textSize = 22f
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
         })
-        if (subtitle.isNotEmpty()) sheet.addView(TextView(activity).apply {
+        subtitleView = if (subtitle.isNotEmpty()) TextView(activity).apply {
             text = subtitle; setTextColor(colour(R.color.muted)); textSize = 14f; setPadding(0, px(4), 0, 0)
-        })
+        }.also { sheet.addView(it) } else null
         root.addView(sheet, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         root.setOnClickListener { close() }
         // Above the keyboard when one is up (the user's catch, 2026-11-17: typing a new name, the keyboard hid it):
@@ -1000,5 +1001,102 @@ class UsageSheet(activity: Activity, private val usage: JSONObject) : BottomPane
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         sheet.addView(quiet("Close") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
             ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
+    }
+}
+
+/**
+ * A workflow's phases and agents (the design review's pick, 2026-11-17): each phase with a bar of its agents (done
+ * green, failed red, running cyan) and a row per agent; a tap shows what the agent found, and "Ask Claude about
+ * this" starts a message about it. Kept up to date every 2 s while open and running.
+ */
+class WorkflowSheet(
+    activity: Activity,
+    private var run: JSONObject,
+    private val refresh: (then: (JSONObject) -> Unit) -> Unit,
+    private val askClaude: (String) -> Unit,
+) : BottomPanel(activity) {
+    private val draw = UsageDraw(activity)
+    private lateinit var rows: LinearLayout
+    private var showing: JSONObject? = null  // the agent opened, or null for the phases
+    private val handler = android.os.Handler(android.os.Looper.getMainLooper())
+    private val poll = object : Runnable {
+        override fun run() {
+            if (!isOpen) return
+            refresh { fresh -> if (isOpen && fresh.optString("id") == run.optString("id")) { run = fresh; redraw() } }
+            if (run.optString("state") == "running") handler.postDelayed(this, 2000)
+        }
+    }
+
+    private fun stateText() = when (run.optString("state")) {
+        "running" -> "Running · ${run.optInt("done")}/${run.optInt("total")} agents done"
+        "failed" -> "Failed · ${run.optInt("done")}/${run.optInt("total")} agents done"
+        "stopped" -> "Stopped · ${run.optInt("done")}/${run.optInt("total")} agents done"
+        else -> "Finished · ${run.optInt("total")} agents"
+    }
+
+    fun show() {
+        val sheet = open("⚙ " + run.optString("name"), stateText())
+        rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        sheet.addView(ScrollView(activity).apply { isVerticalScrollBarEnabled = false; addView(rows) },
+            LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT).apply {
+                height = minOf(px(520), (activity.resources.displayMetrics.heightPixels * 0.6).toInt()) })
+        sheet.addView(quiet("Close") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
+        redraw()
+        if (run.optString("state") == "running") handler.postDelayed(poll, 2000)
+    }
+
+    private fun glyph(status: String) = when (status) {
+        "done", "empty" -> "✓"; "failed" -> "✗"; "running" -> "●"; else -> "○"
+    }
+
+    private fun redraw() {
+        subtitleView?.text = stateText()
+        rows.removeAllViews()
+        showing?.let { agent -> return detail(agent) }
+        val phases = run.optJSONArray("phases") ?: return
+        for (i in 0 until phases.length()) {
+            val phase = phases.getJSONObject(i)
+            val agents = phase.optJSONArray("agents")?.let { a -> (0 until a.length()).map { a.getJSONObject(it) } } ?: emptyList()
+            val done = agents.count { it.optString("status") in setOf("done", "empty") }
+            val failed = agents.count { it.optString("status") == "failed" }
+            val running = agents.count { it.optString("status") == "running" }
+            rows.addView(draw.heading("${i + 1}  ${phase.optString("title")}", "$done/${agents.size}",
+                if (failed > 0) colour(R.color.hang) else colour(R.color.muted)), wide(if (i == 0) 12 else 18))
+            if (agents.isNotEmpty()) {
+                val each = 100.0 / agents.size
+                rows.addView(draw.bar(listOf(done * each to 0xFF3DBE6B.toInt(), failed * each to colour(R.color.hang),
+                    running * each to 0xFF2BC4D9.toInt())), wide(6, px(8)))
+            }
+            // Failed ones first: what needs looking at
+            for (agent in agents.sortedBy { if (it.optString("status") == "failed") 0 else 1 }) {
+                val result = agent.optString("result").lineSequence().firstOrNull { it.isNotBlank() }?.take(70) ?: ""
+                rows.addView(actionRow(glyph(agent.optString("status")), agent.optString("label"),
+                    result.ifEmpty { if (agent.optString("status") == "running") "working…" else agent.optString("status") },
+                    if (agent.optString("status") == "failed") R.color.hang else R.color.text) {
+                    showing = agent; redraw()
+                })
+            }
+        }
+        val logs = run.optJSONArray("logs")
+        if (logs != null && logs.length() > 0) {
+            rows.addView(label("LOG"), wide(16))
+            for (i in 0 until logs.length()) rows.addView(draw.small(logs.getString(i).take(200)))
+        }
+    }
+
+    /** One agent: what it found, in full, to read and copy; ask Claude about it; back to the phases. */
+    private fun detail(agent: JSONObject) {
+        rows.addView(draw.heading("${glyph(agent.optString("status"))}  ${agent.optString("label")}",
+            agent.optString("phase"), colour(R.color.muted)), wide(8))
+        rows.addView(TextView(activity).apply {
+            text = agent.optString("result").ifEmpty { if (agent.optString("status") == "running") "Still working." else "No result." }
+            setTextColor(colour(R.color.text)); textSize = 14f; setTextIsSelectable(true); setPadding(0, px(10), 0, px(6))
+        })
+        rows.addView(actionRow("💬", "Ask Claude about this", "Starts a message about this agent", R.color.cyan) {
+            close(); askClaude("About the workflow's agent \u201c${agent.optString("label")}\u201d (${agent.optString("phase")}): ")
+        }, wide(8))
+        rows.addView(quiet("‹ Back") { showing = null; redraw() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 }
