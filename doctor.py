@@ -25,6 +25,8 @@ sys.path.insert(0, str(ROOT))  # voice/state.py: standard library only
 from voice.desktop import kde_session  # noqa: E402
 from voice.state import CALL_TLS  # noqa: E402
 from voice.state import EC_CONF as CANCELLER_CONF, EC_SOURCE, KOKORO_MODELS as KOKORO, VENV, WAKE_MODEL  # noqa: E402
+NEMOTRON = WAKE_MODEL.parent / "nemotron"  # voice/speech/nemotron.py
+WHISTLE = WAKE_MODEL.parent / "whistle/whistle.cact"  # voice/speech/whistle.py
 
 HOME = Path.home()
 PYTHON = VENV / "bin/python3"
@@ -166,6 +168,14 @@ def handsfree() -> list[Check]:
     return [
         check("handsfree", "wake word and analysis packages in the venv", ok, err, "./install.sh handsfree"),
         check("handsfree", "wake word feature models", bool(feature_models), "", "./install.sh handsfree"),
+        check("handsfree", "Nemotron streaming (turns heard as you talk)",
+              all((NEMOTRON / f).is_file() for f in ("encoder.int8.onnx", "decoder.int8.onnx", "joiner.int8.onnx",
+                                                       "tokens.txt", "bpe.vocab")),
+              "" if NEMOTRON.joinpath("bpe.vocab").is_file() else "missing: Whisper transcribes turns",
+              "./install.sh handsfree", warn_only=True),
+        check("handsfree", "Whistle (fast wake words on battery)", WHISTLE.is_file(),
+              "" if WHISTLE.is_file() else "missing: Whisper confirms them",
+              "./install.sh handsfree", warn_only=True),
         check("handsfree", "personal wake word", WAKE_MODEL.exists(), "",
               "handsfree/tools/wakeword_collect.py, then handsfree/tools/wakeword_train.py", warn_only=True),
         check("handsfree", "echo canceller settings", bool(conf), str(CANCELLER_CONF), "./install.sh handsfree"),

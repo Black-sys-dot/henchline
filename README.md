@@ -85,6 +85,23 @@ sudo apt install python3-venv python3-pyqt5 python3-evdev curl
 
 Each piece installs on its own and only what it needs. Python packages go into one private venv, `~/.local/share/henchline/venv` (its path is written in each script's first line, since a shebang cannot read a setting, and in `voice/state.py`), so nothing in the system or your own Python changes, and nothing there can break these tools; `requirements/` lists them per piece (the CUDA libraries only when `nvidia-smi` exists). `./doctor.py [piece]` checks each piece and prints the command that fixes whatever is missing (it runs on the system Python, so it works when the venv is the problem). `./install.sh remove <piece>` takes a piece out again and leaves settings, voice models and wake-word recordings in place. The first start downloads the Whisper small weights. The user service starts again at graphical login.
 
+## Models
+
+Everything runs on your machine. These are the models Henchline uses, what each is for, and how it gets onto your computer; the installer fetches each one from its publisher, and none is part of this repository.
+
+| Model | What it does here | Runs on | Size | License | Installed by |
+|---|---|---|---|---|---|
+| [Whisper small](https://huggingface.co/Systran/faster-whisper-small) (via [faster-whisper](https://github.com/SYSTRAN/faster-whisper)) | Push-to-talk and voice messages; hands-free's fallback; confirms the wake word and "over" | GPU on mains (NVIDIA), else CPU | ~480 MB | MIT | downloaded on first start (`./install.sh ptt`) |
+| [NVIDIA Nemotron Speech Streaming](https://huggingface.co/nvidia/nemotron-speech-streaming-en-0.6b) (as [sherpa-onnx](https://github.com/k2-fsa/sherpa-onnx)'s int8 export) | Hands-free turns, written down while you talk | CPU | ~630 MB | [NVIDIA Open Model License](https://www.nvidia.com/en-us/agreements/enterprise-software/nvidia-open-model-license/) | `./install.sh handsfree` |
+| [Whistle](https://cactuscompute.com/blog/whistle) ([Cactus Compute](https://github.com/cactus-compute/cactus)) | Confirms the wake word fast while Whisper is on the CPU (battery) | CPU | 17 MB | Apache-2.0 | `./install.sh handsfree` |
+| [Kokoro 82M](https://huggingface.co/hexgrad/Kokoro-82M) (via [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)) | Talkback: every agent's voice | CPU | ~350 MB | Apache-2.0 | `./install.sh talkback` |
+| [openWakeWord](https://github.com/dscripka/openWakeWord) feature models | Wake word detection (turns sound into features the detectors read) | CPU | ~4 MB | Apache-2.0 | `./install.sh handsfree` |
+| openWakeWord's published "hey Jarvis" | A second wake word that needs no recordings of you | CPU | <1 MB | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (non-commercial) | `./install.sh handsfree` |
+| Your own "hey Claude" / "hey Jarvis" detectors | Wake words in your voice | CPU | tiny | yours | trained on your machine: `handsfree/tools/wakeword_collect.py`, then `wakeword_train.py` |
+| [Silero VAD](https://github.com/snakers4/silero-vad) (bundled with faster-whisper) | Is someone speaking: turn ends, talk-over | CPU | ~1 MB | MIT | with faster-whisper (pip) |
+
+To fetch or refresh them all: `./install.sh all` (or the piece's name); `./doctor.py` says which are missing and the command that fixes it. To keep Whisper for hands-free turns instead of Nemotron, set `"streaming": false` in `~/.config/ptt/config.json`.
+
 ## Push-to-talk
 
 Hold the Copilot key (or any key you choose), speak, let go: Whisper writes it down on your machine and it is typed into the window in front, with Enter. A stressed word arrives as `*word*`, an unusual tone as `[tone: loud, fast]`. Right-click the tray icon for language, power and the hotkey. More: [ptt/README.md](ptt/README.md).
