@@ -2320,6 +2320,16 @@ class MainActivity : Activity() {
             }
             list.addView(line("$mark  ${step.optString("content")}", 15f, getColor(R.color.text)))
         }
+        // The document itself, laid out for the phone (the user's wish, 2026-11-17: a viewer, not just the steps)
+        plan.optString("html").takeIf { it.isNotEmpty() }?.let { body ->
+            list.addView(View(this).apply { setBackgroundColor(getColor(R.color.surface_high)) },
+                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(14); bottomMargin = dp(6) })
+            list.addView(TextView(this).apply {
+                text = android.text.Html.fromHtml(body, android.text.Html.FROM_HTML_MODE_COMPACT)
+                setTextColor(getColor(R.color.text)); textSize = 14.5f; setLineSpacing(0f, 1.15f)
+                setTextIsSelectable(true); setPadding(0, dp(4), 0, dp(12))
+            })
+        }
         list.addView(TextView(this).apply {
             text = "Build this"
             textSize = 16f

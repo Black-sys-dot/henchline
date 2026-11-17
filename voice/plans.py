@@ -8,6 +8,7 @@ same file shape when they have one: a *.plan.md in the project, or in ~/.claude/
 from __future__ import annotations
 
 import re
+import urllib.parse
 from pathlib import Path
 
 STATUSES = {"pending", "in_progress", "completed"}
@@ -37,12 +38,112 @@ def parse(text: str) -> dict:
             current["content"] = content.group(1).strip().strip("\"'")
         elif status and status.group(1) in STATUSES:
             current["status"] = status.group(1)
+    if not todos:  # a plan written as Markdown (Claude's): its checkboxes are its steps
+        for box in re.finditer(r"^\s*[-*]\s+\[([ xX~])\]\s+(.+)$", body, re.M):
+            todos.append({"id": str(len(todos) + 1), "content": box.group(2).strip(),
+                          "status": "completed" if box.group(1) in "xX" else "in_progress" if box.group(1) == "~" else "pending"})
     if not name:
         heading = re.search(r"^#\s+(.+)$", body, re.M)
         name = heading.group(1).strip() if heading else "Plan"
     done = sum(1 for step in todos if step["status"] == "completed")
     return {"name": name, "overview": overview, "todos": todos, "done": done, "total": len(todos),
-            "body": body.strip()[:6000]}
+            "body": body.strip()[:6000], "html": html(body.strip()[:20000])}
+
+
+def html(markdown: str) -> str:
+    """The plan's Markdown as the little HTML a phone's text view shows (headings, lists, bold, code); a diagram
+    block becomes a note, as the phone doesn't draw it."""
+    import html as escape
+
+    out, code, fence = [], [], None
+    for line in markdown.splitlines():
+        if line.strip().startswith("```"):
+            if fence is None:
+                fence = line.strip()[3:].strip().lower()
+                code = []
+            else:
+                if fence == "mermaid":
+                    out.append("<p><i>(a diagram: see it on the laptop)</i></p>")
+                else:
+                    out.append("<p><tt>" + "<br>".join(escape.escape(c) for c in code) + "</tt></p>")
+                fence = None
+            continue
+        if fence is not None:
+            code.append(line)
+            continue
+        text = escape.escape(line.rstrip())
+        spans: list[str] = []  # code first, kept out of the bold and italics (`a*b*c` stays as written)
+        text = re.sub(r"`([^`]+)`", lambda m: spans.append(m.group(1)) or f"\x00{len(spans) - 1}\x00", text)
+        text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+        text = re.sub(r"(?<![*\w])\*(?!\s)(.+?)(?<!\s)\*(?!\w)", r"<i>\1</i>", text)
+        text = re.sub("\x00(\\d+)\x00", lambda m: f"<tt>{spans[int(m.group(1))]}</tt>", text)
+        heading = re.match(r"(#{1,6})\s+(.*)", text)
+        bullet = re.match(r"\s*(?:[-*]|\d+[.)])\s+(?:\[([ xX~])\]\s+)?(.*)", text)
+        if heading:
+            size = {1: "big", 2: "big"}.get(len(heading.group(1)), "")
+            inner = f"<b>{heading.group(2)}</b>"
+            out.append(f"<p><{size}>{inner}</{size}></p>" if size else f"<p>{inner}</p>")
+        elif bullet:
+            mark = {"x": "✓ ", "X": "✓ ", "~": "● ", " ": "○ "}.get(bullet.group(1) or "", "• ")
+            out.append(f"&nbsp;&nbsp;{mark}{bullet.group(2)}<br>")
+        elif text.strip():
+            out.append(text + "<br>")
+        else:
+            out.append("<br>")
+    return "".join(out)
+
+
+def for_session(session: str, home: Path | None = None) -> Path | None:
+    """The plan file that chat itself wrote or opened, from the agent's own records (never guessed by name):
+    Claude logs planFilePath in its session log; Cursor links an editor chat to its plan in its store. (A
+    plan path a transcript merely mentions is not the chat's own: the CLI read another project's plan once.)"""
+    import contextlib
+    import json
+    import sqlite3
+
+    home = home or Path.home()
+    key = session.split("-", 1)[1] if "-" in session else ""
+    if session.startswith("claude-") and re.fullmatch(r"[0-9a-f-]{36}", key):
+        for log in (home / ".claude/projects").glob(f"*/{key}.jsonl"):
+            try:
+                with log.open("rb") as f:
+                    f.seek(max(0, log.stat().st_size - 8 * 1024 * 1024))
+                    found = re.findall(rb'"planFilePath":"([^"]+)"', f.read())
+            except OSError:
+                continue
+            if found:
+                try:
+                    path = Path(json.loads(b'"' + found[-1] + b'"'))  # a JSON string: its escapes undone
+                except ValueError:
+                    continue
+                return path if path.is_file() else None
+        return None
+    if not session.startswith("cursor-") or not re.fullmatch(r"[0-9a-f-]{36}", key):
+        return None
+    try:
+        store = home / ".config/Cursor/User/globalStorage/state.vscdb"
+        with contextlib.closing(sqlite3.connect(f"file:{store}?mode=ro", uri=True, timeout=1)) as db:
+            rows = db.execute("select key from cursorDiskKV where key like ?", (f"ofsContent:{key}:%plan.md",)).fetchall()
+        for (row,) in reversed(rows):
+            path = Path(urllib.parse.unquote(row.split(":file://", 1)[-1]))
+            if path.is_file():
+                return path
+    except sqlite3.Error:
+        pass
+    return None
+
+
+def of_session(session: str, project: Path | None) -> dict | None:
+    """That chat's own plan, parsed; else, as before, the newest plan naming its project."""
+    path = for_session(session)
+    if path is None:  # only a plan that names its project, never the newest one anywhere
+        return find(project) if project else None
+    try:
+        plan = parse(path.read_text(errors="replace"))
+    except OSError:
+        return None
+    plan["file"] = str(path)
+    return plan
 
 
 def _field(front: str, key: str) -> str:
