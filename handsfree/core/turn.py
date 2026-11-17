@@ -30,6 +30,11 @@ THINK_WINDOW = 180  # seconds after "give me a minute"
 WAIT_FOR_WORDS = 5.0  # after the wake word, seconds to start talking before it gives up
 END_DB, END_FRAMES = 6, 50  # 1.5 s at most END_DB over the floor ends the turn
 CALL_END_FRAMES = 30  # 0.9 s on a phone call: the user found 1.5 s slow there; a longer pause becomes a follow-on
+# Nemotron's words so far end a sentence ("…tests.", not "…and uh"): the turn ends after this much quiet instead
+# (the user's wish, 2026-11-17: answers sooner, now that the words are ready as they speak)
+EARLY_END_FRAMES, CALL_EARLY_END_FRAMES = 27, 20  # 0.8 s; 0.6 s on a call
+TRAILING = {"uh", "um", "er", "erm", "hmm", "and", "but", "or", "so", "because", "the", "a", "an", "to", "of",
+            "with", "like", "if", "then", "that", "which", "is", "are", "my", "your", "for", "in", "on"}
 BELOW_PEAK = 25  # dB under their loudest also counts as quiet, for a noisy room
 OVER_FRAMES = 20  # after 0.6 s of quiet, check whether the last word was "over"
 # On a call the line can carry steady hiss (Henchline's clear sound has no call-mode noise suppression) that never
@@ -115,6 +120,8 @@ class Turn:
         started = heard is not Heard.WOKE  # after "hey Claude" people pause for the chime
         calling = in_call()
         end = CALL_END_FRAMES if calling else END_FRAMES
+        early = (CALL_EARLY_END_FRAMES if calling else EARLY_END_FRAMES) if self.cfg.early_end else 0
+        finished = False
         voice_at, spoke = since, False  # when Silero last heard speech in the turn, and whether it ever did (calls)
         voiceless = False
         held = heard is Heard.PUSHED  # the button decides when it ends, not a pause
@@ -144,6 +151,10 @@ class Turn:
             quiet = quiet + 1 if db < max(floor + END_DB, peak - BELOW_PEAK) else 0
             if quiet == OVER_FRAMES and self.ends_with_over(frames):
                 break
+            # From the shorter pause on, looked at again now and then: the full stop can come a moment late
+            if early and not held and quiet >= early and (quiet - early) % 5 == 0 and self.sentence_done():
+                finished = True
+                break
             if calling and not held and len(frames) % VOICE_EVERY == 0:
                 recent = np.concatenate(frames[-int(VOICE_GONE * PER_SECOND):])
                 if get_speech_timestamps(recent, SPEECH):
@@ -153,7 +164,7 @@ class Turn:
                     break
         reason = ("the button" if released else "limit" if time.monotonic() - since >= MAX_SECONDS
                   else "no voice for a second (steady sound on the line)" if voiceless
-                  else "over" if quiet == OVER_FRAMES else "pause")
+                  else "a finished sentence" if finished else "over" if quiet == OVER_FRAMES else "pause")
         log(HANDSFREE_LOG, f"recorded {time.monotonic() - since:.1f}s, ended by {reason} (floor {floor:.0f} dB)")
         return frames
 
@@ -238,6 +249,18 @@ class Turn:
             whisper.ding(self.cfg)
             self.last_message = (rich, heard)
         return THINK_WINDOW if routing.THINK.search(text) else 0.0
+
+    def sentence_done(self) -> bool:
+        """Nemotron's words so far end a sentence, not on a filler or a word that leads on: no need to wait out the
+        whole pause. Without live words, never (the full pause then)."""
+        if not self.live:
+            return False
+        try:
+            said = self.live.so_far().strip()
+        except Exception:
+            return False
+        words = re.findall(r"[a-z']+", said.lower())
+        return bool(words) and said[-1] in ".?!" and words[-1] not in TRAILING and not OVER.search(said)
 
     def ends_with_over(self, frames: list[np.ndarray]) -> bool:
         """Did they finish with "over"? Nemotron's words so far say it at once, the turn being heard as it is

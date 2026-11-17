@@ -30,6 +30,8 @@ class Config:
     # Hands-free turns heard while the user talks (voice/speech/nemotron.py): the words are ready a moment after
     # they stop, on the CPU; Whisper still confirms wake words and transcribes when the model isn't installed
     streaming: bool = True
+    # With those words: a turn whose words so far end a sentence ends after a shorter pause (turn.py, EARLY_*)
+    early_end: bool = True
     hotwords: list[str] = field(default_factory=lambda: list(DEFAULT_HOTWORDS))
     chime: bool = True
     chime_sound: str = "/usr/share/sounds/freedesktop/stereo/complete.oga"
