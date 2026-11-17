@@ -394,7 +394,8 @@
             android:textColor="#FFFFFF"
             android:textStyle="bold" />
 
-        <!-- Replying to a message (swipe it right): shown above the box, sent with the answer -->
+        <!-- Replying to a message (swipe it right): shown above the box, sent with the answer; the cross (or a tap
+             anywhere on it) stops replying -->
         <TextView
             android:id="@+id/quote"
             android:layout_width="match_parent"
@@ -402,9 +403,14 @@
             android:layout_marginHorizontal="12dp"
             android:layout_marginBottom="6dp"
             android:background="@drawable/pill"
+            android:drawableEnd="@drawable/ic_close"
+            android:drawablePadding="10dp"
+            android:drawableTint="@color/muted"
             android:ellipsize="end"
+            android:gravity="center_vertical"
             android:maxLines="2"
-            android:paddingHorizontal="16dp"
+            android:paddingStart="16dp"
+            android:paddingEnd="12dp"
             android:paddingVertical="8dp"
             android:textColor="@color/muted"
             android:textSize="13sp"
