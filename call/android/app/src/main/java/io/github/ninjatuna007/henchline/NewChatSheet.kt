@@ -153,7 +153,9 @@ open class BottomPanel(protected val activity: Activity) {
             // By how much the keyboard actually covers the panel: on Android 10-14 the window is already resized
             // above it (adjustResize), and only Android 15's drawing behind the bars leaves the panel under it
             val at = IntArray(2).also { root.getLocationInWindow(it) }
-            val cover = maxOf(0, at[1] + root.height + root.paddingBottom - (decor.height - keyboard))
+            // (the root's height already holds its padding: adding the padding again grew it on every layout,
+            // and the sheet was squeezed away, 2026-11-17)
+            val cover = maxOf(0, at[1] + root.height - (decor.height - keyboard))
             if (root.paddingBottom != cover) root.setPadding(0, 0, 0, cover)
         }
         decor.viewTreeObserver.addOnGlobalLayoutListener(lift)
