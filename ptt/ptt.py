@@ -161,7 +161,11 @@ class PushToTalk:
         self.set_phase(Phase.TRANSCRIBING)
         try:
             got = self.heard_live(path, live) if live else None
-            text, rich = got or self.transcriber.file(path)  # out of GPU memory: on the CPU, words kept
+            if not got:
+                began = time.monotonic()
+                got = self.transcriber.file(path)  # out of GPU memory: on the CPU, words kept
+                log(f"heard by whisper {time.monotonic() - began:.2f}s after the key was let go")
+            text, rich = got
         except Exception as exc:
             log(f"transcribe failed: {exc}")
             return

@@ -3,8 +3,10 @@ green while listening, red while recording, yellow while transcribing."""
 
 from __future__ import annotations
 
+import subprocess
 import sys
 import threading
+import time
 
 from listener import Listener
 from turn import Mode
@@ -45,10 +47,27 @@ def show(listener: Listener, stop: threading.Event) -> None:
     off.triggered.connect(stop.set)
     menu.addAction(off)
     icon.setContextMenu(menu)
-    icon.show()
     shown = [None]
 
+    ptt_up = [True]  # until known otherwise: no flash of a second icon at start
+
+    def watch_ptt() -> None:
+        """Push-to-talk's tray is Henchline's one icon and shows hands-free too: ours only without it (asked off
+        the GUI thread: systemctl can be slow)."""
+        while not stop.is_set():
+            try:
+                done = subprocess.run(["systemctl", "--user", "is-active", "ptt.service"], capture_output=True,
+                                      text=True, timeout=2)
+                ptt_up[0] = done.stdout.strip() == "active"
+            except (OSError, subprocess.SubprocessError):
+                ptt_up[0] = False
+            time.sleep(5)
+
+    threading.Thread(target=watch_ptt, name="tray-ptt", daemon=True).start()
+
     def poll() -> None:
+        if icon.isVisible() == ptt_up[0]:
+            icon.setVisible(not ptt_up[0])
         if listener.mode is not shown[0]:
             shown[0] = listener.mode
             icon.setIcon(icons.get(listener.mode, headset))
