@@ -719,7 +719,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginStart="16dp"
                 android:layout_weight="1"
-                android:text="Clear sound"
+                android:text="Clear sound for new calls"
                 android:textColor="@color/text"
                 android:textSize="16sp" />
 
@@ -763,7 +763,7 @@
                 android:layout_width="0dp"
                 android:layout_height="wrap_content"
                 android:layout_weight="1"
-                android:text="Agents dance while they work"
+                android:text="Animated henchmen"
                 android:textColor="@color/text"
                 android:textSize="16sp" />
 

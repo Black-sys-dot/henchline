@@ -1102,3 +1102,30 @@ class WorkflowSheet(
             ViewGroup.LayoutParams.WRAP_CONTENT))
     }
 }
+
+/** Holding your avatar (the design review, 2026-11-17): you, Available or Away, and the way into Settings. */
+class YouSheet(
+    activity: Activity,
+    private val name: String,
+    private val away: Boolean,
+    private val onAway: (Boolean) -> Unit,
+    private val onSettings: () -> Unit,
+) : BottomPanel(activity) {
+    fun show() {
+        val sheet = open(name, if (away) "Away: agents text you, the laptop isn't listening" else "Available")
+        val track = LinearLayout(activity).apply {
+            orientation = LinearLayout.HORIZONTAL
+            background = rounded(colour(R.color.surface), 20f); setPadding(px(3), px(3), px(3), px(3))
+        }
+        for ((label, on) in listOf("Available" to false, "Away" to true)) track.addView(TextView(activity).apply {
+            text = label; gravity = Gravity.CENTER; textSize = 14f
+            setTextColor(colour(if (on == away) R.color.text else R.color.muted))
+            if (on == away) background = rounded(colour(R.color.surface_high), 17f)
+            setOnClickListener { close(); onAway(on) }
+        }, LinearLayout.LayoutParams(0, px(38), 1f))
+        sheet.addView(track, wide(16))
+        sheet.addView(actionRow("⚙", "Settings", "Calls, chats, your laptop", R.color.text) { close(); onSettings() }, wide(14))
+        sheet.addView(quiet("Close") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
+    }
+}

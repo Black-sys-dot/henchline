@@ -107,9 +107,11 @@ class MainActivity : Activity() {
         refresh.setProgressBackgroundColorSchemeColor(getColor(R.color.surface))
         refresh.setOnRefreshListener { if (tab == "usage") showUsage(fresh = true) else findCrew() }
         quoteBar.setOnClickListener { setQuote("") }  // tap it to stop replying
-        findViewById<View>(R.id.settingsButton).setOnClickListener { show(settingsScreen) }
+        findViewById<View>(R.id.settingsButton).visibility = View.GONE  // the header keeps only the title and you
         findViewById<View>(R.id.profile).setOnClickListener { toggleAway() }
-        findViewById<View>(R.id.profile).setOnLongClickListener { show(settingsScreen); true }
+        findViewById<View>(R.id.profile).setOnLongClickListener {
+            it.performHapticFeedback(android.view.HapticFeedbackConstants.LONG_PRESS); youSheet(); true }
+        tidyHeaderAndSettings()
         showAway(prefs().getBoolean("away", false), animate = false)
         findViewById<View>(R.id.settingsBack).setOnClickListener { show(listScreen) }
         findViewById<TextView>(R.id.myName).apply {
@@ -2059,8 +2061,9 @@ class MainActivity : Activity() {
         tab = which
         for ((id, name) in listOf(R.id.tabChats to "chats", R.id.tabCalls to "calls", R.id.tabUsage to "usage"))
             findViewById<TextView>(id).setTextColor(getColor(if (name == which) R.color.cyan else R.color.muted))
-        for (id in listOf(R.id.sort, R.id.search, R.id.compose))
-            findViewById<View>(id).visibility = if (which == "chats") View.VISIBLE else View.GONE
+        // The search pill (with the sort in it) and the new-chat button belong to the chats
+        for (view in listOf(findViewById<View>(R.id.search).parent as View, findViewById(R.id.compose)))
+            view.visibility = if (which == "chats") View.VISIBLE else View.GONE
         showCrew()
     }
 
@@ -2329,6 +2332,57 @@ class MainActivity : Activity() {
             visibility = if (on) View.VISIBLE else View.GONE
             text = android.text.Html.fromHtml("<font color=\"#00E5FF\">Away</font> · agents text you", android.text.Html.FROM_HTML_MODE_COMPACT)
         }
+    }
+
+    /** Holding your avatar: you, Available or Away, and Settings (the design review, 2026-11-17). */
+    private fun youSheet() {
+        panel = YouSheet(this, prefs().getString("my_name", "Boss") ?: "Boss", away,
+            onAway = { on -> if (on != away) toggleAway(on) }, onSettings = { show(settingsScreen) }).also { it.show() }
+    }
+
+    /** The header breathes (sorting moves into the search box) and Settings reads in sections with a line each. */
+    private fun tidyHeaderAndSettings() {
+        val search = findViewById<EditText>(R.id.search)
+        val sort = findViewById<TextView>(R.id.sort)
+        (sort.parent as? android.view.ViewGroup)?.removeView(sort)
+        val holder = search.parent as android.view.ViewGroup
+        val at = holder.indexOfChild(search)
+        val params = search.layoutParams
+        holder.removeView(search)
+        val pill = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(22).toFloat(); setColor(getColor(R.color.surface)) }
+            setPadding(dp(4), 0, dp(4), 0)
+        }
+        search.background = null
+        pill.addView(search, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        pill.addView(View(this).apply { setBackgroundColor(getColor(R.color.surface_high)) }, LinearLayout.LayoutParams(dp(1), dp(20)))
+        sort.background = null
+        sort.setTextColor(getColor(R.color.muted))
+        sort.setPadding(dp(12), dp(10), dp(12), dp(10))
+        (sort.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.marginEnd = 0
+        pill.addView(sort)
+        holder.addView(pill, at, params)
+
+        // Settings: sections, plain names, a line saying what each does
+        val soundRow = findViewById<View>(R.id.soundRow)
+        val list = soundRow.parent as LinearLayout
+        fun section(before: View, title: String) =
+            list.addView(UsageDraw(this).label(title).apply { setPadding(dp(20), dp(24), dp(20), dp(6)) }, list.indexOfChild(before))
+        fun explain(after: View, words: String) = list.addView(TextView(this).apply {
+            text = words; textSize = 13f; setTextColor(getColor(R.color.muted)); setLineSpacing(0f, 1.3f)
+            setPadding(dp(20), 0, dp(20), dp(10))
+        }, list.indexOfChild(after) + 1)
+        val thoughts = findViewById<View>(R.id.thoughtsSwitch).parent as View
+        val dance = findViewById<View>(R.id.danceSwitch).parent as View
+        val server = findViewById<View>(R.id.serverRow)
+        explain(soundRow, "Calls start with it. The call menu changes it for one call.")
+        explain(thoughts, "The agents' thought bubbles in the chat.")
+        explain(dance, "Avatars move while an agent works. Off: a calmer screen.")
+        explain(server, "Your laptop's address on Tailscale: where Henchline reaches your agents.")
+        section(soundRow, "CALLS")
+        section(thoughts, "CHATS")
+        section(server, "LAPTOP")
     }
 
     private fun toggleAway(to: Boolean = !away, undo: Boolean = true) {
