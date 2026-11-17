@@ -1015,10 +1015,17 @@ def plan_mode(target: Speaker) -> str:
         except OSError:
             return ""
         return ("plan" if found[-1] == b"plan" else "agent") if found else ""
+    meta = cursor_meta(target)
+    return ("plan" if meta.get("mode") == "plan" else "agent") if meta.get("mode") else ""
+
+
+def cursor_meta(target: Speaker) -> dict:
+    """A Cursor CLI chat's own settings from its store, read only: mode (plan, debug, search, default),
+    isRunEverything, approvalMode, …; {} when it can't be read."""
     chat = cursor_bridge.chat_of(target.session) if target.agent == "cursor" and not target.in_editor else ""
     stores = list((Path.home() / ".cursor/chats").glob(f"*/{chat}/store.db")) if chat else []
     if len(stores) != 1:
-        return ""
+        return {}
     try:
         import sqlite3
         with contextlib.closing(sqlite3.connect(f"file:{stores[0]}?mode=ro", uri=True, timeout=1)) as db:
@@ -1026,8 +1033,34 @@ def plan_mode(target: Speaker) -> str:
         raw = row[0] if row else ""
         meta = json.loads(bytes.fromhex(raw).decode() if isinstance(raw, str) and re.fullmatch(r"[0-9a-f]+", raw) else raw)
     except Exception:  # noqa: BLE001 - unknown, not guessed
+        return {}
+    return meta if isinstance(meta, dict) else {}
+
+
+def switch_cursor_mode(target: Speaker, want: str) -> str:
+    """The Cursor CLI into plan or default mode, one Shift+Tab at a time, each checked in its own store (tested
+    2026-11-17: it cycles plan, debug, search, default and leaves Run Everything and approvals alone). Stops on
+    the mode wanted, or at once if anything else in its settings moves. The mode it is in at the end."""
+    if not target.tab or target.tab.owner != tmux.OWNER:
         return ""
-    return ("plan" if meta.get("mode") == "plan" else "agent") if isinstance(meta, dict) and meta.get("mode") else ""
+    before = cursor_meta(target)
+    if not before.get("mode"):
+        return ""
+    keep = {k: before.get(k) for k in ("isRunEverything", "approvalMode")}
+    for _ in range(5):
+        if before.get("mode") == want:
+            break
+        tmux.tmux("send-keys", "-t", target.tab.address, "BTab")
+        time.sleep(1.0)
+        now = cursor_meta(target)
+        if not now.get("mode") or {k: now.get(k) for k in keep} != keep:
+            log(HANDSFREE_LOG, f"plan chip: Cursor's settings moved or went unreadable ({now.get('mode')}): stopped")
+            return str(now.get("mode") or "")
+        if now.get("mode") == before.get("mode"):  # the press went elsewhere (a question on its screen): no more
+            log(HANDSFREE_LOG, "plan chip: Cursor's mode didn't move with Shift+Tab: stopped")
+            return str(now.get("mode"))
+        before = now
+    return str(before.get("mode") or "")
 
 
 async def crew_plan(request: web.Request) -> web.Response:
@@ -1040,11 +1073,20 @@ async def crew_plan(request: web.Request) -> web.Response:
     target = next((s for s in recent_speakers() if s.session == session), None)
     if target is None or target.agent not in ("claude", "cursor"):
         return web.json_response({"note": "Plan mode is there for Claude and Cursor."}, status=400)
-    # Switching is off (the review, 2026-11-17): it pressed Shift+Tab blindly, and from plan mode one press can land
-    # Claude in bypass-permissions. The chip shows the real mode; /plan or the terminal switches it
-    mode = await asyncio.get_running_loop().run_in_executor(None, plan_mode, target)
-    return web.json_response({"mode": mode, "note": "Switching plan mode from the phone is off for now. Type /plan, "
-                                                    "or press Shift+Tab in the agent's terminal."}, status=409)
+    loop = asyncio.get_running_loop()
+    if target.agent == "cursor" and not target.in_editor:  # each press checked in Cursor's own store
+        now = await loop.run_in_executor(None, plan_mode, target)
+        want = "default" if now == "plan" else "plan"
+        got = await loop.run_in_executor(None, switch_cursor_mode, target, want)
+        if got:
+            note = "" if got == want else (f"Cursor is in {got} mode: it didn't move further, so finish what's on its "
+                                           "screen first, or switch it in its terminal.")
+            return web.json_response({"mode": "plan" if got == "plan" else "agent", **({"note": note} if note else {})})
+    # Claude: off (the review, 2026-11-17). Its mode shows in its log only with its next message, so a press
+    # can't be checked, and from plan mode one press can land it in bypass-permissions
+    mode = await loop.run_in_executor(None, plan_mode, target)
+    return web.json_response({"mode": mode, "note": "Plan mode can't be switched from the phone for this agent yet. "
+                                                    "Type /plan, or press Shift+Tab in its terminal."}, status=409)
 
 
 def model_label(target: Speaker) -> str:

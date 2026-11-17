@@ -2399,11 +2399,10 @@ class MainActivity : Activity() {
         val session = current.ifEmpty { return }
         if (Files.origin(this) == null) return
         ask("/crew/plan", JSONObject().put("session", session)) { answer ->
-            if (answer.has("note") && answer.optString("mode").isEmpty()) {
-                android.widget.Toast.makeText(this, answer.optString("note"), android.widget.Toast.LENGTH_LONG).show()
-                return@ask
+            answer.optString("note").takeIf { it.isNotEmpty() }?.let {
+                android.widget.Toast.makeText(this, it, android.widget.Toast.LENGTH_LONG).show()
             }
-            showPlan(session, answer.optString("mode"))
+            answer.optString("mode").takeIf { it.isNotEmpty() }?.let { showPlan(session, it) }
         }
     }
 
