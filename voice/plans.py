@@ -47,7 +47,7 @@ def parse(text: str) -> dict:
         name = heading.group(1).strip() if heading else "Plan"
     done = sum(1 for step in todos if step["status"] == "completed")
     return {"name": name, "overview": overview, "todos": todos, "done": done, "total": len(todos),
-            "body": body.strip()[:6000], "html": html(body.strip()[:20000])}
+            "body": body.strip()[:6000], "html": html(body.strip()[:20000]), "blocks": blocks(body.strip()[:40000], name)}
 
 
 def html(markdown: str) -> str:
@@ -91,6 +91,95 @@ def html(markdown: str) -> str:
         else:
             out.append("<br>")
     return "".join(out)
+
+
+def _inline(text: str) -> str:
+    """One line's Markdown as the small HTML a phone's text view shows: code first (kept literal), then bold,
+    italics and links. Everything escaped before any tag goes in."""
+    import html as escape
+
+    text = escape.escape(text)
+    spans: list[str] = []
+    text = re.sub(r"`([^`]+)`", lambda m: spans.append(m.group(1)) or f"\x00{len(spans) - 1}\x00", text)
+    text = re.sub(r"\*\*(.+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"(?<![*\w])\*(?!\s)(.+?)(?<!\s)\*(?!\w)", r"<i>\1</i>", text)
+    text = re.sub(r"\[([^\]]+)\]\((https?://[^)\s]+)\)", r'<a href="\2">\1</a>', text)
+    return re.sub("\x00(\\d+)\x00", lambda m: f"<tt>{spans[int(m.group(1))]}</tt>", text)
+
+
+def blocks(markdown: str, title: str = "") -> list[dict]:
+    """The plan's Markdown as blocks the phone lays out one view each (the design review, 2026-11-17): headings,
+    paragraphs, lists (depth, checkbox), code, diagrams (their node labels), tables, rules. The first heading
+    is left out when it repeats the plan's name."""
+    out: list[dict] = []
+    lines = markdown.splitlines()
+    i = 0
+    para: list[str] = []
+
+    def flush() -> None:
+        if para:
+            out.append({"t": "p", "html": _inline(" ".join(x.strip() for x in para))})
+            para.clear()
+
+    while i < len(lines):
+        line = lines[i]
+        fence = re.match(r"\s*```\s*([\w+-]*)", line)
+        if fence:
+            flush()
+            lang, code = fence.group(1).lower(), []
+            i += 1
+            while i < len(lines) and not lines[i].strip().startswith("```"):
+                code.append(lines[i])
+                i += 1
+            i += 1
+            if lang == "mermaid":
+                nodes = re.findall(r"[\[(\{]\s*\"?([^\]\)\}\"]{2,40})\"?\s*[\])\}]", "\n".join(code))
+                out.append({"t": "diagram", "kind": "mermaid", "nodes": list(dict.fromkeys(n.strip() for n in nodes))[:6]})
+            else:
+                out.append({"t": "code", "lang": lang, "text": "\n".join(code)[:6000]})
+            continue
+        heading = re.match(r"(#{1,6})\s+(.*)", line)
+        if heading:
+            flush()
+            words = heading.group(2).strip()
+            if not (not out and title and words.lower() == title.lower()):
+                out.append({"t": "h", "level": len(heading.group(1)), "html": _inline(words)})
+            i += 1
+            continue
+        if re.match(r"\s*\|.*\|\s*$", line):
+            flush()
+            rows = []
+            while i < len(lines) and re.match(r"\s*\|.*\|\s*$", lines[i]):
+                cells = [c.strip() for c in lines[i].strip().strip("|").split("|")]
+                if not all(re.fullmatch(r":?-{2,}:?", c) for c in cells if c):
+                    rows.append([_inline(c) for c in cells])
+                i += 1
+            if rows:
+                out.append({"t": "table", "head": rows[0], "rows": rows[1:60]})
+            continue
+        item = re.match(r"(\s*)(?:[-*+]|\d+[.)])\s+(?:\[([ xX~])\]\s+)?(.*)", line)
+        if item:
+            flush()
+            items, ordered = [], bool(re.match(r"\s*\d", line))
+            while i < len(lines) and (item := re.match(r"(\s*)(?:[-*+]|\d+[.)])\s+(?:\[([ xX~])\]\s+)?(.*)", lines[i])):
+                check = item.group(2)
+                items.append({"html": _inline(item.group(3).strip()), "depth": min(len(item.group(1).expandtabs(4)) // 2, 4),
+                              "check": None if check is None else ("x" if check in "xX" else check)})
+                i += 1
+            out.append({"t": "list", "ordered": ordered, "items": items})
+            continue
+        if re.fullmatch(r"\s*(-{3,}|\*{3,}|_{3,})\s*", line):
+            flush()
+            out.append({"t": "rule"})
+            i += 1
+            continue
+        if line.strip():
+            para.append(line)
+        else:
+            flush()
+        i += 1
+    flush()
+    return out[:400]
 
 
 def for_session(session: str, home: Path | None = None) -> Path | None:

@@ -2238,10 +2238,14 @@ class MainActivity : Activity() {
         chip.visibility = if (shows) View.VISIBLE else View.GONE
         if (!shows) return
         val on = mode == "plan"
-        chip.text = if (on) "Plan" else "Agent"
-        chip.setTextColor(getColor(if (on) R.color.navy else R.color.text))
-        chip.background = chip.background.mutate()
-        chip.background.setTint(getColor(if (on) R.color.cyan else R.color.surface_high))
+        // Not a second model pill (the design review): an outlined option while in agent mode, solid cyan in plan mode
+        chip.text = if (on) "☰ Plan" else "◇ Agent"
+        chip.setTextColor(getColor(if (on) R.color.navy else R.color.muted))
+        chip.typeface = if (on) android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL) else android.graphics.Typeface.DEFAULT
+        chip.background = android.graphics.drawable.GradientDrawable().apply {
+            cornerRadius = dp(18).toFloat()
+            if (on) setColor(getColor(R.color.cyan)) else { setColor(android.graphics.Color.TRANSPARENT); setStroke(dp(1), getColor(R.color.surface_high)) }
+        }
         chip.contentDescription = if (on) "Plan mode on: tap to leave it" else "Agent mode: tap for plan mode"
     }
 
@@ -2279,6 +2283,8 @@ class MainActivity : Activity() {
                 return@ask
             }
             bar.visibility = View.VISIBLE
+            lastPlan = answer
+            if (findViewById<View>(R.id.planScroll).visibility != View.VISIBLE) showPlanSwitch(answer, onPlan = false)
             findViewById<View>(R.id.chatTab).setOnClickListener { showChatTab() }
             findViewById<View>(R.id.planTab).setOnClickListener { showPlanTab(answer) }
             val key = answer.optString("name") + " " + answer.optInt("done") + "/" + answer.optInt("total") + " " + todos
@@ -2288,66 +2294,105 @@ class MainActivity : Activity() {
         }
     }
 
+    private var lastPlan: JSONObject? = null
+
     private fun showChatTab() {
         findViewById<View>(R.id.chatScroll).visibility = View.VISIBLE
         findViewById<View>(R.id.planScroll).visibility = View.GONE
-        findViewById<TextView>(R.id.chatTab).setTextColor(getColor(R.color.cyan))
-        findViewById<TextView>(R.id.planTab).setTextColor(getColor(R.color.muted))
+        showPlanSwitch(lastPlan, onPlan = false)
     }
+
+    private var planView: PlanView? = null
+    private var buildBar: LinearLayout? = null
+    private var buildButton: TextView? = null
+    private var buildSent = ""  // the plan whose build was asked for, until the plan changes
+    private var buildSentAt = 0L  // and when: after 2 min with no step under way, Build can be sent again
 
     private fun showPlanTab(plan: JSONObject) {
         findViewById<View>(R.id.chatScroll).visibility = View.GONE
         findViewById<View>(R.id.planScroll).visibility = View.VISIBLE
-        findViewById<TextView>(R.id.chatTab).setTextColor(getColor(R.color.muted))
-        findViewById<TextView>(R.id.planTab).setTextColor(getColor(R.color.cyan))
+        showPlanSwitch(plan, onPlan = true)
         val list = findViewById<LinearLayout>(R.id.planList)
-        list.removeAllViews()
-        fun line(words: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
-            text = words; textSize = size; setTextColor(color)
-            setPadding(0, dp(8), 0, dp(4))
-            if (bold) typeface = android.graphics.Typeface.DEFAULT_BOLD
-        }
-        list.addView(line(plan.optString("name"), 20f, getColor(R.color.text), true))
-        plan.optString("overview").takeIf { it.isNotEmpty() }?.let { list.addView(line(it, 14f, getColor(R.color.muted))) }
-        list.addView(line("${plan.optInt("done")} of ${plan.optInt("total")} done", 14f, getColor(R.color.cyan)))
-        val todos = plan.optJSONArray("todos")
-        for (i in 0 until (todos?.length() ?: 0)) {
-            val step = todos!!.getJSONObject(i)
-            val mark = when (step.optString("status")) {
-                "completed" -> "✓"
-                "in_progress" -> "●"
-                else -> "○"
+        list.setPadding(0, 0, 0, dp(88))  // room above the sticky button
+        (planView ?: PlanView(this).also { planView = it }).fill(list, plan)
+        showBuildBar(plan)
+    }
+
+    /** "Build this", pinned at the bottom of the Plan tab over a fade (the design review): hidden when every step is
+     *  done, "Building · step n of m" while one is in progress, "Sent…" once tapped. */
+    private fun showBuildBar(plan: JSONObject?) {
+        val holder = findViewById<View>(R.id.planScroll).parent as android.widget.FrameLayout
+        val bar = buildBar ?: LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            background = android.graphics.drawable.GradientDrawable(android.graphics.drawable.GradientDrawable.Orientation.BOTTOM_TOP,
+                intArrayOf(getColor(R.color.navy), getColor(R.color.navy), getColor(R.color.navy) and 0x00FFFFFF))
+            setPadding(dp(16), dp(24), dp(16), dp(16))
+            val button = TextView(this@MainActivity).apply {
+                gravity = Gravity.CENTER; textSize = 16f; typeface = android.graphics.Typeface.DEFAULT_BOLD
             }
-            list.addView(line("$mark  ${step.optString("content")}", 15f, getColor(R.color.text)))
+            addView(button, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(52)))
+            buildButton = button
+            holder.addView(this, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+                android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
+        }.also { buildBar = it }
+        val todos = plan?.optJSONArray("todos")
+        val steps = (0 until (todos?.length() ?: 0)).map { todos!!.getJSONObject(it) }
+        val done = steps.count { it.optString("status") == "completed" }
+        val going = steps.indexOfFirst { it.optString("status") == "in_progress" }
+        val showing = plan != null && findViewById<View>(R.id.planScroll).visibility == View.VISIBLE
+        bar.visibility = if (showing && (steps.isEmpty() || done < steps.size)) View.VISIBLE else View.GONE
+        val button = buildButton ?: return
+        fun pill(fill: Int, ink: Int) {
+            button.background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(26).toFloat(); setColor(fill) }
+            button.setTextColor(ink)
         }
-        // The document itself, laid out for the phone (the user's wish, 2026-11-17: a viewer, not just the steps)
-        plan.optString("html").takeIf { it.isNotEmpty() }?.let { body ->
-            list.addView(View(this).apply { setBackgroundColor(getColor(R.color.surface_high)) },
-                LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, dp(1)).apply { topMargin = dp(14); bottomMargin = dp(6) })
-            list.addView(TextView(this).apply {
-                text = android.text.Html.fromHtml(body, android.text.Html.FROM_HTML_MODE_COMPACT)
-                setTextColor(getColor(R.color.text)); textSize = 14.5f; setLineSpacing(0f, 1.15f)
-                setTextIsSelectable(true); setPadding(0, dp(4), 0, dp(12))
-            })
-        }
-        list.addView(TextView(this).apply {
-            text = "Build this"
-            textSize = 16f
-            setTextColor(getColor(R.color.navy))
-            gravity = android.view.Gravity.CENTER
-            setPadding(dp(16), dp(12), dp(16), dp(12))
-            background = android.graphics.drawable.GradientDrawable().apply {
-                cornerRadius = dp(18).toFloat(); setColor(getColor(R.color.cyan))
-            }
-            setOnClickListener {
-                ask("/chat/plan/build", JSONObject().put("session", current)) { answer ->
-                    val note = answer.optString("note").ifEmpty {
-                        "Told ${answer.optString("to").substringBefore(",")}: build it."
+        val key = plan?.optString("file").orEmpty()
+        when {
+            going >= 0 -> { button.text = "Building · step ${going + 1} of ${steps.size}"; pill(getColor(R.color.surface_high), getColor(R.color.muted))
+                button.setOnClickListener(null); button.isClickable = false }
+            buildSent == key && key.isNotEmpty() && System.currentTimeMillis() - buildSentAt < 120_000 -> { button.text = "Sent…"; pill(getColor(R.color.surface_high), getColor(R.color.cyan))
+                button.setOnClickListener(null); button.isClickable = false }
+            else -> {
+                button.text = "▶  Build this"; pill(getColor(R.color.cyan), getColor(R.color.navy))
+                button.setOnClickListener {
+                    button.performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+                    buildSent = key
+                    buildSentAt = System.currentTimeMillis()
+                    showBuildBar(plan)
+                    ask("/chat/plan/build", JSONObject().put("session", current)) { answer ->
+                        answer.optString("note").takeIf { it.isNotEmpty() }?.let {
+                            buildSent = ""; showBuildBar(plan)
+                            android.widget.Toast.makeText(this@MainActivity, it, android.widget.Toast.LENGTH_LONG).show()
+                        }
                     }
-                    android.widget.Toast.makeText(this@MainActivity, note, android.widget.Toast.LENGTH_LONG).show()
                 }
             }
-        })
+        }
+    }
+
+    /** Chat | Plan as a two-part switch (the design review): a surface track, the chosen half on a lighter thumb,
+     *  the plan's progress as a badge on its half. */
+    private fun showPlanSwitch(plan: JSONObject?, onPlan: Boolean) {
+        val chat = findViewById<TextView>(R.id.chatTab)
+        val tab = findViewById<TextView>(R.id.planTab)
+        val bar = findViewById<LinearLayout>(R.id.planBar)
+        bar.background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(20).toFloat(); setColor(getColor(R.color.surface)) }
+        bar.setPadding(dp(3), dp(3), dp(3), dp(3))
+        (bar.layoutParams as? android.view.ViewGroup.MarginLayoutParams)?.let { it.marginStart = dp(16); it.marginEnd = dp(16); it.topMargin = dp(4); it.bottomMargin = dp(8) }
+        for ((view, on) in listOf(chat to !onPlan, tab to onPlan)) {
+            view.layoutParams = LinearLayout.LayoutParams(0, dp(34), 1f)
+            view.gravity = Gravity.CENTER
+            view.setTextColor(getColor(if (on) R.color.text else R.color.muted))
+            view.typeface = if (on) android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL) else android.graphics.Typeface.DEFAULT
+            view.background = if (on) android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(17).toFloat(); setColor(getColor(R.color.surface_high)) } else null
+        }
+        val total = plan?.optInt("total") ?: 0
+        val done = plan?.optInt("done") ?: 0
+        tab.text = if (total > 0) android.text.Html.fromHtml("Plan &nbsp;<font color=\"#00E5FF\"><b>" +
+            (if (done == total) "✓" else "$done/$total") + "</b></font>", android.text.Html.FROM_HTML_MODE_COMPACT) else "Plan"
+        tab.contentDescription = if (total > 0) "Plan, $done of $total steps done" else "Plan"
+        if (!onPlan) buildBar?.visibility = View.GONE
     }
 
     private fun togglePlan() {
