@@ -149,6 +149,12 @@ class Voice:
                     # The call started or ended mid-clip: the rest is said where the user is now (or texted), not
                     # carried on at the laptop after a hang-up (the user's catch, 2026-11-17)
                     moved = n % 5 == 0 and (in_call() != calling or calling and CALL_SILENT.exists())
+                    # Away switched on mid-sentence (the user's catch, 2026-11-17: a reply went on aloud): stopped
+                    gone_away = n % 5 == 0 and not calling and AWAY.exists()
+                    if gone_away:
+                        cut, self.skip = True, True  # dropped, not kept: the agent is told to text from now on
+                        log(TALKBACK_LOG, f"{clip.agent} cut: the user went away")
+                        break
                     if mic_busy() or self.skip or moved:
                         cut = True
                         if moved:
