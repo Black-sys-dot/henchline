@@ -21,6 +21,7 @@ PHONE = [
     ("usage", "Plan limits and context, as bars"),
     ("context", "How full the context is, and what fills it"),
     ("workflow", "This chat's workflows: phases and agents, live"),
+    ("away", "Away on or off: no listening at the laptop, agents text you instead of speaking"),
 ]
 
 BUILT_IN = {
@@ -34,6 +35,7 @@ BUILT_IN = {
         ("security-review", "Review the pending changes for security"),
         ("init", "Write a CLAUDE.md for this project"),
         ("todos", "The current to-do list"),
+        ("plan", "Plan mode: look and propose, don't edit"),
     ],
     "codex": [
         ("compact", "Shrink the conversation into a summary"),
@@ -46,6 +48,7 @@ BUILT_IN = {
     ],
     "cursor": [
         ("rename", "Name this chat (add the name after it)"),
+        ("plan", "Plan mode: look and propose, don't edit"),
     ],
 }
 
@@ -123,3 +126,5 @@ def listed(agent: str, project: Path | None, home: Path | None = None) -> list[d
         seen.add(name)
         result.append({"name": name, "about": about[:160], "kind": kind})
     return result
+
+

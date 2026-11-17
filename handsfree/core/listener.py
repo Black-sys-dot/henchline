@@ -24,7 +24,7 @@ from turn import Mode, Turn
 from voicegate import VoiceGate
 from voice.speech import whisper, whistle
 from voice.spool import queued
-from voice.state import (BY_HANDSFREE, CALL_BUTTON_ONLY, CALL_PUSH, CLOSE, HANDSFREE_LOG, HANDSFREE_MODE, LISTEN,
+from voice.state import (AWAY, BY_HANDSFREE, CALL_BUTTON_ONLY, CALL_PUSH, CLOSE, HANDSFREE_LOG, HANDSFREE_MODE, LISTEN,
                          PAUSE, PLAYING, WORKER_PID, in_call, log, mic_source, ptt_busy, release_phase)
 
 WINDOW = 8.0  # seconds to answer after a clip
@@ -117,6 +117,10 @@ class Listener:
                 was_busy = busy
                 self.follow_requests()
                 self.follow_source()
+                if AWAY.exists() and not in_call():  # away: nothing heard, no reply window, the stream kept drained
+                    self.window.close()
+                    self.button.tap.clear()
+                    continue
                 if self.button.tap.is_set():
                     self.button.tap.clear()
                     if not ptt_busy():

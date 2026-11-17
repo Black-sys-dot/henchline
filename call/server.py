@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import json
 import os
 import re
@@ -39,13 +40,13 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
-from voice import commands, files, pickup, reminders, snaps, usage, workflows  # noqa: E402
+from voice import commands, cursor_cli, files, pickup, plans, reminders, snaps, spool, usage, workflows  # noqa: E402
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
-from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_SILENT, CALL_STAY_ON, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
+from voice.state import (AWAY, RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_SILENT, CALL_STAY_ON, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
                          CALL_PINNED, CALL_RANG_BACK, CALL_TOLD, PHASE,
                          SPAWNED, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
-                         CALL_PORT, CALL_PUSH,
+                         CALL_PORT, CALL_PUSH, CALL_INTERRUPT, CALL_CUT_IN, CALL_CHECK,
                          CALL_RING, CALL_RINGER, CALL_TLS, HANDSFREE_LOG, HANDSFREE_MODE,
                          PHONE_MIC, PHONE_SPEAKER, PHONE_SPEAKER_MONITOR, Phase, Playing, SENT, SPEAKERS,
                          SPOOL, Sent, Speaker, in_call, last_speaker, log, phase_now, read_json,
@@ -68,8 +69,10 @@ KEEP_FREE = 2 * 1024 ** 3  # bytes an upload leaves free on the laptop's disk: p
 NUDGE_AFTER, NUDGE_UNSURE = 45.0, 120.0  # seconds of quiet before each nudge
 NUDGES = ("Are you still there? I'm waiting for you.",
           "Hello? Say something, or I'll hang up and call you back.")
-HANGUP_SAY, HANGUP_MAX = 0.5, 10.0  # a hang-up waits for talkback to finish (its queue empty, nothing playing),
-# at least this long for the goodbye to be queued, and at most this: past it the call ends even mid-sentence
+HANGUP_SAY, HANGUP_QUIET, HANGUP_MAX = 0.5, 1.5, 120.0  # a hang-up waits until talkback has finished:
+# nothing queued and nothing playing, and that has stayed true for HANGUP_QUIET (the last of the audio leaving
+# the phone). HANGUP_SAY is the least it waits, so a goodbye queued a moment later is not missed. HANGUP_MAX
+# only ends a call whose clip never finishes.
 
 
 class Status:
@@ -125,7 +128,9 @@ class Status:
         playing = Playing.now()
         if playing:
             self.waiting_for = ""
-            return {"mode": mode, "state": f"{playing.agent.capitalize()} is speaking"}
+            # Who: the phone shows another agent chipping in on its call bar (the user's design, 2026-11-17)
+            return {"mode": mode, "state": f"{playing.agent.capitalize()} is speaking",
+                    "speaker": {"agent": playing.agent, "session": playing.session}}
         phase, by = phase_now()
         if by == BY_HANDSFREE and phase is Phase.RECORDING:
             return {"mode": mode, "state": "Hearing you…"}
@@ -280,6 +285,16 @@ async def from_page(message: dict, ear: Ear) -> str:
         log(HANDSFREE_LOG, f"call: phone sound {message['sound']}")
     elif "stats" in message:
         ear.report(message["stats"])
+    elif "cut_in" in message:  # the call menu: cut in, let it wait, or follow the agent (Cursor cuts in)
+        choice = message["cut_in"]
+        if choice == "auto":
+            CALL_CUT_IN.unlink(missing_ok=True)
+        else:
+            CALL_CUT_IN.parent.mkdir(parents=True, exist_ok=True)
+            CALL_CUT_IN.write_text("1" if choice else "0")
+    elif message.get("interrupt"):  # send held on the call, nothing typed: the spoken turn cuts in
+        await asyncio.get_running_loop().run_in_executor(None, routing.arm_interrupt)
+        return json.dumps({"note": "Cutting in."})
     elif "push" in message:
         flag(CALL_PUSH, message["push"])
     elif "button_only" in message:
@@ -688,6 +703,23 @@ async def crew_usage(request: web.Request) -> web.Response:
     return web.json_response({"agent": target.agent, **found})
 
 
+async def away(request: web.Request) -> web.Response:
+    """Away on or off (the phone's /away): {"on": bool} sets it, {} toggles it. {"away": bool}."""
+    trusted(request)
+    try:
+        body = await request.json()
+    except ValueError:
+        body = {}
+    on = body.get("on") if isinstance(body, dict) and isinstance(body.get("on"), bool) else not AWAY.exists()
+    if on:
+        AWAY.parent.mkdir(parents=True, exist_ok=True)
+        AWAY.touch()
+    else:
+        AWAY.unlink(missing_ok=True)
+    log(HANDSFREE_LOG, "away: hands-free not listening, talkback texts the phone" if on else "back: away is off")
+    return web.json_response({"away": on})
+
+
 async def chat_workflows(request: web.Request) -> web.Response:
     """A Claude chat's newest workflow runs, each with its phases and agents (voice/workflows.py): the phone's
     workflow sheet and /workflow."""
@@ -695,6 +727,40 @@ async def chat_workflows(request: web.Request) -> web.Response:
     session = request.query.get("session", "")
     found = await asyncio.get_running_loop().run_in_executor(None, workflows.runs, session)
     return web.json_response({"runs": found})
+
+
+async def chat_plan(request: web.Request) -> web.Response:
+    """The plan for the agent whose chat the phone shows: its steps and how many are done. {"note"} when it has none."""
+    trusted(request)
+    session = request.query.get("session", "")
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    if target is None:
+        return web.json_response({"note": "That agent isn't known to the laptop."}, status=404)
+    loop = asyncio.get_running_loop()
+    project = await loop.run_in_executor(None, project_of, target)
+    plan = await loop.run_in_executor(None, plans.find, project)
+    if plan is None:
+        return web.json_response({"note": "This chat has no plan."})
+    return web.json_response(plan)
+
+
+async def chat_plan_build(request: web.Request) -> web.Response:
+    """The user approved the plan: the agent is told to build it and to keep the document updated."""
+    trusted(request)
+    try:
+        session = str((await request.json()).get("session", ""))
+    except (ValueError, AttributeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    if target is None:
+        return web.json_response({"note": "That agent isn't known to the laptop."}, status=404)
+    loop = asyncio.get_running_loop()
+    project = await loop.run_in_executor(None, project_of, target)
+    plan = await loop.run_in_executor(None, plans.find, project)
+    if plan is None:
+        return web.json_response({"note": "This chat has no plan."}, status=404)
+    got, why = await loop.run_in_executor(None, to_agent, plans.approval(plan), session, Heard.TEXTED, False)
+    return web.json_response({"to": got} if got else {"note": why})
 
 
 async def usage_overview(request: web.Request) -> web.Response:
@@ -860,7 +926,8 @@ async def crew_models(request: web.Request) -> web.Response:
         now = ""
     if request.query.get("only") == "now":  # a chat opening: just what it is using, not the whole list
         label = await loop.run_in_executor(None, model_label, target) if session else ""
-        return web.json_response({"agent": agent, "switch": switchable, "now": now, "label": label})
+        mode = await loop.run_in_executor(None, plan_mode, target) if session else ""
+        return web.json_response({"agent": agent, "switch": switchable, "now": now, "label": label, "mode": mode})
     agent_menu = await loop.run_in_executor(None, tmux.menu, agent)
     if agent_menu and (not session or agent == "claude"):  # Claude and Codex: the same menu as Cursor's
         current = {"model": claude_model_id(target) if session else "", "params": {}}
@@ -877,6 +944,16 @@ async def crew_models(request: web.Request) -> web.Response:
         models = await loop.run_in_executor(None, cursor_bridge.catalog)
         shown = [m for m in models if m["on"] or m["id"] == current["model"]]
         return web.json_response({"agent": agent, "switch": True, "now": now, "menu": shown, "current": current})
+    if session and agent == "cursor" and not target.in_editor:  # the CLI: the same menu, from its catalog
+        slugs = [m["id"] for m in await loop.run_in_executor(None, tmux.models, "cursor")]
+        shown = cursor_cli.menu(await loop.run_in_executor(None, cursor_bridge.catalog), slugs)
+        if shown:
+            pane = []
+            if target.tab and target.tab.owner == tmux.OWNER:
+                pane = await loop.run_in_executor(
+                    None, lambda: tmux.out("capture-pane", "-p", "-t", target.tab.address).splitlines())
+            return web.json_response({"agent": agent, "switch": switchable, "now": now, "menu": shown,
+                                      "current": cursor_cli.reading(cursor_model(pane), shown)})
     return web.json_response({"agent": agent, "switch": switchable, "now": now,
                               "models": await loop.run_in_executor(None, tmux.models, agent)})
 
@@ -920,6 +997,54 @@ def claude_effort(target: Speaker) -> str:
         if found:
             return found[-1].decode()
     return ""
+
+
+def plan_mode(target: Speaker) -> str:
+    """"plan" when that agent is in plan mode, else "agent", from the agent's own record, never its screen (the
+    user's rule, 2026-11-17: the screen's placeholder text read as plan mode): Claude writes its permissionMode on
+    every message in its session log; the Cursor CLI keeps "mode" in its chat store. "" when it can't be known."""
+    if target.agent == "claude":
+        uuid = target.session.removeprefix("claude-")
+        logs = list((Path.home() / ".claude/projects").glob(f"*/{uuid}.jsonl")) if re.fullmatch(r"[0-9a-f-]{36}", uuid) else []
+        if len(logs) != 1:
+            return ""
+        try:
+            with logs[0].open("rb") as f:
+                f.seek(max(0, logs[0].stat().st_size - 4 * 1024 * 1024))
+                found = re.findall(rb'"permissionMode":"([A-Za-z]+)"', f.read())
+        except OSError:
+            return ""
+        return ("plan" if found[-1] == b"plan" else "agent") if found else ""
+    chat = cursor_bridge.chat_of(target.session) if target.agent == "cursor" and not target.in_editor else ""
+    stores = list((Path.home() / ".cursor/chats").glob(f"*/{chat}/store.db")) if chat else []
+    if len(stores) != 1:
+        return ""
+    try:
+        import sqlite3
+        with contextlib.closing(sqlite3.connect(f"file:{stores[0]}?mode=ro", uri=True, timeout=1)) as db:
+            row = db.execute("select value from meta where key = '0'").fetchone()
+        raw = row[0] if row else ""
+        meta = json.loads(bytes.fromhex(raw).decode() if isinstance(raw, str) and re.fullmatch(r"[0-9a-f]+", raw) else raw)
+    except Exception:  # noqa: BLE001 - unknown, not guessed
+        return ""
+    return ("plan" if meta.get("mode") == "plan" else "agent") if isinstance(meta, dict) and meta.get("mode") else ""
+
+
+async def crew_plan(request: web.Request) -> web.Response:
+    """The plan chip: {session} enters plan mode, or leaves it if the terminal is already planning. {"mode"}."""
+    trusted(request)
+    try:
+        session = str((await request.json()).get("session", ""))
+    except (ValueError, AttributeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    target = next((s for s in recent_speakers() if s.session == session), None)
+    if target is None or target.agent not in ("claude", "cursor"):
+        return web.json_response({"note": "Plan mode is there for Claude and Cursor."}, status=400)
+    # Switching is off (the review, 2026-11-17): it pressed Shift+Tab blindly, and from plan mode one press can land
+    # Claude in bypass-permissions. The chip shows the real mode; /plan or the terminal switches it
+    mode = await asyncio.get_running_loop().run_in_executor(None, plan_mode, target)
+    return web.json_response({"mode": mode, "note": "Switching plan mode from the phone is off for now. Type /plan, "
+                                                    "or press Shift+Tab in the agent's terminal."}, status=409)
 
 
 def model_label(target: Speaker) -> str:
@@ -1159,6 +1284,20 @@ async def crew_model(request: web.Request) -> web.Response:
         log(HANDSFREE_LOG, f"{target.spoken()} switched to {wanted} {settings} from the phone")
         return web.json_response({"ok": True, "name": wanted,
                                   "note": "Switched. Cursor also makes it the default for new chats."})
+    if target.agent == "cursor" and not target.in_editor and settings:
+        picked = {str(p.get("id")): str(p.get("value")) for p in settings if isinstance(p, dict)}
+        entry = next((m for m in await loop.run_in_executor(None, cursor_bridge.catalog) if m["id"] == wanted), None)
+        if entry is None or not cursor_cli.valid(entry, picked):
+            return web.json_response({"note": "Cursor has no such setting for that model."}, status=400)
+        if not target.tab or target.tab.owner != tmux.OWNER:
+            return web.json_response({"note": "That Cursor chat isn't in a tmux pane, so its model editor can't be "
+                                              "driven from here."}, status=400)
+        why = await loop.run_in_executor(None, cursor_cli.apply, target.tab.address, entry, picked)
+        if why and not why.startswith("Switched"):
+            return web.json_response({"note": why}, status=409)
+        log(HANDSFREE_LOG, f"{target.spoken()} switched to {wanted} {picked} from the phone")
+        return web.json_response({"ok": True, "name": wanted,
+                                  "note": why or "Switched. Cursor also makes it the default for new CLI chats."})
     if target.agent == "claude" and any(m["id"] == wanted for m in tmux.menu("claude")):
         chosen = tmux.checked("claude", wanted, {str(p.get("id")): str(p.get("value")) for p in settings
                                                   if isinstance(p, dict)})
@@ -1571,6 +1710,13 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             "parec", "--raw", f"--device={PHONE_SPEAKER_MONITOR}", "--format=s16le", f"--rate={SPEAKER_RATE}",
             "--channels=1", "--latency-msec=40", "--client-name=phone-call", stdout=asyncio.subprocess.PIPE)
         CALL_HANGUP.unlink(missing_ok=True)  # a hang-up asked for when no call was up is not for this one
+        CALL_INTERRUPT.unlink(missing_ok=True)
+        if not resume:
+            if CALL_CHECK.exists():  # a wake-up, or a ring that needs an answer: ask after them if they go quiet
+                CALL_CHECK.unlink(missing_ok=True)
+                CALL_STAY_ON.unlink(missing_ok=True)
+            else:
+                CALL_STAY_ON.touch()  # the usual call stays up while the agent works
         if not resume:  # a call back after a drop goes on as it was: same agent, etiquette already told
             CALL_PINNED.unlink(missing_ok=True)  # the last call's pick: this call starts with whoever spoke last
             for told in CALL_TOLD.glob("*"):  # this call reminds each agent afresh how to be on a call
@@ -1593,16 +1739,32 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                     return
                 await ws.send_bytes(data)
 
+        def held(clip: Path) -> bool:  # waiting for the user's answer: it won't play now, so it isn't waited for
+            return spool.is_held(str(read_json(clip).get("session", "")))
+
         async def show_status() -> None:
             status, shown = Status(), None
             listed, shown_agents = 0.0, None
             asked = 0.0  # when a hang-up was asked for
+            owed: set[str] = set()  # the clips queued or playing then: only those are waited for
+            quiet_since = 0.0  # when those were last all said
             while not ws.closed:
                 if CALL_HANGUP.exists():  # the user said "hang up", or an agent ran `handsfree hangup`
-                    asked = asked or time.monotonic()
+                    if not asked:
+                        asked = time.monotonic()
+                        playing = Playing.now()
+                        owed = {p.name for p in SPOOL.glob("*.json") if not held(p)} | ({playing.clip} if playing else set())
                     waited = time.monotonic() - asked
-                    quiet = Playing.now() is None and not any(SPOOL.glob("*.json"))  # said and nothing waiting
-                    if (waited > HANGUP_SAY and quiet) or waited > HANGUP_MAX:
+                    # Clips queued after the hang-up was asked (an agent's next update) don't keep the call up: the
+                    # user asked to go (the review, 2026-11-17: it could talk on for 2 min). A goodbye queued within
+                    # HANGUP_SAY is still said
+                    if waited <= HANGUP_SAY:
+                        owed |= {p.name for p in SPOOL.glob("*.json") if not held(p)}
+                    playing = Playing.now()
+                    quiet = not (playing and playing.clip in owed) and not any(p.name in owed for p in SPOOL.glob("*.json"))
+                    quiet_since = (quiet_since or time.monotonic()) if quiet else 0.0
+                    settled = quiet_since and time.monotonic() - quiet_since >= HANGUP_QUIET
+                    if (waited > HANGUP_SAY and settled) or waited > HANGUP_MAX:
                         CALL_HANGUP.unlink(missing_ok=True)
                         hung_up_here.append(True)
                         log(HANDSFREE_LOG, "call: hung up from the laptop")
@@ -1930,6 +2092,9 @@ def main() -> int:
     app.router.add_get("/crew/usage", crew_usage)
     app.router.add_get("/usage", usage_overview)
     app.router.add_get("/chat/workflows", chat_workflows)
+    app.router.add_post("/away", away)
+    app.router.add_get("/chat/plan", chat_plan)
+    app.router.add_post("/chat/plan/build", chat_plan_build)
     app.router.add_post("/crew/cursor-chats/open", cursor_chat_open)
     app.router.add_post("/crew/new", crew_new)
     app.router.add_post("/crew/end", crew_end)
@@ -1937,6 +2102,7 @@ def main() -> int:
     app.router.add_get("/chat/thoughts", chat_thoughts)
     app.router.add_get("/chat/working", chat_working)
     app.router.add_get("/crew/models", crew_models)
+    app.router.add_post("/crew/plan", crew_plan)
     app.router.add_get("/crew/commands", crew_commands)
     app.router.add_get("/reminders", reminders_list)
     app.router.add_post("/reminders", reminders_add)

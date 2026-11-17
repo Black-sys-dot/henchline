@@ -13,8 +13,8 @@ import android.widget.TextView
 
 /**
  * The call's own menu, as a calling app's (the user's wish, 2026-11-16): a tap on the call bar in the call's chat
- * slides it up. Who the call is with, the crew to move it to (a tap switches), how it sounds (speaker or earpiece,
- * clear or call sound, open line or hold to talk), and hang up. Each choice shows as two halves, the one on lit.
+ * slides it up. Who the call is with, the crew to move it to (a tap switches), how it sounds, how the line
+ * behaves (open line, stay on, cut in or let it wait), and hang up. Each choice shows as two halves, the one on lit.
  */
 class CallMenu(
     activity: Activity,
@@ -34,6 +34,8 @@ class CallMenu(
     private val onClear: (Boolean) -> Unit,
     private val onButtonOnly: (Boolean) -> Unit,
     private val onStayOn: (Boolean) -> Unit = {},
+    private val cutIn: Boolean = false,
+    private val onCutIn: (Boolean) -> Unit = {},
     private val onHangUp: () -> Unit,
 ) : BottomPanel(activity) {
     fun show() {
@@ -51,9 +53,11 @@ class CallMenu(
         sheet.addView(choice("Clear sound", "Call sound", clear) { onClear(it); close() }.apply {
             if (!clearAllowed) { alpha = 0.4f; for (i in 0 until childCount) getChildAt(i).isEnabled = false }
         }, wide(8, px(48)))
+        sheet.addView(label("THE LINE"), wide(18))
         sheet.addView(choice("Open line", "Hold to talk", !buttonOnly) { onButtonOnly(!it); close() }, wide(8, px(48)))
         // Stay on: no "are you still there?" and no hang-up when quiet; with Hold to talk, a walkie-talkie
         sheet.addView(choice("Stay on", "Check on me", stayOn) { onStayOn(it); close() }, wide(8, px(48)))
+        sheet.addView(choice("Cut in", "Let it wait", cutIn) { onCutIn(it); close() }, wide(8, px(48)))
         val hang = primary("Hang up", colour(R.color.hang), Color.WHITE).apply { setOnClickListener { close(); onHangUp() } }
         sheet.addView(hang, wide(20, px(52)))
     }

@@ -58,7 +58,8 @@ class MainActivity : Activity() {
 
     private val main = Handler(Looper.getMainLooper())
     private var buttonOnly = false  // a noisy place: only holding the button gets in
-    private var stayOn = false  // the call stays up however quiet it gets, until hung up (the user's wish, 2026-11-17)
+    private var stayOn = true  // a call stays up while the agent works; check-on-me is for a wake-up or when an answer is needed
+    private var cutIn: Boolean? = null  // null: Cursor cuts in, Claude and Codex let it wait
     private var current = ""  // the chat shown: texts and voice messages go to its agent
     // The call and the chats are apart, as a messaging app's (the user's wish, 2026-11-16): the call is with callSession;
     // any other chat can be read and texted meanwhile, and a bar leads back to the call
@@ -185,6 +186,7 @@ class MainActivity : Activity() {
         findViewById<ImageView>(R.id.callAvatar).background =
             GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x0FFFFFFF); setStroke(dp(2), 0x66FFFFFF) }
         findViewById<View>(R.id.modelChip).setOnClickListener { switchModel() }
+        findViewById<View>(R.id.planChip).setOnClickListener { togglePlan() }
         findViewById<View>(R.id.tabChats).setOnClickListener { showTab("chats") }
         findViewById<View>(R.id.tabCalls).setOnClickListener { showTab("calls") }
         findViewById<View>(R.id.tabUsage).setOnClickListener { showTab("usage") }
@@ -481,6 +483,7 @@ class MainActivity : Activity() {
             showModel(current)  // the model may have been changed on the laptop meanwhile (in Cursor itself)
             main.removeCallbacks(thoughtsPoll); main.post(thoughtsPoll)  // the laptop asked again, as when it left
             main.removeCallbacks(workingPoll); main.post(workingPoll)
+            main.removeCallbacks(planPoll); main.post(planPoll)
         }
         showHistory()  // what came meanwhile (a call's lines, a text): from the kept chat, on a call or off it
         showServer()
@@ -517,6 +520,7 @@ class MainActivity : Activity() {
         (panel as? CallMenu)?.close(animate = false)  // nor henchmen hopping unseen, or a menu left under the lock
         main.removeCallbacks(thoughtsPoll)  // nobody looking: the laptop isn't asked every few seconds
         main.removeCallbacks(workingPoll)
+        main.removeCallbacks(planPoll)
         stopWorkingBubble()  // nor anything left dancing: the next ask brings it back
         CallService.Bus.listener = null  // the call goes on; this screen just stops drawing it
         // Leaving mid-recording: the mic is never left open with nothing on screen. Held, it is dropped (the
@@ -692,6 +696,7 @@ class MainActivity : Activity() {
                 if (onCall()) state.text = subtitle(status.optString("state"))
                 callWords = status.optString("state").substringBefore(" · ").lowercase()
                 findViewById<TextView>(R.id.callStatus).text = if (callWords.isNotEmpty()) " · $callWords" else ""
+                showChipIn(status.optJSONObject("speaker"))
                 showMode(status.getString("mode"))
             }
         }
@@ -1071,7 +1076,13 @@ class MainActivity : Activity() {
                 send.removeCallbacks(armUrgent)
                 when {
                     urgentCancelled -> {}
-                    urgentArmed -> { relaxSend(); sendTyped(urgent = true) }
+                    urgentArmed -> {
+                        relaxSend()
+                        if (text.text.isNullOrBlank() && onCall()) {  // nothing typed: the turn being spoken cuts in
+                            CallService.Bus.service?.send(JSONObject().put("interrupt", true).toString())
+                            android.widget.Toast.makeText(this, "Cutting in", android.widget.Toast.LENGTH_SHORT).show()
+                        } else sendTyped(urgent = true)
+                    }
                     else -> sendTyped()
                 }
             }
@@ -1176,7 +1187,7 @@ class MainActivity : Activity() {
         }
         pulseLive(up && !isFinishing && lifecycleSeen)
         val timer = findViewById<android.widget.Chronometer>(R.id.callTimer)
-        if (!up) { timer.stop(); return }
+        if (!up) { timer.stop(); cutIn = null; return }
         val name = names[callSession]?.substringBefore(",") ?: "Your crew"
         findViewById<TextView>(R.id.callName).text = name
         findViewById<ImageView>(R.id.callAvatar).setImageResource(avatarOf(callSession.ifEmpty { "handsfree" }))
@@ -1190,7 +1201,10 @@ class MainActivity : Activity() {
         showSpeaker(CallService.Bus.service?.speaker ?: prefs().getBoolean("speaker", true))
     }
 
-    /** The call's menu: who it's with and the crew to move it to, speaker, sound, talk mode, hang up. */
+    /** Cursor cuts in unless the call menu says otherwise; Claude and Codex let a turn wait. */
+    private fun cutsIn() = cutIn ?: callSession.startsWith("cursor")
+
+    /** The call's menu: who it's with and the crew to move it to, sound, the line, hang up. */
     private fun callMenu() {
         val service = CallService.Bus.service ?: return
         panel = CallMenu(this, names[callSession]?.substringBefore(",") ?: "Your crew",
@@ -1199,15 +1213,8 @@ class MainActivity : Activity() {
             earbuds = android.os.Build.VERSION.SDK_INT >= 31 && service.headsetAvailable(),
             onRoute = { to -> route(to) },
             clear = service.clear, clearAllowed = service.where != "earpiece", buttonOnly = buttonOnly, stayOn = stayOn,
-            onSwitch = { session ->
-                // The laptop is told, and the phone follows at once: that agent's chat, loaded, and the bar's name
-                // (it waited for the laptop's next word, then didn't load the chat, 2026-11-16)
-                service.send(JSONObject().put("switch", session).toString())
-                callSession = session
-                switchedAt = System.currentTimeMillis()
-                open(session)
-                showCallBar()
-            },
+            cutIn = cutsIn(),
+            onSwitch = { session -> moveCallTo(session) },
             onSpeaker = { on -> if (service.speaker != on) speakerButton.performClick() },
             onClear = { on -> setClearSound(on) },
             onButtonOnly = { only ->
@@ -1222,7 +1229,58 @@ class MainActivity : Activity() {
                     service.send(JSONObject().put("stay_on", stayOn).toString())
                 }
             },
+            onCutIn = { on ->
+                cutIn = on
+                service.send(JSONObject().put("cut_in", on).toString())
+            },
             onHangUp = { hangUp() }).also { it.show() }
+    }
+
+    /** The call moved to another agent: the laptop is told, and the phone follows at once (that agent's chat,
+     *  loaded, and the bar's name; it waited for the laptop's next word, then didn't load the chat, 2026-11-16). */
+    private fun moveCallTo(session: String) {
+        val service = CallService.Bus.service ?: return
+        cutIn = null  // the new agent's own default: Cursor cuts in, the others let it wait
+        service.send(JSONObject().put("cut_in", "auto").toString())
+        service.send(JSONObject().put("switch", session).toString())
+        callSession = session
+        switchedAt = System.currentTimeMillis()
+        open(session)
+        showCallBar()
+        showChipIn(null)
+    }
+
+    private var chipIn: ImageView? = null  // another agent speaking into this call, on the green bar
+    private var chipInOf = ""
+
+    /** Another agent talking on this call (the user's design, 2026-11-17): its face pops up on the green bar beside
+     *  the one called, leaning in and bobbing while it talks, as if chipping in; a tap moves the call to it. Gone
+     *  again, sliding out, when it stops. */
+    private fun showChipIn(speaker: JSONObject?) {
+        val session = speaker?.optString("session").orEmpty()
+        val agent = speaker?.optString("agent").orEmpty()
+        val wanted = session.isNotEmpty() && session != callSession && agent.isNotEmpty() && agent != "handsfree"
+        val bar = findViewById<LinearLayout>(R.id.callBar)
+        val face = chipIn ?: ImageView(this).apply {
+            visibility = View.GONE
+            contentDescription = "Another agent chipping in: tap to move the call to it"
+            setOnClickListener { chipInOf.takeIf { it.isNotEmpty() }?.let { moveCallTo(it) } }
+            bob(this, 0, dp(3).toFloat())
+            bar.addView(this, 2, LinearLayout.LayoutParams(dp(34), dp(34)).apply { marginEnd = dp(8) })
+        }.also { chipIn = it }
+        if (wanted && (face.visibility != View.VISIBLE || chipInOf != session)) {
+            chipInOf = session
+            face.setImageResource(avatarOf(session.ifEmpty { agent }))
+            face.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
+            face.visibility = View.VISIBLE
+            face.alpha = 0f; face.translationX = dp(28).toFloat(); face.rotation = 18f; face.scaleX = 0.5f; face.scaleY = 0.5f
+            face.animate().alpha(1f).translationX(0f).rotation(-6f).scaleX(1f).scaleY(1f).setDuration(320)
+                .setInterpolator(android.view.animation.OvershootInterpolator(2.2f)).start()
+        } else if (!wanted && face.visibility == View.VISIBLE) {
+            chipInOf = ""
+            face.animate().alpha(0f).translationX(dp(28).toFloat()).scaleX(0.5f).scaleY(0.5f).setDuration(220)
+                .withEndAction { face.visibility = View.GONE }.start()
+        }
     }
 
     /** On the call, a tap on the agent's name or face: who the call is with, switched (as "switch me to …"). */
@@ -2111,6 +2169,8 @@ class MainActivity : Activity() {
         if (screen === chatScreen) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
         main.removeCallbacks(thoughtsPoll)
         if (screen === chatScreen) { thoughtsOf = ""; main.post(thoughtsPoll) }
+        main.removeCallbacks(planPoll)
+        if (screen === chatScreen) main.post(planPoll)
         main.removeCallbacks(workingPoll)
         if (screen === chatScreen) { workingOf = ""; main.post(workingPoll) } else stopWorkingBubble()
         Messages.viewing = if (screen === chatScreen) current else ""
@@ -2133,6 +2193,7 @@ class MainActivity : Activity() {
         showModel(session)
         commandsAsked.remove(session)  // the "/" list, fresh for this chat
         loadCommands(session)
+        loadPlan(session)
     }
 
     /** A model's name short enough for the top bar: "Claude Opus 5.5 300K Medium" is "Opus 5.5", "gpt-5.6-sol xhigh"
@@ -2166,6 +2227,128 @@ class MainActivity : Activity() {
                 chip.text = "✦ " + (answer.optString("label").ifEmpty { shortModel(now) })
                 prefs().edit().putString("model_$session", now).apply()
             }
+            showPlan(session, answer.optString("mode"))
+        }
+    }
+
+    /** Plan mode, next to the model: lit while the terminal is planning. A tap enters it (/plan) or leaves it. */
+    private fun showPlan(session: String, mode: String) {
+        val chip = findViewById<TextView>(R.id.planChip)
+        val shows = session.startsWith("claude") || session.startsWith("cursor")
+        chip.visibility = if (shows) View.VISIBLE else View.GONE
+        if (!shows) return
+        val on = mode == "plan"
+        chip.text = if (on) "Plan" else "Agent"
+        chip.setTextColor(getColor(if (on) R.color.navy else R.color.text))
+        chip.background = chip.background.mutate()
+        chip.background.setTint(getColor(if (on) R.color.cyan else R.color.surface_high))
+        chip.contentDescription = if (on) "Plan mode on: tap to leave it" else "Agent mode: tap for plan mode"
+    }
+
+    /** Chat or Plan, when this chat has a plan document. Plan lists the steps and how many are done. */
+    private var planKey = ""
+
+    private fun loadPlan(session: String) {
+        if (session != current) return
+        planKey = ""
+        findViewById<View>(R.id.planBar).visibility = View.GONE
+        showChatTab()
+        refreshPlan()
+    }
+
+    /** While the chat is open, so a plan that appears (or a step that gets marked done) shows without leaving. */
+    private val planPoll = object : Runnable {
+        override fun run() {
+            if (chatScreen.visibility == View.VISIBLE) refreshPlan()
+            if (chatScreen.visibility == View.VISIBLE) main.postDelayed(this, 5000)
+        }
+    }
+
+    private fun refreshPlan() {
+        val session = current
+        if (session.isEmpty() || Files.origin(this) == null) return
+        ask("/chat/plan?session=" + android.net.Uri.encode(session), null) { answer ->
+            if (session != current) return@ask
+            val bar = findViewById<View>(R.id.planBar)
+            val todos = answer.optJSONArray("todos")
+            if (todos == null) {
+                if (bar.visibility == View.VISIBLE) {
+                    bar.visibility = View.GONE
+                    showChatTab()
+                }
+                return@ask
+            }
+            bar.visibility = View.VISIBLE
+            findViewById<View>(R.id.chatTab).setOnClickListener { showChatTab() }
+            findViewById<View>(R.id.planTab).setOnClickListener { showPlanTab(answer) }
+            val key = answer.optString("name") + " " + answer.optInt("done") + "/" + answer.optInt("total") + " " + todos
+            val showing = findViewById<View>(R.id.planScroll).visibility == View.VISIBLE
+            if (showing && key != planKey) showPlanTab(answer)
+            planKey = key
+        }
+    }
+
+    private fun showChatTab() {
+        findViewById<View>(R.id.chatScroll).visibility = View.VISIBLE
+        findViewById<View>(R.id.planScroll).visibility = View.GONE
+        findViewById<TextView>(R.id.chatTab).setTextColor(getColor(R.color.cyan))
+        findViewById<TextView>(R.id.planTab).setTextColor(getColor(R.color.muted))
+    }
+
+    private fun showPlanTab(plan: JSONObject) {
+        findViewById<View>(R.id.chatScroll).visibility = View.GONE
+        findViewById<View>(R.id.planScroll).visibility = View.VISIBLE
+        findViewById<TextView>(R.id.chatTab).setTextColor(getColor(R.color.muted))
+        findViewById<TextView>(R.id.planTab).setTextColor(getColor(R.color.cyan))
+        val list = findViewById<LinearLayout>(R.id.planList)
+        list.removeAllViews()
+        fun line(words: String, size: Float, color: Int, bold: Boolean = false) = TextView(this).apply {
+            text = words; textSize = size; setTextColor(color)
+            setPadding(0, dp(8), 0, dp(4))
+            if (bold) typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        list.addView(line(plan.optString("name"), 20f, getColor(R.color.text), true))
+        plan.optString("overview").takeIf { it.isNotEmpty() }?.let { list.addView(line(it, 14f, getColor(R.color.muted))) }
+        list.addView(line("${plan.optInt("done")} of ${plan.optInt("total")} done", 14f, getColor(R.color.cyan)))
+        val todos = plan.optJSONArray("todos")
+        for (i in 0 until (todos?.length() ?: 0)) {
+            val step = todos!!.getJSONObject(i)
+            val mark = when (step.optString("status")) {
+                "completed" -> "✓"
+                "in_progress" -> "●"
+                else -> "○"
+            }
+            list.addView(line("$mark  ${step.optString("content")}", 15f, getColor(R.color.text)))
+        }
+        list.addView(TextView(this).apply {
+            text = "Build this"
+            textSize = 16f
+            setTextColor(getColor(R.color.navy))
+            gravity = android.view.Gravity.CENTER
+            setPadding(dp(16), dp(12), dp(16), dp(12))
+            background = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(18).toFloat(); setColor(getColor(R.color.cyan))
+            }
+            setOnClickListener {
+                ask("/chat/plan/build", JSONObject().put("session", current)) { answer ->
+                    val note = answer.optString("note").ifEmpty {
+                        "Told ${answer.optString("to").substringBefore(",")}: build it."
+                    }
+                    android.widget.Toast.makeText(this@MainActivity, note, android.widget.Toast.LENGTH_LONG).show()
+                }
+            }
+        })
+    }
+
+    private fun togglePlan() {
+        val session = current.ifEmpty { return }
+        if (Files.origin(this) == null) return
+        ask("/crew/plan", JSONObject().put("session", session)) { answer ->
+            if (answer.has("note") && answer.optString("mode").isEmpty()) {
+                android.widget.Toast.makeText(this, answer.optString("note"), android.widget.Toast.LENGTH_LONG).show()
+                return@ask
+            }
+            showPlan(session, answer.optString("mode"))
         }
     }
 
@@ -2604,6 +2787,7 @@ class MainActivity : Activity() {
         "later" to "Send a message later: /later your words, then pick a time",
         "usage" to "Plan limits and context, as bars", "context" to "How full the context is, and what fills it",
         "workflow" to "This chat's workflows: phases and agents, live",
+        "away" to "Away on or off: no listening at the laptop, agents text you instead of speaking",
     ).map { (name, about) -> JSONObject().put("name", name).put("about", about).put("kind", "phone") }
 
     private fun loadCommands(session: String) {
@@ -2659,6 +2843,11 @@ class MainActivity : Activity() {
             "later" -> later("")
             "usage", "context" -> usage()
             "workflow" -> workflows()
+            "away" -> ask("/away", JSONObject()) { answer ->
+                android.widget.Toast.makeText(this, if (answer.optBoolean("away"))
+                    "Away: the laptop isn't listening, and agents text you instead of speaking. /away again, or a call, ends it."
+                    else "Back: hands-free listens and agents speak at the laptop again.", android.widget.Toast.LENGTH_LONG).show()
+            }
         }
     }
 
@@ -3318,7 +3507,7 @@ class MainActivity : Activity() {
                 prefs.edit().putString(CALL_KEY, it).apply()
             }
         }
-        val PHONE_COMMANDS = setOf("stop", "model", "flush", "call", "later", "usage", "context", "workflow")
+        val PHONE_COMMANDS = setOf("stop", "model", "flush", "call", "later", "usage", "context", "workflow", "away")
         const val OPEN_FILE = "io.github.ninjatuna007.henchline.OPEN_FILE"  // a file's notification, tapped
 
         /** Each agent's henchman, by its session (claude-…, cursor-…, codex-…) or its name. */

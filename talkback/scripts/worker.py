@@ -22,7 +22,7 @@ from pathlib import Path
 
 from voice import spool
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE
-from voice.state import (BY_HANDSFREE, CALL_SILENT, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing,
+from voice.state import (AWAY, BY_HANDSFREE, CALL_SILENT, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing,
                          Speaker, in_call, last_speaker, log, mic_busy, read_json, speaker_sink, target_session_since,
                          target_since)
 
@@ -84,6 +84,8 @@ class Voice:
         if calling and CALL_SILENT.exists():  # the line dropped: kept until the phone is back, or the call ends
             time.sleep(0.5)
             return
+        if AWAY.exists() and not calling:  # the user is away: a text, never the laptop's speakers
+            clip.for_call = True
         if clip.for_call and not calling:  # the call is over: not said aloud at the laptop, sent to the phone
             if clip.agent in SYSTEM:
                 path.unlink(missing_ok=True)

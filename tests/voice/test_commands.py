@@ -38,6 +38,7 @@ class Listed(unittest.TestCase):
         names = [c["name"] for c in commands.listed("claude", project, home)]
         self.assertEqual(names[:5], ["stop", "model", "flush", "call", "later"])
         self.assertIn("compact", names)
+        self.assertIn("plan", names)
         self.assertIn("git:ship", names)
         self.assertIn("talk", names)
         self.assertNotIn("resume", names)  # a picker in the terminal: nobody could press its keys
@@ -57,7 +58,6 @@ class Listed(unittest.TestCase):
         (home / ".codex/prompts/plan.md").write_text("Make a plan")
         self.assertIn({"name": "prompts:plan", "about": "Make a plan", "kind": "custom"},
                       commands.listed("codex", None, home))
-
 
 if __name__ == "__main__":
     unittest.main()

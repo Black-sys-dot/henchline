@@ -19,7 +19,7 @@ from pathlib import Path
 from voice import snaps
 from voice.agents import SPOKEN_TO, identity, process, started
 from voice.desktop import current as desktop, cursor_bridge, cursor_cdp
-from voice.state import (BY_HANDSFREE, CALL_PINNED, CALL_TOLD, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent,
+from voice.state import (BY_HANDSFREE, CALL_CUT_IN, CALL_INTERRUPT, CALL_PINNED, CALL_TOLD, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent,
                          Speaker, in_call, last_speaker, log, recent_speakers)
 
 SAY = Path(__file__).resolve().parents[2] / "talkback/scripts/say.py"
@@ -377,6 +377,46 @@ def refuse(words: str) -> None:
 
 
 _interrupted: dict[str, float] = {}  # tab → when "send now" last interrupted its agent
+INTERRUPT_FOR = 20.0  # seconds a held send on the call covers the turn being spoken
+
+
+def arm_interrupt() -> None:
+    """The call's send button was held with nothing typed: stop the agent now, and the next spoken turn cuts in
+    instead of waiting in its queue."""
+    CALL_INTERRUPT.parent.mkdir(parents=True, exist_ok=True)
+    CALL_INTERRUPT.write_text(str(time.time()))
+    speaker = last_speaker()
+    tab = speaker.tab if speaker and not speaker.in_editor else None
+    if tab and time.time() - _interrupted.get(tab.address, 0.0) > 2 and desktop().terminals.interrupt(tab):
+        _interrupted[tab.address] = time.time()
+        log(HANDSFREE_LOG, f"send now: interrupted {speaker.agent} {tab.address} from the call")
+
+
+def interrupt_waiting() -> bool:
+    """A held send on this call is still waiting for the turn it belongs to."""
+    try:
+        return time.time() - float(CALL_INTERRUPT.read_text()) < INTERRUPT_FOR
+    except (OSError, ValueError):
+        return False
+
+
+def clear_interrupt() -> None:
+    CALL_INTERRUPT.unlink(missing_ok=True)
+
+
+def cuts_in(speaker: Speaker | None) -> bool:
+    """A spoken turn on a call cuts into the agent's work. Chosen on the phone when the file says so; otherwise
+    Cursor does (it parks words until it finishes) and Claude and Codex wait."""
+    try:
+        choice = CALL_CUT_IN.read_text().strip()
+    except OSError:
+        choice = ""
+    if choice == "1":
+        return True
+    if choice == "0":
+        return False
+    who = speaker or last_speaker()
+    return bool(who and who.agent == "cursor")
 
 
 def is_command(text: str, speaker: Speaker | None) -> bool:
@@ -484,16 +524,37 @@ def deliver_words(text: str, heard: Heard, to: Speaker | None = None, urgent: bo
         refuse("I heard you, but the agent I was talking to isn't running any more, so I didn't type it anywhere.")
         return False
     # Not twice within 2 s: a second Escape opens the agent's history picker (Claude) or edits the last message
-    # (Codex), and the words would land there
-    if urgent and time.time() - _interrupted.get(tab.address, 0.0) > 2 and desktop().terminals.interrupt(tab):
+    # (Codex), and the words would land there. Cursor is steered after the words are typed, not stopped.
+    if urgent and not (speaker.agent == "cursor" and not speaker.in_editor) and time.time() - _interrupted.get(tab.address, 0.0) > 2 and desktop().terminals.interrupt(tab):
         _interrupted[tab.address] = time.time()
         log(HANDSFREE_LOG, f"send now: interrupted {speaker.agent} {tab.address} first")
         time.sleep(0.5)  # its prompt back before the words
-    if not desktop().terminals.type_line(tab, message):
+    again = urgent and speaker.agent == "cursor" and not speaker.in_editor  # Cut in: Enter again. Let it wait: one Enter, so it queues
+    if speaker.agent == "cursor" and not speaker.in_editor:
+        from voice import cursor_cli
+        cursor_cli.clear_picker(tab.address)  # a leftover `/model` would swallow this message into its filter
+        if not command:
+            message = cursor_cli.disarm(message)
+    taken = None
+    if again:  # cut in: steered until Cursor's own transcript shows these words taken in, not by reading the screen
+        from voice import pickup
+        chat = cursor_bridge.chat_of(speaker.session)
+        record = pickup.cursor_log(chat) if chat else None
+        wanted = pickup.key(text)
+        if record and wanted:
+            try:
+                start = record.stat().st_size
+            except OSError:
+                start = 0
+            taken = lambda: pickup.cursor_took(record, wanted, start)  # noqa: E731
+    terminals = desktop().terminals
+    # Only tmux's typing takes "again" (other terminals' type_line has just the words)
+    typed = terminals.type_line(tab, message, again=again, taken=taken) if again else terminals.type_line(tab, message)
+    if not typed:
         log(HANDSFREE_LOG, f"typing into {tab.address} failed")
         refuse("I heard you, but that terminal is gone.")
         return False
-    log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.address}")
+    log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.address}" + (" (enter until the queue is clear)" if again else ""))
     Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
     if not command:
         introduced(speaker, heard)

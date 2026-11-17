@@ -21,7 +21,7 @@ from pathlib import Path
 
 import paste
 from keys import HotkeyCapture
-from voice.state import HANDSFREE_LOG, HANDSFREE_MODE, LAST, Phase, in_call, phase_now, read_json
+from voice.state import AWAY, HANDSFREE_LOG, HANDSFREE_MODE, LAST, Phase, in_call, phase_now, read_json
 from voice.state import ptt_log as log
 from voice.speech.whisper import Config, ding
 
@@ -36,7 +36,8 @@ GREY, CYAN, RED, AMBER, GREEN = "#8a93a3", "#2bc4d9", "#e5484d", "#f5a623", "#3d
 WHITE = "#dfe5ec"  # hands-free on, only the wake word gets in: the panel's own light colour, calm
 TIPS = {"idle": "Henchline: idle", "waiting": 'Henchline: hands-free on, waiting for "hey Claude"',
         "listening": "Henchline: listening for your answer", "recording": "Henchline: recording you",
-        "transcribing": "Henchline: writing your words down", "call": "Henchline: on a phone call"}
+        "transcribing": "Henchline: writing your words down", "call": "Henchline: on a phone call",
+        "away": "Henchline: away. Not listening; agents text your phone instead of speaking"}
 
 
 def unit_states() -> dict[str, str]:
@@ -59,6 +60,8 @@ def state_now(units: dict[str, str]) -> str:
         return "recording"
     if phase is Phase.TRANSCRIBING:
         return "transcribing"
+    if AWAY.exists():  # push-to-talk still records and writes down (above); nothing else listens or speaks
+        return "away"
     if units.get("handsfree.service") == "active":
         # Actively listening only in the moments after an agent spoke (no wake word needed then); otherwise it waits
         try:
@@ -123,7 +126,7 @@ def icon(state: str, problem: bool, angle: int = 0):
             tinter.setCompositionMode(QPainter.CompositionMode_SourceIn)
             tinter.fillRect(glyph.rect(), QColor(tint))
             tinter.end()
-        if state == "idle":
+        if state in ("idle", "away"):
             painter.setOpacity(0.45)  # hands-free off: there, but quiet
         elif state == "transcribing":
             painter.setOpacity(0.55 + 0.45 * abs((angle % 360) - 180) / 180)  # breathing while it works
@@ -230,6 +233,22 @@ def run(cfg: Config, stop: threading.Event, capture: HotkeyCapture, phases: queu
         [str(Path.home() / ".local/bin/handsfree"),
          "off" if box[0].get("handsfree.service") == "active" else "on"], start_new_session=True))
     menu.addAction(handsfree)
+    # Away (the user's wish, 2026-11-17): on another call or with people; the phone's /away is the same switch
+    away = QAction("Away", menu)
+    away.setToolTip("Nothing listens at the laptop; agents text your phone")
+    away.setCheckable(True)
+
+    def toggle_away(on: bool) -> None:
+        if on:
+            AWAY.parent.mkdir(parents=True, exist_ok=True)
+            AWAY.touch()
+        else:
+            AWAY.unlink(missing_ok=True)
+        log(f"tray: away {'on' if on else 'off'}")
+
+    away.toggled.connect(toggle_away)
+    menu.aboutToShow.connect(lambda: (away.blockSignals(True), away.setChecked(AWAY.exists()), away.blockSignals(False)))
+    menu.addAction(away)
     menu.addSeparator()
 
     def refresh_menu() -> None:

@@ -246,9 +246,11 @@ class Turn:
             if heard is Heard.OVER_YOU:  # nothing said over a clip: our echo cut it; no cut-resume-cut loop
                 self.echo_slipped("echo cut a clip")
             return None
-        elif routing.deliver(rich, heard, to=to):  # the one noted as the target above: never a second choice
+        elif routing.deliver(rich, heard, to=to, urgent=cut_in(heard, to)):  # the one noted as the target above
             whisper.ding(self.cfg)
             self.last_message = (rich, heard)
+            if routing.interrupt_waiting():
+                routing.clear_interrupt()
         return THINK_WINDOW if routing.THINK.search(text) else 0.0
 
     def sentence_done(self, longer: int = 0) -> bool:
@@ -281,3 +283,14 @@ class Turn:
             except Exception as exc:
                 log(HANDSFREE_LOG, f"whistle failed ({exc}): Whisper checks for over")
         return bool(OVER.search(self.transcriber.quick_text(tail).strip()))
+
+
+ON_THE_CALL = (Heard.CALL, Heard.PUSHED, Heard.OVER_YOU, Heard.FOLLOW_ON, Heard.REPLY)
+
+
+def cut_in(heard: Heard, to: routing.Speaker | None) -> bool:
+    """A spoken turn on a call cuts in when the phone asked, or by default when it's Cursor. Talking over a clip
+    and a follow-on are the turns that arrive while the agent is busy: those are the ones that must cut in."""
+    if not in_call() or heard not in ON_THE_CALL:
+        return False
+    return routing.interrupt_waiting() or routing.cuts_in(to)

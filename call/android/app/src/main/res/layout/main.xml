@@ -356,6 +356,36 @@
                 android:tint="#FFFFFF" />
         </LinearLayout>
 
+        <LinearLayout
+            android:id="@+id/planBar"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:gravity="center_vertical"
+            android:orientation="horizontal"
+            android:paddingHorizontal="16dp"
+            android:paddingBottom="6dp"
+            android:visibility="gone">
+
+            <TextView
+                android:id="@+id/chatTab"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="6dp"
+                android:text="Chat"
+                android:textColor="@color/cyan"
+                android:textSize="14sp" />
+
+            <TextView
+                android:id="@+id/planTab"
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:paddingHorizontal="12dp"
+                android:paddingVertical="6dp"
+                android:text="Plan"
+                android:textColor="@color/muted"
+                android:textSize="14sp" />
+        </LinearLayout>
 
         <FrameLayout
             android:layout_width="match_parent"
@@ -374,6 +404,21 @@
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
                     android:paddingBottom="8dp" />
+            </ScrollView>
+
+            <ScrollView
+                android:id="@+id/planScroll"
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:paddingHorizontal="16dp"
+                android:visibility="gone">
+
+                <LinearLayout
+                    android:id="@+id/planList"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:orientation="vertical"
+                    android:paddingBottom="24dp" />
             </ScrollView>
 
             <View
@@ -493,12 +538,26 @@
                     android:contentDescription="The agent's model: tap to switch"
                     android:ellipsize="end"
                     android:maxLines="1"
-                    android:maxWidth="220dp"
+                    android:maxWidth="180dp"
                     android:paddingHorizontal="14dp"
                     android:paddingVertical="8dp"
                     android:text="✦ Model"
                     android:textColor="@color/text"
-                    android:textSize="14sp" />
+                    android:textSize="13sp" />
+
+                <TextView
+                    android:id="@+id/planChip"
+                    android:layout_width="wrap_content"
+                    android:layout_height="wrap_content"
+                    android:layout_marginStart="6dp"
+                    android:background="@drawable/chip"
+                    android:contentDescription="Plan mode: tap to turn it on or off"
+                    android:paddingHorizontal="12dp"
+                    android:paddingVertical="8dp"
+                    android:text="Plan"
+                    android:textColor="@color/muted"
+                    android:textSize="13sp"
+                    android:visibility="gone" />
 
                 <View
                     android:layout_width="0dp"

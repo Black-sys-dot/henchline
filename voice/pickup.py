@@ -117,6 +117,31 @@ def codex_took(folder_key: str, wanted: str, since: float, home: Path | None = N
     return 0.0
 
 
+def cursor_log(chat: str, home: Path | None = None) -> Path | None:
+    """A Cursor chat's own record of what it was sent (its transcript), CLI or editor: one file per chat id."""
+    found = list(((home or Path.home()) / ".cursor/projects").glob(f"*/agent-transcripts/{chat}/{chat}.jsonl"))
+    return found[0] if len(found) == 1 else None
+
+
+def cursor_took(log: Path, wanted: str, after: int) -> bool:
+    """Cursor took it in: a user turn with those words written to its transcript after that byte offset (where
+    the file ended when the words were typed). A queued follow-up is only written once it is sent."""
+    try:
+        with log.open("rb") as f:
+            f.seek(after)
+            fresh = f.read(2 * 1024 * 1024)
+    except OSError:
+        return False
+    for raw in fresh.splitlines():
+        try:
+            entry = json.loads(raw)
+        except ValueError:
+            continue
+        if isinstance(entry, dict) and entry.get("role") == "user" and says(_text((entry.get("message") or {}).get("content")), wanted):
+            return True
+    return False
+
+
 def took(agent: str, session: str, words: str, since: float | None = None) -> float | None:
     """When that agent took in the message (0.0: it still waits); None when that agent can't say."""
     wanted = key(words)

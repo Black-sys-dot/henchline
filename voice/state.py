@@ -52,8 +52,14 @@ HANDSFREE_WAV = STATE / "handsfree.wav"  # a turn being transcribed, deleted aft
 # A phone call (call/): while CALL exists, hands-free hears PHONE_MIC and talkback plays into PHONE_SPEAKER
 CALL = STATE / "call"
 CALL_PUSH = STATE / "call.push"  # exists while the call page's talk button is held
+CALL_INTERRUPT = STATE / "call.interrupt"  # the call's send button was held: the next spoken turn cuts in
+CALL_CUT_IN = STATE / "call.cut-in"  # "1" or "0" when chosen on the call; absent: Cursor cuts in, others wait
 CALL_BUTTON_ONLY = STATE / "call.button-only"  # in a noisy place: only the talk button gets in, nothing else
 CALL_STAY_ON = STATE / "call.stay-on"  # an open line kept as long as the user likes: no "are you still there?"
+CALL_CHECK = STATE / "call.check"  # the next call starts on check-on-me (a wake-up, or an answer is needed)
+# Away (the user's wish, 2026-11-17): on another call, or with other people. Hands-free stops listening and talkback
+# texts the phone instead of speaking at the laptop; push-to-talk works as ever. A call ends it
+AWAY = STATE / "away"
 CALL_SILENT = STATE / "call.no-audio"  # the phone's mic stopped arriving mid-call (a dropped line): talkback waits
 CALL_RING = STATE / "call.ring-endpoint"  # where Henchline can be rung (its UnifiedPush address): private, never logged
 CALL_RINGER = STATE / "call.ringer"  # who rang the user last (session, when): the call server routes the answer there

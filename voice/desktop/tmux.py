@@ -268,7 +268,7 @@ class WithTmux(Terminals):
         pid = pane_pid(tab)
         return pid > 0 and agent_in(pid) > 0
 
-    def type_line(self, tab: Tab, text: str) -> bool:
+    def type_line(self, tab: Tab, text: str, again: bool = False, taken=None) -> bool:
         if tab.owner != OWNER:
             return self.inner.type_line(tab, text)
         # Through a paste buffer from stdin: the words are never tmux arguments, so a leading "-" or a trailing ";"
@@ -281,7 +281,30 @@ class WithTmux(Terminals):
             return False
         time.sleep(TYPE_PAUSE)
         entered = tmux("send-keys", "-t", tab.address, "Enter")
-        return bool(entered and entered.returncode == 0)
+        if not (entered and entered.returncode == 0):
+            return False
+        if not again:
+            return True
+        # The first Enter puts the words on the follow-up list, and one more Enter steers the first item in. Steered
+        # until the agent's own record shows these words taken in (taken(): the user found reading the screen
+        # hacky, 2026-11-17), one Enter a second, each one taking in the oldest waiting item
+        if taken is not None:
+            for _ in range(10):
+                time.sleep(1.0)
+                if taken():
+                    return True
+                if not (done := tmux("send-keys", "-t", tab.address, "Enter")) or done.returncode != 0:
+                    return False
+            return True
+        # Without that record (an agent not yet known by its chat id): until the list is gone from the screen
+        for _ in range(8):
+            time.sleep(0.45)
+            shown = out("capture-pane", "-p", "-t", tab.address).lower()
+            if "follow-ups" not in shown and "enter steer" not in shown:
+                return True
+            if not (done := tmux("send-keys", "-t", tab.address, "Enter")) or done.returncode != 0:
+                return False
+        return True
 
     def only_a_shell(self, window: Window) -> bool:
         return self.inner.only_a_shell(window)

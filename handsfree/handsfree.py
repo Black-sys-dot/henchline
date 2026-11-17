@@ -6,7 +6,7 @@
     handsfree listen [SECONDS]         keep listening that long (default 180)
     handsfree close                    stop listening until the wake word
     handsfree hangup                   end the phone call (call/), once talkback has finished speaking
-    handsfree ring [--done] [--now] [--no-wait] [--as SESSION] [WHY]
+    handsfree ring [--done] [--now] [--no-wait] [--check] [--as SESSION] [WHY]
                                        ring the user's phone (Henchline full-screen, else an ntfy notification
                                        whose Answer opens Henchline) and wait up to a minute for what happened:
                                        exit 0 answered, 2 rang but not answered, 3 declined, 4 answered but the
@@ -14,8 +14,9 @@
                                        Unless answered, a missed call with WHY is left in ntfy (the topic is
                                        read from ~/.config/ptt/ntfy-topic). --now: past the 2-minute limit,
                                        for a ring the user asked for. --no-wait: ring and return. --done: the
-                                       ring reports finished work (the henchman's "done" line), rather than
-                                       asking for a decision (its "I need you" line). --as SESSION: ring as
+                                       ring reports finished work. --check: the call asks after them if they
+                                       go quiet (a wake-up, or an answer is needed). The usual call stays on.
+                                       --as SESSION: ring as
                                        that agent (the call server calling back after a quiet call)
     handsfree text [--until-read MIN | --until-replied MIN] WORDS
                                        a message to the user's phone, not a call: a notification they can
@@ -73,7 +74,7 @@ from listener import Listener  # noqa: E402
 from sensing import EC_UNIT, start_canceller  # noqa: E402
 from voice import files  # noqa: E402
 from voice.speech import whisper  # noqa: E402
-from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN, CALL_RING, CALL_RINGER,  # noqa: E402
+from voice.state import (ANNOUNCE, BY_HANDSFREE, CALL_CHECK, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN, CALL_RING, CALL_RINGER,  # noqa: E402
                          CHAT_KEY, CLOSE, HANDSFREE_LOG, HANDSFREE_ON, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES, read_json,
                          recent_speakers,
                          LISTEN, SPEAKERS, Speaker, in_call, log,
@@ -90,7 +91,8 @@ RING_WAIT = 60  # seconds a ring waits for the answer: it rings for 30, and on a
 RANG = Path.home() / ".local/state/ptt/call.rang"  # when the user was last rung
 
 
-def ring(why: str, now: bool = False, wait: bool = True, done: bool = False, as_session: str = "") -> int:
+def ring(why: str, now: bool = False, wait: bool = True, done: bool = False, as_session: str = "",
+         check: bool = False) -> int:
     """An agent wants to talk: the phone rings (Henchline full-screen, or an ntfy notification whose Answer
     opens Henchline's call), then this waits for what happened. Henchline reports back on a one-time ntfy
     address carried in the ring (it works off Tailscale too):
@@ -104,6 +106,9 @@ def ring(why: str, now: bool = False, wait: bool = True, done: bool = False, as_
     if in_call():
         print("a phone call is up already")
         return 1
+    if check:  # this ring needs them: the call asks after them if they go quiet. The usual call stays on.
+        CALL_CHECK.parent.mkdir(parents=True, exist_ok=True)
+        CALL_CHECK.touch()
     if not now and RANG.exists() and time.time() - RANG.stat().st_mtime < RING_EVERY:
         print(f"rang less than {RING_EVERY} s ago; not again yet (--now if the user asked for it)")
         return 1
@@ -558,10 +563,12 @@ def main() -> int:
         now = "--now" in args  # the user asked for this ring: past the limit meant for agents
         wait = "--no-wait" not in args
         done = "--done" in args
+        check = "--check" in args
         args, as_session = taken_as(args)
         if as_session is None:
             return 1
-        return ring(" ".join(a for a in args if a not in ("--now", "--no-wait", "--done")), now, wait, done, as_session)
+        return ring(" ".join(a for a in args if a not in ("--now", "--no-wait", "--done", "--check")), now, wait, done,
+                    as_session, check)
     if command == "remind":
         return remind(args)
     if command == "send":
