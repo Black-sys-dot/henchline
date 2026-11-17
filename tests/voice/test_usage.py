@@ -43,5 +43,24 @@ class Limits(unittest.TestCase):
         self.assertEqual(usage._limit("Week", 80, time.time() + 60)["percent"], 80.0)
 
 
+class CodexName(unittest.TestCase):
+    def test_newest_name_of_the_folders_thread(self):
+        import json
+        import tempfile
+        from pathlib import Path
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "sessions"
+            day = root / "2026/11/17"
+            day.mkdir(parents=True)
+            (day / "rollout-x.jsonl").write_text(json.dumps({"type": "session_meta", "payload": {
+                "id": "t-1", "cwd": "/home/me/proj"}}) + "\n")
+            (Path(tmp) / "session_index.jsonl").write_text(
+                json.dumps({"id": "t-1", "thread_name": "First"}) + "\n" +
+                json.dumps({"id": "t-2", "thread_name": "Other"}) + "\n" +
+                json.dumps({"id": "t-1", "thread_name": "Renamed"}) + "\n")
+            self.assertEqual(usage.codex_name("codex-_home_me_proj", root), "Renamed")
+            self.assertEqual(usage.codex_name("codex-_elsewhere", root), "")
+
+
 if __name__ == "__main__":
     unittest.main()

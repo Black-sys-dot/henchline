@@ -22,8 +22,8 @@ from pathlib import Path
 
 from voice import spool
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE
-from voice.state import (BY_HANDSFREE, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing, Speaker,
-                         in_call, last_speaker, log, mic_busy, read_json, speaker_sink, target_session_since,
+from voice.state import (BY_HANDSFREE, CALL_SILENT, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing,
+                         Speaker, in_call, last_speaker, log, mic_busy, read_json, speaker_sink, target_session_since,
                          target_since)
 
 THREADS = int(os.environ.get("TALKBACK_THREADS", "4"))  # CPU threads: 4 measured best (latency vs load)
@@ -81,6 +81,9 @@ class Voice:
             path.unlink(missing_ok=True)
             return
         calling = in_call()
+        if calling and CALL_SILENT.exists():  # the line dropped: kept until the phone is back, or the call ends
+            time.sleep(0.5)
+            return
         if clip.for_call and not calling:  # the call is over: not said aloud at the laptop, sent to the phone
             if clip.agent in SYSTEM:
                 path.unlink(missing_ok=True)
@@ -141,12 +144,12 @@ class Voice:
                 for n, start in enumerate(range(0, len(data), piece)):
                     # The call started or ended mid-clip: the rest is said where the user is now (or texted), not
                     # carried on at the laptop after a hang-up (the user's catch, 2026-11-17)
-                    moved = n % 5 == 0 and in_call() != calling
+                    moved = n % 5 == 0 and (in_call() != calling or calling and CALL_SILENT.exists())
                     if mic_busy() or self.skip or moved:
                         cut = True
                         if moved:
                             clip.for_call = True  # resumed on the phone if a call began; texted if it ended
-                            log(TALKBACK_LOG, f"{clip.agent} cut: the call {'began' if not calling else 'ended'}")
+                            log(TALKBACK_LOG, f"{clip.agent} cut: the call {'began' if not calling else 'ended or dropped'}")
                         break
                     player.stdin.write(data[start:start + piece].tobytes())
                     player.stdin.flush()

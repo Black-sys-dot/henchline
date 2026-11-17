@@ -54,6 +54,7 @@ CALL = STATE / "call"
 CALL_PUSH = STATE / "call.push"  # exists while the call page's talk button is held
 CALL_BUTTON_ONLY = STATE / "call.button-only"  # in a noisy place: only the talk button gets in, nothing else
 CALL_STAY_ON = STATE / "call.stay-on"  # an open line kept as long as the user likes: no "are you still there?"
+CALL_SILENT = STATE / "call.no-audio"  # the phone's mic stopped arriving mid-call (a dropped line): talkback waits
 CALL_RING = STATE / "call.ring-endpoint"  # where Henchline can be rung (its UnifiedPush address): private, never logged
 CALL_RINGER = STATE / "call.ringer"  # who rang the user last (session, when): the call server routes the answer there
 CALL_RANG_BACK = STATE / "call.rang_back"  # a quiet call last rung back then: one per chain

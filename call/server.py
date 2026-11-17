@@ -42,7 +42,7 @@ from routing import Heard  # noqa: E402
 from voice import commands, files, pickup, reminders, usage  # noqa: E402
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
-from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_STAY_ON, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
+from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_SILENT, CALL_STAY_ON, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
                          CALL_PINNED, CALL_RANG_BACK, CALL_TOLD, PHASE,
                          SPAWNED, TEXTS, VOICE_NOTE_STALE, VOICE_NOTES,
                          CALL_PORT, CALL_PUSH,
@@ -309,6 +309,9 @@ def chat_named(speaker: Speaker) -> str:
         record = read_json(Path.home() / ".claude/sessions" / f"{speaker.pid}.json")
         name = str(record.get("name") or "").strip() if isinstance(record, dict) else ""
         return f" · {name}" if name and record.get("nameSource") != "derived" else ""
+    if speaker.agent == "codex":
+        name = usage.codex_name(speaker.session)
+        return f" · {name}" if name else ""
     chat = cursor_bridge.chat_of(speaker.session) if speaker.agent == "cursor" else ""
     title = cursor_bridge.chat_title(chat) if chat else ""
     return f" · {title}" if title else ""
@@ -1602,7 +1605,21 @@ async def call(request: web.Request) -> web.WebSocketResponse:
                 CALL_HANGUP.touch()
                 return
 
+        last_audio = [time.monotonic()]
+
+        async def watch_line() -> None:
+            """The phone's mic arrives all the time: when it stops for 3 s the line has dropped, and talkback waits
+            instead of speaking to nobody (the user's worry, 2026-11-17). It starts again when the phone is back,
+            or, if the call ends, the waiting words go to the phone as texts."""
+            while not ws.closed:
+                await asyncio.sleep(0.5)
+                if time.monotonic() - last_audio[0] > 3:  # an earbud switch can pause it 1-3 s
+                    CALL_SILENT.touch()
+                else:
+                    CALL_SILENT.unlink(missing_ok=True)
+
         sender = asyncio.create_task(to_phone())
+        liner = asyncio.create_task(watch_line())
         shower = asyncio.create_task(show_status())
         unmuter = asyncio.create_task(keep_unmuted())
         nudger = asyncio.create_task(nudge())
@@ -1611,6 +1628,7 @@ async def call(request: web.Request) -> web.WebSocketResponse:
         try:
             async for msg in ws:
                 if msg.type == WSMsgType.BINARY:
+                    last_audio[0] = time.monotonic()
                     heard += len(msg.data)
                     mic.stdin.write(msg.data)
                     await mic.stdin.drain()
@@ -1624,6 +1642,8 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             CALL_PUSH.unlink(missing_ok=True)
             CALL_BUTTON_ONLY.unlink(missing_ok=True)  # the next call starts with an open line again
             CALL_STAY_ON.unlink(missing_ok=True)  # and is asked after when it goes quiet
+            CALL_SILENT.unlink(missing_ok=True)
+            liner.cancel()
             CALL_HANGUP.unlink(missing_ok=True)  # the phone went first: the hang-up is moot
             sender.cancel()
             shower.cancel()

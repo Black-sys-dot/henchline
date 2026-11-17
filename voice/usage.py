@@ -93,6 +93,33 @@ def _codex_log(folder_key: str, root: Path) -> Path | None:
     return None
 
 
+def codex_name(session: str, root: Path = CODEX_SESSIONS, index: Path | None = None) -> str:
+    """The name a Codex conversation was given (/rename, or Codex's own title), from Codex's session index: the
+    newest log in that folder names its thread id, the index its newest name. "" when it has none."""
+    log = _codex_log(session.removeprefix("codex-"), root)
+    if not log:
+        return ""
+    try:
+        with log.open("rb") as f:
+            thread = str((json.loads(f.readline(1024 * 1024) or b"{}").get("payload") or {}).get("id", ""))
+    except (OSError, ValueError, AttributeError):
+        return ""
+    name = ""
+    try:
+        with (index or root.parent / "session_index.jsonl").open("rb") as f:
+            for raw in f:
+                if thread.encode() in raw:
+                    try:
+                        entry = json.loads(raw)
+                    except ValueError:
+                        continue
+                    if entry.get("id") == thread and entry.get("thread_name"):
+                        name = str(entry["thread_name"]).strip()  # the last one wins: renamed again later
+    except OSError:
+        return ""
+    return name
+
+
 def codex(session: str, root: Path = CODEX_SESSIONS) -> dict:
     log = _codex_log(session.removeprefix("codex-"), root)
     if not log:
