@@ -243,6 +243,22 @@ def open_chat(workspace: str, chat: str, strict: bool = False) -> bool:
     return True
 
 
+def rename(chat: str, name: str) -> str:
+    """A Cursor editor chat renamed as from Cursor's own menu (the phone's /rename, the user's wish, 2026-11-17):
+    the bridge in its window opens Cursor's "Chat name" box for it, and the box is filled in through the debugging
+    port. "" when done, else why not."""
+    name = " ".join(name.split())[:120]
+    if not CHAT_ID.fullmatch(chat) or not name:
+        return "no name given"
+    found = next((c for c in all_chats() if c["chat"] == chat), None)
+    if not found:
+        return "Cursor doesn't have that chat"
+    why = cursor_cdp.rename(Path(found["folder"]).name, name, lambda: ask_window(chat, {"rename": chat, "name": name}))
+    if not why:
+        _titles.pop(chat, None)  # shown under its new name at once
+    return why
+
+
 STATE_DB = Path.home() / ".config/Cursor/User/globalStorage/state.vscdb"
 _titles: dict[str, tuple[float, str]] = {}  # chat id: (when read, title); the list is rebuilt every few seconds
 

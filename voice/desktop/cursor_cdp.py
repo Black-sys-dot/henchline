@@ -226,6 +226,56 @@ async def _send(url: str, chat: str, message: str, urgent: bool = False) -> str:
                 await page.js(_REFOCUS)
 
 
+_NAME_BOX = ("(() => { const w = document.querySelector('.quick-input-widget');"
+             " const i = document.querySelector('.quick-input-box input');"
+             " if (!w || getComputedStyle(w).display === 'none' || !i || i.placeholder !== 'Chat name') return null;"
+             " i.focus(); return i.value; })()")
+
+
+async def _rename(url: str, name: str, open_box) -> str:
+    import aiohttp
+
+    async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=15)) as session:
+        async with session.ws_connect(url, max_msg_size=0) as ws:
+            page = _Page(ws)
+            if not await asyncio.get_running_loop().run_in_executor(None, open_box):
+                return "its Cursor window isn't open"
+            try:
+                for _ in range(50):  # Cursor's "Chat name" box, opened by the bridge a moment ago
+                    if await page.js(_NAME_BOX) is not None:
+                        break
+                    await asyncio.sleep(0.1)
+                else:
+                    return "Cursor's name box didn't open"
+                await page.keys(_key("a", 65, modifiers=2))  # ctrl+a: the old name goes
+                await page.call("Input.insertText", {"text": name})
+                if await page.js(_NAME_BOX) != name:
+                    return "the name didn't land in Cursor's box"
+                await page.keys(_key("Enter", 13, text="\r"))
+                await asyncio.sleep(0.3)
+                if await page.js(_NAME_BOX) is not None:
+                    return "Cursor didn't take the name"
+                return ""
+            finally:  # never left open for the user's next keys: closed with the name as it was
+                if await page.js(_NAME_BOX) is not None:
+                    await page.keys(_key("Escape", 27))
+                await page.js(_REFOCUS)
+
+
+def rename(where: str, name: str, open_box) -> str:
+    """A chat renamed through Cursor's own "Chat name" box: open_box() has the bridge open it, and it is filled in
+    and confirmed here, all under the focus lock (a delivery moving focus would close the box). "" when done, else
+    why not; then the box is closed with the name as it was. Without the debugging port nothing is opened."""
+    url = page_of(where)
+    if not url:
+        return "Cursor's debugging port isn't open for that window"
+    try:
+        with FOCUS:
+            return asyncio.run(asyncio.wait_for(_rename(url, name, open_box), 15))
+    except Exception as exc:  # noqa: BLE001 - said, not raised
+        return f"renaming failed ({exc})"
+
+
 def send(where: str, chat: str, message: str, urgent: bool = False) -> str:
     """Types the words into that chat's box and sends them, through the debugging port: "" when Cursor took them,
     else why not (and then the box is as it was). The chat must already be open in its window (the bridge's

@@ -141,6 +141,25 @@ open class BottomPanel(protected val activity: Activity) {
         })
         root.addView(sheet, FrameLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
         root.setOnClickListener { close() }
+        // Above the keyboard when one is up (the user's catch, 2026-11-17: typing a new name, the keyboard hid it):
+        // the window's own insets are read on every layout, since the app's root view takes them for itself
+        val decor = activity.window.decorView
+        val lift = android.view.ViewTreeObserver.OnGlobalLayoutListener {
+            val insets = decor.rootWindowInsets ?: return@OnGlobalLayoutListener
+            val keyboard = if (android.os.Build.VERSION.SDK_INT >= 30)
+                insets.getInsets(android.view.WindowInsets.Type.ime() or android.view.WindowInsets.Type.navigationBars()).bottom
+                else @Suppress("DEPRECATION") insets.systemWindowInsetBottom
+            // By how much the keyboard actually covers the panel: on Android 10-14 the window is already resized
+            // above it (adjustResize), and only Android 15's drawing behind the bars leaves the panel under it
+            val at = IntArray(2).also { root.getLocationInWindow(it) }
+            val cover = maxOf(0, at[1] + root.height + root.paddingBottom - (decor.height - keyboard))
+            if (root.paddingBottom != cover) root.setPadding(0, 0, 0, cover)
+        }
+        decor.viewTreeObserver.addOnGlobalLayoutListener(lift)
+        root.addOnAttachStateChangeListener(object : View.OnAttachStateChangeListener {
+            override fun onViewAttachedToWindow(v: View) {}
+            override fun onViewDetachedFromWindow(v: View) { decor.viewTreeObserver.removeOnGlobalLayoutListener(lift) }
+        })
         activity.addContentView(root, ViewGroup.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT))
         root.animate().alpha(1f).setDuration(180).start()
         sheet.translationY = 800 * dp
@@ -427,11 +446,14 @@ class ChatActionsSheet(
     private val onClear: (alsoFiles: Boolean) -> Unit,
     private val onRemove: () -> Unit,
     private val onEnd: (done: (String?) -> Unit) -> Unit,
+    private val onRename: ((String) -> Unit)? = null,  // the agent's own /rename, with the name typed here
 ) : BottomPanel(activity) {
     fun show() {
         val sheet = open(title, subtitle)
         val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         sheet.addView(rows, wide(16))
+        if (!gone) onRename?.let { rename -> rows.addView(row("✏️", "Rename chat", "As /rename does: the agent's own name for it",
+                R.color.text) { askName(rows, rename) }) }
         if (!gone) rows.addView(row("🧹", "Clear chat", "On this phone only: the agent keeps its conversation", R.color.text) {
             deleteConfirm(rows, "Clear the chat with $title on this phone? The agent keeps its conversation.",
                 savedFiles, "Clear chat", onClear)
@@ -456,6 +478,28 @@ class ChatActionsSheet(
         sheet.addView(rows, wide(16))
         deleteConfirm(rows, "Clear the chat with $title on this phone? The agent keeps its conversation.",
             savedFiles, "Clear chat", onClear)
+    }
+
+    /** The new name, typed in place of the rows (the keyboard comes up for it). */
+    private fun askName(rows: LinearLayout, rename: (String) -> Unit) {
+        rows.removeAllViews()
+        val box = EditText(activity).apply {
+            hint = "New name"; setSingleLine()
+            setHintTextColor(colour(R.color.muted)); setTextColor(colour(R.color.text)); textSize = 16f
+            background = rounded(colour(R.color.navy), 16f, 1, colour(R.color.surface_high))
+            setPadding(px(16), px(12), px(16), px(12))
+        }
+        rows.addView(box, wide(4))
+        val go = primary("Rename").apply {
+            setOnClickListener {
+                val name = box.text.toString().trim()
+                if (name.isNotEmpty()) { hideKeyboard(activity); close(); rename(name) }
+            }
+        }
+        rows.addView(go, wide(12, px(52)))
+        box.requestFocus()
+        box.postDelayed({ activity.getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+            ?.showSoftInput(box, 0) }, 200)
     }
 
     private fun confirm(rows: LinearLayout) {

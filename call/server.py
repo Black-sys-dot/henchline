@@ -352,6 +352,8 @@ def watch_pickup(mid: str, session: str, words: str) -> bool:
     target = (next((s for s in recent_speakers() if s.session == session), None) if session else last_speaker())
     if not mid or not target or target.agent not in ("claude", "codex") or not pickup.key(words):
         return False
+    if routing.is_command(words, target):  # not logged as the words typed: its pickup can't be seen, two ticks now
+        return False
     now = time.time()
     with PICKUP_LOCK:
         for old in [k for k, v in WAITING.items() if now - v[3] > 6 * 3600]:  # never taken in: forgotten after 6 h
@@ -498,6 +500,12 @@ async def texted(request: web.Request) -> web.Response:
     if not words or not session:
         return web.json_response({"note": "Nothing to send, or no agent named."}, status=400)
     urgent, mid = bool(message.get("urgent")), str(message.get("id", ""))
+    renaming = re.fullmatch(r"/rename\s+(.+)", words.strip(), re.S)
+    if renaming and cursor_bridge.chat_of(session):  # a Cursor chat's /rename: done by Cursor's own rename, not typed
+        why = await asyncio.get_running_loop().run_in_executor(
+            None, cursor_bridge.rename, cursor_bridge.chat_of(session), renaming.group(1))
+        return web.json_response({"note": f"Renamed to “{' '.join(renaming.group(1).split())[:120]}”" if not why
+                                  else f"Not renamed: {why}"})
     # The phone's outbox sends again what timed out on its side, though it may have been typed in: same id, same answer
     now = time.time()
     for old in [k for k, (at, _) in ACCEPTED.items() if now - at > ACCEPTED_FOR]:
@@ -763,6 +771,8 @@ async def crew_commands(request: web.Request) -> web.Response:
     loop = asyncio.get_running_loop()
     project = await loop.run_in_executor(None, project_of, target)
     listed = await loop.run_in_executor(None, commands.listed, target.agent, project)
+    if target.agent == "cursor" and not cursor_bridge.chat_of(session):  # the CLI: no /rename known in it
+        listed = [c for c in listed if c["name"] != "rename"]
     return web.json_response({"agent": target.agent, "commands": listed})
 
 

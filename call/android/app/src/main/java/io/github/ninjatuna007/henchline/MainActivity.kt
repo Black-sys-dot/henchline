@@ -1889,6 +1889,15 @@ class MainActivity : Activity() {
 
     /** The bottom bar: Chats, Calls or Usage, the one showing lit. */
     private fun showTab(which: String) {
+        // Slid in from the side it lies on (Usage left, Calls right), as a pager does (the user's catch, 2026-11-17)
+        val from = tabs.indexOf(tab)
+        val to = tabs.indexOf(which)
+        if (from != to && from >= 0 && to >= 0) refresh.apply {
+            translationX = (if (to > from) 1 else -1) * width / 3f
+            alpha = 0.4f
+            animate().translationX(0f).alpha(1f).setDuration(220)
+                .setInterpolator(android.view.animation.DecelerateInterpolator(1.5f)).start()
+        }
         tab = which
         for ((id, name) in listOf(R.id.tabChats to "chats", R.id.tabCalls to "calls", R.id.tabUsage to "usage"))
             findViewById<TextView>(id).setTextColor(getColor(if (name == which) R.color.cyan else R.color.muted))
@@ -2602,6 +2611,23 @@ class MainActivity : Activity() {
                     if (session == current) { current = ""; prefs().edit().putString("current", "").apply() }
                     showCrew()
                 }
+            },
+            // As typing /rename in it: Claude and Codex rename themselves, a Cursor editor chat is renamed by Cursor
+            // (the Cursor CLI has no /rename known: no row there)
+            onRename = if (!(session.startsWith("claude-") || session.startsWith("codex-") ||
+                    Regex("cursor-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}").matches(session))) null
+            else { name ->
+                Thread {
+                    val sent = Messages.text(this, session, "/rename $name", java.util.UUID.randomUUID().toString())
+                    main.post {
+                        android.widget.Toast.makeText(this, when {
+                            sent.offline -> "Not renamed: the laptop couldn't be reached"
+                            sent.note.isNotEmpty() -> sent.note
+                            else -> "Renamed to “$name”"
+                        }, android.widget.Toast.LENGTH_LONG).show()
+                        refreshCrewQuietly()  // its new name in the list once the agent has it
+                    }
+                }.start()
             }).also { if (clearOnly) it.showClear() else it.show() }
     }
 

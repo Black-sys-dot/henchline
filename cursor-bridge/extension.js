@@ -41,10 +41,12 @@ function activate(context) {
       let answer;
       try {
         const asked = JSON.parse(buffered.split("\n")[0]);
-        if (asked.commands === "model") {
-          // Which of Cursor's commands an extension can reach that name a model: to find a way to switch one
+        if (typeof asked.commands === "string" && /^[a-z]{2,20}$/i.test(asked.commands)) {
+          // Which of Cursor's commands an extension can reach that name a word ("model", "rename"): to find a way
+          // to do something from the phone. Their names only: nothing is run
+          const word = asked.commands.toLowerCase();
           const all = await vscode.commands.getCommands(true);
-          conn.end(JSON.stringify({ ok: true, commands: all.filter((c) => /model/i.test(c)) }) + "\n");
+          conn.end(JSON.stringify({ ok: true, commands: all.filter((c) => c.toLowerCase().includes(word)) }) + "\n");
           return;
         }
         if (typeof asked.stop === "string" && CHAT_ID.test(asked.stop)) {
@@ -85,6 +87,15 @@ function activate(context) {
             return;
           }
           await vscode.commands.executeCommand("composer.cycleModel");
+          conn.end(JSON.stringify({ ok: true }) + "\n");
+          return;
+        }
+        if (typeof asked.rename === "string" && CHAT_ID.test(asked.rename) && typeof asked.name === "string" &&
+            asked.name.trim().length > 0 && asked.name.length <= 120) {
+          // The phone's /rename for an editor chat: Cursor's own rename, given the chat and its new name. Henchline
+          // reads the name back from Cursor's store to know it took
+          // It opens Cursor's own "Chat name" box and waits there: not awaited, Henchline fills the box in
+          vscode.commands.executeCommand("composer.renameChat", asked.rename).then(undefined, () => {});
           conn.end(JSON.stringify({ ok: true }) + "\n");
           return;
         }

@@ -43,7 +43,9 @@ BUILT_IN = {
         ("review", "Review the current changes"),
         ("init", "Write an AGENTS.md for this project"),
     ],
-    "cursor": [],
+    "cursor": [
+        ("rename", "Name this chat (add the name after it)"),
+    ],
 }
 
 

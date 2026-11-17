@@ -378,6 +378,23 @@ def refuse(words: str) -> None:
 _interrupted: dict[str, float] = {}  # tab → when "send now" last interrupted its agent
 
 
+def is_command(text: str, speaker: Speaker | None) -> bool:
+    """A slash command that agent has (a built-in, or its user's or project's command or skill): typed exactly,
+    since an agent runs a line as a command only when it starts with "/". Not any line that starts with a path
+    ("/tmp is full" is words: typed bare, Claude would refuse it as an unknown command and drop it)."""
+    found = re.fullmatch(r"/([A-Za-z0-9_.:-]+)(?:\s.*)?", text.strip(), re.S)
+    if not found or speaker is None:
+        return False
+    project = None
+    if speaker.pid:
+        try:
+            project = Path(f"/proc/{speaker.pid}/cwd").resolve()
+        except OSError:
+            project = None
+    from voice import commands
+    return found.group(1) in {c["name"] for c in commands.listed(speaker.agent, project) if c["kind"] != "phone"}
+
+
 def deliver(text: str, heard: Heard, to: Speaker | None = None, urgent: bool = False) -> bool:
     """Type the words, tagged with how they were heard, to `to`, or else to the agent that spoke last. When it
     can't, says why out loud and leaves the reason in why_not(), for the phone to show too. urgent: the phone's
@@ -386,7 +403,10 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None, urgent: bool = F
     _why.words = ""
     _why.quiet = heard is Heard.SCHEDULED  # nobody is there to hear why: retried later by the call server
     speaker = to or last_speaker()
-    message = f"{heard.tag} {introduce(speaker, heard)}{on_a_call(speaker, heard)}{text}"
+    # A slash command ("/compact", "/rename …") is typed exactly as it is: an agent runs a line as a command only
+    # when it starts with "/", so no tag, introduction or call note in front of it (none of those is then given)
+    command = is_command(text, speaker)
+    message = text.strip() if command else f"{heard.tag} {introduce(speaker, heard)}{on_a_call(speaker, heard)}{text}"
     if speaker is None:
         log(HANDSFREE_LOG, "nobody to send to")
         refuse("I heard you, but no agent has spoken yet.")
@@ -407,8 +427,9 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None, urgent: bool = F
                 refuse(f"Cursor didn't take that: {why}.")
                 return False
             Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
-            introduced(speaker, heard)
-            told_on_call(speaker, heard)
+            if not command:
+                introduced(speaker, heard)
+                told_on_call(speaker, heard)
             return True
         # Without the port: that chat to the front, then keys into the raised window (needs the screen unlocked)
         if chat and not cursor_bridge.open_chat(speaker.where, chat, strict=True):
@@ -426,8 +447,9 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None, urgent: bool = F
         log(HANDSFREE_LOG, f"sent to cursor window {speaker.where}" if ok else "Cursor delivery failed")
         if ok:
             Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
-            introduced(speaker, heard)
-            told_on_call(speaker, heard)
+            if not command:
+                introduced(speaker, heard)
+                told_on_call(speaker, heard)
         if not ok and desktop().locked():
             refuse("The laptop's screen is locked, so I can't type into Cursor. "
                    "Agents in a terminal still get your words.")
@@ -455,7 +477,8 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None, urgent: bool = F
         return False
     log(HANDSFREE_LOG, f"sent to {speaker.agent} {tab.address}")
     Sent(speaker.agent, heard.value, session=speaker.session, words=text if in_call() else "").save()
-    introduced(speaker, heard)
-    told_on_call(speaker, heard)
+    if not command:
+        introduced(speaker, heard)
+        told_on_call(speaker, heard)
     return True
 
