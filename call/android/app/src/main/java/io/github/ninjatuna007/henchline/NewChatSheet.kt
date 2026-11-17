@@ -597,12 +597,15 @@ class MessageSheet(
     private val onOpen: (() -> Unit)?,  // a file: saved, and opened in another app
     private val mine: Boolean,
     private val savedFiles: Int,  // its saved copies that no other message has
+    private val onSelect: (() -> Unit)? = null,  // pick more messages, to delete or copy them together
     private val onDelete: (alsoFiles: Boolean) -> Unit,
 ) : BottomPanel(activity) {
     fun show() {
         val sheet = open(title, subtitle)
         val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         sheet.addView(rows, wide(16))
+        onSelect?.let { select -> rows.addView(actionRow("☑", "Select", "Pick more messages, then delete or copy them together",
+            R.color.text) { close(); select() }) }
         if (!words.isNullOrEmpty()) rows.addView(actionRow("📋", "Copy", "", R.color.text) {
             val clip = activity.getSystemService(android.content.ClipboardManager::class.java)
             clip.setPrimaryClip(android.content.ClipData.newPlainText("Henchline", words))

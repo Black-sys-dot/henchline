@@ -80,6 +80,15 @@ object Files {
         }.start()
     }
 
+    /** That file in Downloads/Henchline, saved there first if it isn't yet (off the main thread): for sharing it. */
+    fun keep(context: Context, url: String, name: String, type: String, size: Long = 0, session: String = ""): Uri {
+        val address = resolve(context, url) ?: throw IllegalStateException("not from your laptop's address")
+        val saved = savedCopy(context, address, name, size)
+            ?: download(context, address, name, type).also { remember(context, address, it) }
+        Media.record(context, saved, address, name, session)
+        return saved
+    }
+
     private fun remember(context: Context, address: String, saved: Uri) =
         context.getSharedPreferences("downloads", Context.MODE_PRIVATE).edit().putString(address, saved.toString()).apply()
 

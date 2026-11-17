@@ -335,7 +335,33 @@ class MainActivity : Activity() {
     private var tabSwipeY = 0f
     private val tabs = listOf("usage", "chats", "calls")  // as the bottom bar shows them: swiped between
 
+    private var selectDownX = 0f
+    private var selectDownY = 0f
+
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        // Selecting: a tap on a message picks it (or unpicks it), instead of opening it
+        if (selected != null && chatScreen.visibility == View.VISIBLE && panel?.isOpen != true) {
+            val bar = selectBar
+            val onBar = bar != null && android.graphics.Rect().also { bar.getGlobalVisibleRect(it) }.contains(event.rawX.toInt(), event.rawY.toInt())
+            if (!onBar) when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> { selectDownX = event.rawX; selectDownY = event.rawY }
+                // A quick tap only: a hold has already picked it through its long-press (twice would undo it)
+                MotionEvent.ACTION_UP -> if (kotlin.math.abs(event.rawX - selectDownX) < dp(12) && kotlin.math.abs(event.rawY - selectDownY) < dp(12)
+                    && event.eventTime - event.downTime < android.view.ViewConfiguration.getLongPressTimeout()) {
+                    val hit = android.graphics.Rect()
+                    for (k in 0 until chat.childCount) {
+                        val row = chat.getChildAt(k)
+                        @Suppress("UNCHECKED_CAST") val ats = row.getTag(R.id.ats) as? List<Long> ?: continue
+                        if (row.visibility == View.VISIBLE && row.getGlobalVisibleRect(hit) && hit.contains(event.rawX.toInt(), event.rawY.toInt())) {
+                            toggleSelected(ats)
+                            break
+                        }
+                    }
+                    val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                    return super.dispatchTouchEvent(cancel).also { cancel.recycle() }
+                }
+            }
+        }
         // On the list screen, a sideways swipe moves to the tab beside (the user's wish, 2026-11-17)
         if (listScreen.visibility == View.VISIBLE && panel?.isOpen != true && sheet?.isOpen != true) when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> { tabSwipeX = event.x; tabSwipeY = event.y }
@@ -375,6 +401,7 @@ class MainActivity : Activity() {
         when {  // back closes the sheet, then a chat or settings (to the list); only the list leaves the app
             sheet?.isOpen == true -> sheet?.close()
             panel?.isOpen == true -> panel?.close()
+            selected != null -> stopSelecting()
             listScreen.visibility != View.VISIBLE -> show(listScreen)
             else -> super.onBackPressed()
         }
@@ -1342,6 +1369,7 @@ class MainActivity : Activity() {
                 LinearLayout.LayoutParams(dp(28), dp(28)).apply { marginEnd = dp(8) })
         }
         if (!note) swipeToReply(row, words) { messageMenu(session.ifEmpty { current }, listOf(at), words) }
+        if (!note && at > 0) row.setTag(R.id.ats, listOf(at))
         row.addView(bubble, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT,
             LinearLayout.LayoutParams.WRAP_CONTENT).apply { if (!note) width = LinearLayout.LayoutParams.WRAP_CONTENT })
         if (mine && !note) {  // you: the boss the crew works for
@@ -1955,6 +1983,7 @@ class MainActivity : Activity() {
     /** One screen at a time: the chat list, a chat, or settings. */
     private fun show(screen: View) {
         if (panel?.isOpen == true) panel?.close(animate = false)  // a menu belongs to the screen it opened on
+        if (screen !== chatScreen) stopSelecting()  // and a selection to the chat it was made in
         for (s in listOf(listScreen, chatScreen, settingsScreen)) s.visibility = if (s === screen) View.VISIBLE else View.GONE
         if (screen === listScreen) { showCrew(); refreshCrewQuietly() }
         showCallBar()
@@ -1972,6 +2001,7 @@ class MainActivity : Activity() {
      *  is shown and texts go to it. */
     private fun open(session: String) {
         if (session != current) {  // a chat, not the call: on a call this doesn't switch it (the call bar leads back)
+            stopSelecting()
             current = session
             prefs().edit().putString("current", current).putString("current_name", names[current] ?: "").apply()
             showHistory()
@@ -2212,12 +2242,14 @@ class MainActivity : Activity() {
             if (view.isClickable) view.setOnLongClickListener(hold)
             (view as? android.view.ViewGroup)?.let { group -> for (k in 0 until group.childCount) on(group.getChildAt(k)) }
         }
-        for (k in before until chat.childCount) chat.getChildAt(k).let { row -> row.setOnLongClickListener(hold); on(row) }
+        for (k in before until chat.childCount) chat.getChildAt(k).let { row ->
+            row.setTag(R.id.ats, ats); row.setOnLongClickListener(hold); on(row) }
     }
 
     /** Held on a message: copy it, open its file elsewhere, or delete it from this phone, with the files it saved
      *  if no other message has them (the user's wish, 2026-11-16). */
     private fun messageMenu(session: String, ats: List<Long>, words: String? = null) {
+        if (selected != null) return toggleSelected(ats)
         val kept = Chats.load(this, session)
         // A line shown as it arrived (kept by the call, not this screen) has the time it was kept: found by its words
         val lines = kept.filter { it.optLong("at") in ats }.ifEmpty {
@@ -2243,10 +2275,150 @@ class MainActivity : Activity() {
             Files.open(this, f.getString("url"), f.optString("name", "file"), f.optString("type", "application/octet-stream"),
                 f.optLong("size"), session) { say("", it, note = true) }
         } }
-        panel = MessageSheet(this, title, time, words, open, mine, saved.size) { alsoFiles ->
+        panel = MessageSheet(this, title, time, words, open, mine, saved.size,
+            onSelect = { startSelecting(ats) }) { alsoFiles ->
             val removed = Chats.remove(this, session, ats.toSet())
             Media.dropPreviews(this, removed)
             if (alsoFiles) deleted(saved, Media.delete(this, saved))
+            if (session == current) showHistory()
+            showCrew()
+        }.also { it.show() }
+    }
+
+    // --- Several messages at once (the user's wish, 2026-11-17): delete or copy them together; a reply stays one ---
+
+    private var selected: MutableSet<Long>? = null  // the kept lines picked, by their times; null: not selecting
+    private var selectBar: View? = null
+    private var selectCount: TextView? = null
+
+    private fun startSelecting(ats: List<Long>) {
+        selected = mutableSetOf()
+        hideKeyboard(this)
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            setBackgroundColor(getColor(R.color.surface_high))
+            setPadding(dp(8), findViewById<View>(R.id.statusSpace).height + dp(6), dp(8), dp(10))
+            elevation = dp(8).toFloat()
+            isClickable = true
+        }
+        fun button(label: String, then: () -> Unit) = TextView(this).apply {
+            text = label; setTextColor(getColor(R.color.text)); textSize = 15f
+            setPadding(dp(14), dp(10), dp(14), dp(10)); setOnClickListener { then() }
+            background = getDrawable(android.R.drawable.list_selector_background)
+        }
+        bar.addView(button("✕") { stopSelecting() })
+        selectCount = TextView(this).apply { setTextColor(getColor(R.color.text)); textSize = 17f; typeface = android.graphics.Typeface.DEFAULT_BOLD }
+        bar.addView(selectCount, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        bar.addView(button("📋 Copy") { copySelected() })
+        bar.addView(button("↗ Share") { shareSelected() })
+        bar.addView(button("🗑 Delete") { deleteSelected() })
+        addContentView(bar, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.TOP))
+        selectBar = bar
+        toggleSelected(ats)
+    }
+
+    private fun stopSelecting() {
+        if (selected == null) return
+        selected = null
+        (selectBar?.parent as? android.view.ViewGroup)?.removeView(selectBar)
+        selectBar = null
+        for (k in 0 until chat.childCount) chat.getChildAt(k).let { if (it.getTag(R.id.ats) != null) it.background = null }
+    }
+
+    /** Picked, or unpicked; each row showing a picked line is tinted. None left: selecting ends. */
+    private fun toggleSelected(ats: List<Long>) {
+        val picked = selected ?: return
+        if (ats.isEmpty()) return
+        if (ats.all { it in picked }) picked.removeAll(ats.toSet()) else picked.addAll(ats)
+        tintSelected()
+    }
+
+    /** The rows showing a picked line, tinted; picks no longer in the chat dropped (after a redraw too). */
+    private fun tintSelected() {
+        val picked = selected ?: return
+        val shown = mutableSetOf<Long>()
+        for (k in 0 until chat.childCount) {
+            @Suppress("UNCHECKED_CAST") (chat.getChildAt(k).getTag(R.id.ats) as? List<Long>)?.let { shown.addAll(it) }
+        }
+        picked.retainAll(shown)
+        if (picked.isEmpty()) return stopSelecting()
+        for (k in 0 until chat.childCount) {
+            val row = chat.getChildAt(k)
+            @Suppress("UNCHECKED_CAST") val rowAts = row.getTag(R.id.ats) as? List<Long> ?: continue
+            row.setBackgroundColor(if (rowAts.any { it in picked }) (getColor(R.color.cyan) and 0x33FFFFFF) else android.graphics.Color.TRANSPARENT)
+        }
+        selectCount?.text = "${picked.size} selected"
+    }
+
+    private fun selectedLines(): List<JSONObject> {
+        val picked = selected ?: return emptyList()
+        return Chats.load(this, current).filter { it.optLong("at") in picked }
+    }
+
+    private fun copySelected() {
+        val words = selectedLines().mapNotNull { line ->
+            line.optString("text").takeIf { it.isNotEmpty() && !line.optBoolean("note") }
+                ?: line.optJSONObject("file")?.let { "📎 " + it.optString("name", "file") }
+        }.joinToString("\n\n")
+        if (words.isEmpty()) return
+        getSystemService(android.content.ClipboardManager::class.java)
+            .setPrimaryClip(android.content.ClipData.newPlainText("Henchline", words))
+        android.widget.Toast.makeText(this, "Copied", android.widget.Toast.LENGTH_SHORT).show()
+        stopSelecting()
+    }
+
+    /** To another app, the pictures and files themselves with the words (the user's wish, 2026-11-17: copying
+     *  carries only text): files from the laptop saved to Downloads/Henchline first; your own pictures are in your
+     *  gallery already, so their words come along without them. */
+    private fun shareSelected() {
+        val lines = selectedLines()
+        if (lines.isEmpty()) return stopSelecting()
+        val session = current
+        android.widget.Toast.makeText(this, "Getting them ready…", android.widget.Toast.LENGTH_SHORT).show()
+        Thread {
+            val uris = ArrayList<android.net.Uri>()
+            val types = mutableSetOf<String>()
+            var missed = 0
+            for (line in lines) {
+                val f = line.optJSONObject("file") ?: continue
+                try {
+                    uris.add(Files.keep(this, f.getString("url"), f.optString("name", "file"),
+                        f.optString("type", "application/octet-stream"), f.optLong("size"), session))
+                    types.add(f.optString("type", "application/octet-stream"))
+                } catch (_: Exception) { missed++ }
+            }
+            val words = lines.mapNotNull { line ->
+                line.optString("text").takeIf { it.isNotEmpty() && !line.optBoolean("note") }
+            }.joinToString("\n\n")
+            main.post {
+                val send = if (uris.isEmpty()) Intent(Intent.ACTION_SEND).setType("text/plain")
+                    else Intent(Intent.ACTION_SEND_MULTIPLE).putParcelableArrayListExtra(Intent.EXTRA_STREAM, uris)
+                        .setType(if (types.all { it.startsWith("image/") }) "image/*" else "*/*")
+                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                if (words.isNotEmpty()) send.putExtra(Intent.EXTRA_TEXT, words)
+                if (uris.isEmpty() && words.isEmpty()) return@post
+                if (missed > 0) android.widget.Toast.makeText(this, "$missed file${if (missed == 1) "" else "s"} couldn't be fetched (is Tailscale on?)",
+                    android.widget.Toast.LENGTH_LONG).show()
+                startActivity(Intent.createChooser(send, "Share"))
+                stopSelecting()
+            }
+        }.start()
+    }
+
+    /** The same question as deleting one message: from this phone, and the files they saved if no other line has them. */
+    private fun deleteSelected() {
+        val lines = selectedLines()
+        if (lines.isEmpty()) return stopSelecting()
+        val session = current
+        val ats = lines.map { it.optLong("at") }.toSet()
+        val saved = Media.onlyIn(this, session, Media.savedFor(this, lines), except = ats)
+        panel = MessageSheet(this, "${lines.size} message${if (lines.size == 1) "" else "s"}", "Selected in this chat",
+            null, null, lines.any { it.optBoolean("mine") }, saved.size) { alsoFiles ->
+            val removed = Chats.remove(this, session, ats)
+            Media.dropPreviews(this, removed)
+            if (alsoFiles) deleted(saved, Media.delete(this, saved))
+            stopSelecting()
             if (session == current) showHistory()
             showCrew()
         }.also { it.show() }
@@ -2531,6 +2703,7 @@ class MainActivity : Activity() {
         // reinstall, an album joining; the user missed them, 2026-11-16). Each still shows once.
         thoughtsOf = ""
         if (chatScreen.visibility == View.VISIBLE) { main.removeCallbacks(thoughtsPoll); main.post(thoughtsPoll) }
+        tintSelected()  // picked before the redraw: still picked
     }
 
     /** A file an agent sent: a picture shown small (tap for it whole), audio with its own play button, anything
@@ -2659,6 +2832,7 @@ class MainActivity : Activity() {
             gravity = Gravity.START or Gravity.BOTTOM
             setPadding(0, dp(4), 0, dp(4))
             setTag(R.id.chat, session)
+            if (at > 0) setTag(R.id.ats, listOf(at))
             visibility = if (session.isEmpty() || current.isEmpty() || session == current) View.VISIBLE else View.GONE
         }
         row.addView(ImageView(this).apply { setImageResource(avatarOf(session.ifEmpty { from })) },
