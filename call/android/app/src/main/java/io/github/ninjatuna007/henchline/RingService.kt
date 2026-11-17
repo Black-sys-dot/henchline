@@ -26,6 +26,8 @@ class RingService : PushService() {
     }
 
     override fun onMessage(message: PushMessage, instance: String) {
+        // The laptop just reached us: whatever waited in the outbox can go now
+        if (Outbox.all(this).isNotEmpty()) Thread { Outbox.flush(this) }.start()
         val ring = try {
             JSONObject(String(message.content))
         } catch (_: Exception) {

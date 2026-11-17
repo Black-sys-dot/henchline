@@ -36,7 +36,7 @@ class Listed(unittest.TestCase):
         (home / ".claude/skills/talk").mkdir(parents=True)
         (home / ".claude/skills/talk/SKILL.md").write_text("---\ndescription: Talk\n---\n")
         names = [c["name"] for c in commands.listed("claude", project, home)]
-        self.assertEqual(names[:4], ["stop", "model", "flush", "call"])
+        self.assertEqual(names[:5], ["stop", "model", "flush", "call", "later"])
         self.assertIn("compact", names)
         self.assertIn("git:ship", names)
         self.assertIn("talk", names)

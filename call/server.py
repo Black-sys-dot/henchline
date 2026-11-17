@@ -470,6 +470,10 @@ async def share_tell(request: web.Request) -> web.Response:
     return web.json_response({"to": got} if got else {"note": why})
 
 
+ACCEPTED: dict[str, tuple[float, asyncio.Future]] = {}  # a text's id → its answer: a retry is answered, not typed again
+ACCEPTED_FOR = 3600
+
+
 async def texted(request: web.Request) -> web.Response:
     """A reply typed into an agent's text notification on the phone (`handsfree text`): to that agent.
     {"session": the agent session that texted, "text": the reply}"""
@@ -482,13 +486,29 @@ async def texted(request: web.Request) -> web.Response:
     # A text always names its agent, never whoever spoke last; only a call's own chat may go to the last speaker
     if not words or not session:
         return web.json_response({"note": "Nothing to send, or no agent named."}, status=400)
-    urgent = bool(message.get("urgent"))
-    got, why = await asyncio.get_running_loop().run_in_executor(
+    urgent, mid = bool(message.get("urgent")), str(message.get("id", ""))
+    # The phone's outbox sends again what timed out on its side, though it may have been typed in: same id, same answer
+    now = time.time()
+    for old in [k for k, (at, _) in ACCEPTED.items() if now - at > ACCEPTED_FOR]:
+        del ACCEPTED[old]
+    if mid and mid in ACCEPTED:
+        return web.json_response(await asyncio.shield(ACCEPTED[mid][1]))
+    answer = asyncio.get_running_loop().create_future()
+    if mid:
+        ACCEPTED[mid] = (now, answer)
+    typing = asyncio.get_running_loop().run_in_executor(
         None, to_agent, " ".join(words.split()), session, Heard.TEXTED, False, urgent)
-    if not got:
-        return web.json_response({"note": why})
-    queued = watch_pickup(str(message.get("id", "")), session, words)  # one tick until the agent takes it in
-    return web.json_response({"to": got, "queued": queued})
+
+    def typed(done: asyncio.Future) -> None:  # settled by the typing itself, even if this request is gone
+        if done.exception() is not None:
+            ACCEPTED.pop(mid, None)  # not typed: a retry may try again
+            answer.set_exception(done.exception())
+            return
+        got, why = done.result()
+        answer.set_result({"to": got, "queued": watch_pickup(mid, session, words)} if got else {"note": why})
+
+    typing.add_done_callback(typed)
+    return web.json_response(await asyncio.shield(answer))
 
 
 async def crew(request: web.Request) -> web.Response:

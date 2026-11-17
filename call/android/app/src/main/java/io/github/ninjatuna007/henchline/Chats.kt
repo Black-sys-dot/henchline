@@ -64,9 +64,11 @@ object Chats {
     /** Your message's ticks, a messaging app's way: "sent" (one: the laptop has it), "delivered" (two: typed into the
      *  agent), "read" (two, blue: the agent has answered since). */
     @Synchronized
-    fun setStatus(context: Context, session: String, id: String, status: String) = rewrite(context, session) { line ->
-        if (line.optString("id") == id && rank(status) > rank(line.optString("status"))) line.put("status", status) else line
-    }
+    fun setStatus(context: Context, session: String, id: String, status: String, force: Boolean = false) =
+        rewrite(context, session) { line ->  // force: back to "waiting" (the laptop couldn't be reached after all)
+            if (line.optString("id") == id && (force || rank(status) > rank(line.optString("status")))) line.put("status", status)
+            else line
+        }
 
     /** Every chat kept on the phone, by session: one an agent texted that the crew list doesn't name still shows
      *  (a Cursor text reached the notification but no chat, 2026-11-16). */
@@ -151,7 +153,7 @@ object Chats {
         return ids
     }
 
-    private fun rank(status: String) = listOf("", "sent", "delivered", "read").indexOf(status)
+    private fun rank(status: String) = listOf("", "waiting", "sent", "delivered", "read").indexOf(status)
 
     private fun rewrite(context: Context, session: String, change: (JSONObject) -> JSONObject) {
         val chat = file(context, session)

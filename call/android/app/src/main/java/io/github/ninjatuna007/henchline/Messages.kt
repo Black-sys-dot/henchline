@@ -80,20 +80,28 @@ object Messages {
     /** Words to an agent session over Tailscale, within 8 s: "" when an agent took them, else why not. */
     /** (a note why it wasn't sent, or ""; whether it waits in the agent's queue: one tick until it takes it in).
      *  urgent: the held send button: the agent's work is interrupted so it gets the words now. */
-    fun text(context: Context, session: String, words: String, id: String = "", urgent: Boolean = false): Pair<String, Boolean> = try {
+    /** How a text went: why not (""), whether it waits in the agent's queue, whether the laptop couldn't be reached
+     *  at all (then it waits in the Outbox, with a clock). */
+    data class Sent(val note: String, val queued: Boolean, val offline: Boolean = false)
+
+    fun text(context: Context, session: String, words: String, id: String = "", urgent: Boolean = false,
+             quick: Boolean = false): Sent = try {
         val origin = Files.origin(context) ?: throw IllegalStateException("no laptop address set")
-        QUICK.newCall(Request.Builder().url("$origin/text").header("Origin", origin)
+        // A delivery can take a while (a Cursor chat, a turn behind another); a timeout is taken as "away" and sent
+        // again from the outbox, which the laptop answers by id without typing it twice
+        (if (quick) QUICK else PATIENT).newCall(Request.Builder().url("$origin/text").header("Origin", origin)
             .post(JSONObject().put("text", words).put("session", session).put("id", id).put("urgent", urgent).toString()
                 .toRequestBody("application/json".toMediaType())).build()).execute().use { answer ->
             val body = try { JSONObject(answer.body?.string() ?: "") } catch (_: Exception) { JSONObject() }
-            if (body.has("to")) "" to body.optBoolean("queued")
-            else body.optString("note", "the laptop said ${answer.code}") to false
+            if (body.has("to")) Sent("", body.optBoolean("queued"))
+            else Sent(body.optString("note", "the laptop said ${answer.code}"), false)
         }
     } catch (e: Exception) {
-        "Not sent: ${e.message ?: "the laptop couldn't be reached"} (is Tailscale on?)" to false
+        Sent("Not sent: ${e.message ?: "the laptop couldn't be reached"} (is Tailscale on?)", false, offline = true)
     }
 
     private val QUICK = okhttp3.OkHttpClient.Builder().callTimeout(8, java.util.concurrent.TimeUnit.SECONDS).build()
+    private val PATIENT = okhttp3.OkHttpClient.Builder().callTimeout(30, java.util.concurrent.TimeUnit.SECONDS).build()
 
     /** How far an agent's texts got, told to the laptop (`handsfree text-status`): "delivered" when on the phone,
      *  "read" when you opened that chat or replied. Best effort: off Tailscale it is just not told. */
@@ -151,11 +159,15 @@ object Messages {
         private fun send(context: Context, agent: String, session: String, words: String) {
             seen(context, session)  // replying means reading
             val id = java.util.UUID.randomUUID().toString()
-            val (note, queued) = text(context, session, words, id)
-            // Queued behind the agent's work: one tick until it takes it in (the chat's poll turns it to two)
+            // Behind messages still waiting in the outbox, to keep their order; else within the receiver's ten seconds
+            val sent = if (Outbox.all(context).isNotEmpty()) Sent("", false, offline = true)
+                       else text(context, session, words, id, quick = true)
+            // Queued behind the agent's work: one tick until it takes it in (the chat's poll turns it to two); the
+            // laptop away: a clock, and the Outbox sends it once it can
+            if (sent.offline) Outbox.add(context, id, session, words)
             Chats.add(context, session, JSONObject().put("from", "you").put("mine", true).put("id", id)
-                .put("text", if (note.isEmpty()) words else "$words  ($note)")
-                .put("status", if (note.isEmpty() && !queued) "delivered" else "sent"))
+                .put("text", if (sent.note.isEmpty() || sent.offline) words else "$words  (${sent.note})")
+                .put("status", when { sent.offline -> "waiting"; sent.note.isEmpty() && !sent.queued -> "delivered"; else -> "sent" }))
             post(context, agent, session, sending = true)
         }
     }

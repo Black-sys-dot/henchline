@@ -17,6 +17,7 @@ PHONE = [
     ("model", "Switch the agent's model"),
     ("flush", "Clear this chat on the phone, with its saved files if you like"),
     ("call", "Call your crew"),
+    ("later", "Send a message later: /later your words, then pick a time"),
 ]
 
 BUILT_IN = {

@@ -616,3 +616,68 @@ class MessageSheet(
             ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
     }
 }
+
+/**
+ * /later (the user's idea, 2026-11-17): when the words should reach the agent. A few quick choices, or a time
+ * picked; for a wake-up, the laptop can be kept from sleeping until then. Below, this chat's scheduled messages, each
+ * with Cancel.
+ */
+class LaterSheet(
+    activity: Activity,
+    private val words: String,
+    private val pending: List<org.json.JSONObject>,
+    private val onPick: (at: Long, keepAwake: Boolean) -> Unit,
+    private val onCancel: (id: String) -> Unit,
+) : BottomPanel(activity) {
+    fun show() {
+        val sheet = open(if (words.isEmpty()) "Scheduled messages" else "Send later",
+            if (words.isEmpty()) "Type /later and your words to schedule one" else "\u201c${words.take(80)}\u201d")
+        val rows = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
+        sheet.addView(rows, wide(16))
+        if (words.isNotEmpty()) {
+            val awake = android.widget.CheckBox(activity).apply {
+                text = "Keep the laptop awake until then (a wake-up)"
+                setTextColor(colour(R.color.text)); textSize = 14f
+                buttonTintList = android.content.res.ColorStateList.valueOf(colour(R.color.cyan))
+            }
+            val now = java.util.Calendar.getInstance()
+            fun at(hour: Int, minute: Int, tomorrow: Boolean): Long = (now.clone() as java.util.Calendar).apply {
+                set(java.util.Calendar.HOUR_OF_DAY, hour); set(java.util.Calendar.MINUTE, minute); set(java.util.Calendar.SECOND, 0)
+                set(java.util.Calendar.MILLISECOND, 0)
+                if (tomorrow || timeInMillis <= System.currentTimeMillis()) add(java.util.Calendar.DAY_OF_MONTH, 1)
+            }.timeInMillis
+            val choices = listOf(
+                "In 15 minutes" to { System.currentTimeMillis() + 15 * 60_000L },
+                "In 1 hour" to { System.currentTimeMillis() + 60 * 60_000L },
+                "Tomorrow 08:30" to { at(8, 30, true) },
+            )
+            for ((label, time) in choices) rows.addView(actionRow("⏰", label, "", R.color.text) {
+                close(); onPick(time(), awake.isChecked)
+            })
+            rows.addView(actionRow("🕘", "Pick a time…", "Today, or tomorrow if it has passed", R.color.text) {
+                android.app.TimePickerDialog(activity, { _, hour, minute ->
+                    close(); onPick(at(hour, minute, false), awake.isChecked)
+                }, now.get(java.util.Calendar.HOUR_OF_DAY), now.get(java.util.Calendar.MINUTE),
+                    android.text.format.DateFormat.is24HourFormat(activity)).show()
+            })
+            rows.addView(awake, wide(4))
+        }
+        if (pending.isNotEmpty()) {
+            rows.addView(label("SCHEDULED IN THIS CHAT"), wide(16))
+            for (item in pending) {
+                val time = android.text.format.DateFormat.getTimeFormat(activity).format(java.util.Date((item.optDouble("at") * 1000).toLong()))
+                val day = if (android.text.format.DateUtils.isToday((item.optDouble("at") * 1000).toLong())) "" else "tomorrow or later · "
+                val row = actionRow("⏰", "$day$time", item.optString("words").take(60) + "  · tap to cancel", R.color.text) {
+                    onCancel(item.optString("id")); close()
+                }
+                rows.addView(row)
+            }
+        } else if (words.isEmpty()) {
+            rows.addView(TextView(activity).apply {
+                text = "Nothing scheduled in this chat."; setTextColor(colour(R.color.muted)); textSize = 14f
+            })
+        }
+        sheet.addView(quiet("Close") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,
+            ViewGroup.LayoutParams.WRAP_CONTENT).apply { gravity = Gravity.END; topMargin = px(8) })
+    }
+}

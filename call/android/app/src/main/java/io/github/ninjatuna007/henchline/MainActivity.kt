@@ -400,6 +400,7 @@ class MainActivity : Activity() {
         super.onResume()
         lifecycleSeen = true
         CallService.Bus.listener = { message -> main.post { fromServer(message) } }
+        if (Outbox.all(this).isNotEmpty()) Thread { Outbox.flush(this) }.start()  // messages that waited: now, maybe
         showConnected(onCall())
         if (CallService.Bus.connected) {  // what was said while this screen wasn't looking
             CallService.Bus.lastAgents?.let { fromServer(it) }
@@ -997,6 +998,11 @@ class MainActivity : Activity() {
     private fun sendTyped(urgent: Boolean = false) {
         val entered = text.text.toString().trim()
         if (entered.isEmpty()) return
+        if (entered == "/later" || entered.startsWith("/later ")) {  // words to send at a time picked next
+            text.setText("")
+            later(entered.removePrefix("/later").trim())
+            return
+        }
         if (entered.startsWith("/") && entered.drop(1) in PHONE_COMMANDS) {  // the phone's own: done here, not typed in
             text.setText("")
             runCommand(entered.drop(1))
@@ -1014,7 +1020,16 @@ class MainActivity : Activity() {
             text.setText("")
             val to = current
             Thread {
-                val (note, queued) = Messages.text(this, to, words, id, urgent)
+                // Others still wait for the laptop: this one goes behind them, never ahead
+                val sent = if (Outbox.all(this).isNotEmpty()) Messages.Sent("", false, offline = true)
+                           else Messages.text(this, to, words, id, urgent)
+                val (note, queued) = sent.note to sent.queued
+                if (sent.offline) {  // the laptop away: a clock, and the Outbox sends it as soon as it can
+                    Outbox.add(this, id, to, words)
+                    Chats.setStatus(this, to, id, "waiting", force = true)
+                    main.post { bubble.text = stamp(bubble, words, "waiting") }
+                    return@Thread
+                }
                 if (note.isEmpty() && queued) main.post { waitingBubbles.add(bubble) }  // one tick until it takes it in
                 if (note.isEmpty() && !queued) {
                     Chats.setStatus(this, to, id, "delivered")
@@ -1587,7 +1602,7 @@ class MainActivity : Activity() {
     private fun stamp(bubble: TextView, words: String, status: String): CharSequence {
         val at = bubbleAt[bubble] ?: 0L
         val time = if (at > 0) android.text.format.DateFormat.getTimeFormat(this).format(java.util.Date(at)) else ""
-        val ticks = when (status) { "" -> ""; "sent" -> "✓"; else -> "✓✓" }
+        val ticks = when (status) { "" -> ""; "waiting" -> "🕓"; "sent" -> "✓"; else -> "✓✓" }  // 🕓: not yet on the laptop
         val tail = listOf(time, ticks).filter { it.isNotEmpty() }.joinToString(" ")
         if (tail.isEmpty()) { (bubble as? Stamped)?.tail = null; return styled(words) }
         // On your teal bubble the muted grey-blue was too faint (3.6:1): a lighter one there (5.4:1)
@@ -2176,6 +2191,7 @@ class MainActivity : Activity() {
     private fun phoneCommands() = listOf(
         "stop" to "Stop what the agent is doing", "model" to "Switch the agent's model",
         "flush" to "Clear this chat on the phone, with its saved files if you like", "call" to "Call your crew",
+        "later" to "Send a message later: /later your words, then pick a time",
     ).map { (name, about) -> JSONObject().put("name", name).put("about", about).put("kind", "phone") }
 
     private fun loadCommands(session: String) {
@@ -2209,7 +2225,8 @@ class MainActivity : Activity() {
             })
         }
         setOnClickListener {
-            if (phone) { text.setText(""); runCommand(name) }
+            if (name == "later") { text.setText("/later "); text.setSelection(text.length()) }  // words first, then the time
+            else if (phone) { text.setText(""); runCommand(name) }
             else { text.setText("/$name "); text.setSelection(text.length()) }
         }
     }
@@ -2227,6 +2244,28 @@ class MainActivity : Activity() {
                 chatMenu(session, label.substringAfter(", ", ""), label.substringBefore(","), clearOnly = true)
             }
             "call" -> call()
+            "later" -> later("")
+        }
+    }
+
+    /** /later: the words go to this chat's agent at a time picked here (the laptop types them in then, even with
+     *  the phone away); also this chat's scheduled messages, to take one back. */
+    private fun later(words: String) {
+        val session = current.ifEmpty { return }
+        ask("/reminders?session=" + android.net.Uri.encode(session), null) { answer ->
+            val list = answer.optJSONArray("reminders")
+            val pending = (0 until (list?.length() ?: 0)).map { list!!.getJSONObject(it) }.filter { it.optString("state") == "pending" }
+            panel = LaterSheet(this, words, pending,
+                onPick = { at, keepAwake ->
+                    ask("/reminders", JSONObject().put("session", session).put("words", words).put("at", at / 1000.0)
+                        .put("keep_awake", keepAwake)) { got ->
+                        val made = got.optJSONObject("reminder")
+                        if (made == null) say("", got.optString("note").ifEmpty { "Not scheduled." }, note = true)
+                        else say("", "⏰ Scheduled for ${android.text.format.DateFormat.getTimeFormat(this)
+                            .format(java.util.Date(at))}: $words", note = true)
+                    }
+                },
+                onCancel = { id -> ask("/reminders/cancel", JSONObject().put("id", id)) { } }).also { it.show() }
         }
     }
 
@@ -2829,7 +2868,7 @@ class MainActivity : Activity() {
                 prefs.edit().putString(CALL_KEY, it).apply()
             }
         }
-        val PHONE_COMMANDS = setOf("stop", "model", "flush", "call")
+        val PHONE_COMMANDS = setOf("stop", "model", "flush", "call", "later")
         const val OPEN_FILE = "io.github.ninjatuna007.henchline.OPEN_FILE"  // a file's notification, tapped
 
         /** Each agent's henchman, by its session (claude-…, cursor-…, codex-…) or its name. */
