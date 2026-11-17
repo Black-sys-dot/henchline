@@ -2053,11 +2053,15 @@ class MainActivity : Activity() {
         words.addView(top)
         val bottom = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL }
         TextView(this).apply {
+            // A workflow running in it says so instead of the last line (the design review, 2026-11-17)
+            val flow = flows[session]?.takeIf { found.isEmpty() }
             val line = found.ifEmpty {
-                last?.let { (if (it.optBoolean("mine")) "You: " else "") + it.optString("text").ifEmpty { "📎 file" } } ?: ""
+                flow?.let { f -> "⚙ ${f.optString("name")} · " + (if (f.optInt("phases") > 0) "${f.optInt("at").coerceAtLeast(1)}/${f.optInt("phases")} · " else "") +
+                    "${f.optInt("done")}/${f.optInt("total")} done" }
+                    ?: last?.let { (if (it.optBoolean("mine")) "You: " else "") + it.optString("text").ifEmpty { "📎 file" } } ?: ""
             }
             text = listOf(agent, line.replace("\n", " ")).filter { it.isNotEmpty() }.joinToString(" · ")
-            setTextColor(getColor(when { found.isNotEmpty() -> R.color.cyan; unread > 0 -> R.color.text; else -> R.color.muted }))
+            setTextColor(getColor(when { found.isNotEmpty() || flow != null -> R.color.cyan; unread > 0 -> R.color.text; else -> R.color.muted }))
             textSize = 14f; maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             if (unread > 0) typeface = android.graphics.Typeface.DEFAULT_BOLD  // unread: something to look at
@@ -2213,8 +2217,12 @@ class MainActivity : Activity() {
         followRenames(answer)
         val found = answer.optJSONArray("agents") ?: return
         names = (0 until found.length()).associate { found.getJSONObject(it).getString("session") to found.getJSONObject(it).getString("name") }
+        flows = (0 until found.length()).mapNotNull { i -> found.getJSONObject(i).let { a ->
+            a.optJSONObject("workflow")?.let { a.getString("session") to it } } }.toMap()
         prefs().edit().putString("crew", found.toString()).apply()
     }
+
+    private var flows: Map<String, JSONObject> = emptyMap()  // a workflow running in a chat, by session: its list line
 
     private fun startedHere(session: String): Boolean = try {
         val crew = org.json.JSONArray(prefs().getString("crew", "[]"))

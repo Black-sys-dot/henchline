@@ -323,7 +323,9 @@ def agents() -> dict:
     started = spawned()
     listed = [{"session": s.session,
                "name": s.spoken() + chat_named(s) + (" (laptop locked)" if s.in_editor and locked else ""),
-               "spawned": s.tab.owner == tmux.OWNER and s.tab.address in started}
+               "spawned": s.tab.owner == tmux.OWNER and s.tab.address in started,
+               # a workflow running in it: shown in place of the chat's last line on the phone's list
+               "workflow": workflows.live(s.session) if s.agent == "claude" else None}
               for s in recent_speakers() if routing.reachable(s)]
     return {"agents": listed,
             "current": current.session if current else "",
@@ -1714,6 +1716,43 @@ def serve(address: str, port: int) -> bool:
 REMIND_EVERY = 10.0  # seconds between looks for due reminders
 
 
+async def watch_workflows(app: web.Application) -> None:
+    """A Claude chat's workflow that ends (done or failed) is texted to the phone once, from that agent: the phone
+    shows no banner when that chat is already on screen (the design review, 2026-11-17)."""
+    loop = asyncio.get_running_loop()
+    seen: dict[str, str] = {}  # run id → its state when last looked at
+    first = True
+    while True:
+        try:
+            claudes = [s for s in recent_speakers() if s.agent == "claude" and time.time() - s.at < 2 * 86400]
+            looked: set[str] = set()
+            for speaker in claudes:
+                for run in await loop.run_in_executor(None, workflows.runs, speaker.session, 2):
+                    was, now = seen.get(run["id"]), run["state"]
+                    looked.add(run["id"])
+                    seen[run["id"]] = now
+                    # Only a real end (its end record) is told: a quiet agent can leave the journal unchanged for
+                    # half an hour, which reads as "stopped" and isn't one
+                    if first or was not in ("running", "stopped") or now not in ("done", "failed"):
+                        continue
+                    failed = sum(a["status"] == "failed" for p in run["phases"] for a in p["agents"])
+                    words = (f"⚙ Workflow {run['name']} {'failed' if now == 'failed' else 'finished'}: "
+                             f"{run['done']}/{run['total']} agents done" + (f", {failed} failed" if failed else "")
+                             + ". /workflow shows it.")
+                    await loop.run_in_executor(None, lambda w=words, s=speaker.session: subprocess.run(
+                        [sys.executable, str(HERE.parent / "handsfree/handsfree.py"), "text", "--as", s, w],
+                        capture_output=True, timeout=30, env={**os.environ, "TALKBACK_AGENT": "claude"}))
+                    log(HANDSFREE_LOG, f"workflow {run['id']} ended ({now}): told the phone")
+            for gone in [k for k in seen if k not in looked]:  # no longer among the newest: forgotten
+                del seen[gone]
+            first = False
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # the loop must outlive any one run's files
+            log(HANDSFREE_LOG, f"workflows: {exc}")
+        await asyncio.sleep(10)
+
+
 async def deliver_reminders(app: web.Application) -> None:
     """Due reminders typed into their agents, as a message from the phone is (paste, a pause, then Enter): tried
     until delivered, for an hour; meanwhile the laptop kept awake for those that asked."""
@@ -1760,10 +1799,12 @@ async def deliver_reminders(app: web.Application) -> None:
 
 async def start_reminders(app: web.Application) -> None:
     app["reminders"] = asyncio.create_task(deliver_reminders(app))
+    app["workflows"] = asyncio.create_task(watch_workflows(app))
 
 
 async def stop_reminders(app: web.Application) -> None:
     app["reminders"].cancel()
+    app["workflows"].cancel()
 
 
 async def reminders_list(request: web.Request) -> web.Response:
