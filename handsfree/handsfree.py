@@ -231,7 +231,22 @@ def send(args: list[str]) -> int:
     return 0 if pushed == len(metas) else 2
 
 
-def text(words: str, until_read: float = 0, until: str = "read") -> int:
+def taken_as(args: list[str]) -> tuple[list[str], str | None]:
+    """`--as SESSION` out of the arguments: on that agent's behalf (talkback's own worker, for one). None: bad."""
+    if "--as" not in args:
+        return args, ""
+    at = args.index("--as")
+    if at + 1 >= len(args):
+        print("--as needs an agent's session")
+        return args, None
+    session = args[at + 1]
+    if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", session) or ".." in session:
+        print("--as needs an agent's session (letters, digits, - _ .)")
+        return args, None
+    return args[:at] + args[at + 2:], session
+
+
+def text(words: str, until_read: float = 0, until: str = "read", as_session: str = "") -> int:
     """A message for the user's phone from the agent running this: a notification with a reply box, or a line
     in the call's chat when a call is up. Its id is printed: `handsfree text-status ID` says how far it got,
     the way messaging apps do it (sent, delivered: on the phone, read: the user opened that chat or replied). until_read:
@@ -241,8 +256,11 @@ def text(words: str, until_read: float = 0, until: str = "read") -> int:
     if not words.strip():
         print("usage: handsfree text [--until-read MINUTES | --until-replied MINUTES] WORDS")
         return 1
-    speaker = caller()
-    agent, session = (speaker.agent, speaker.session) if speaker else identity()
+    if as_session:
+        agent, session = as_session.split("-", 1)[0], as_session
+    else:
+        speaker = caller()
+        agent, session = (speaker.agent, speaker.session) if speaker else identity()
     tid = secrets.token_hex(8)
     write_json(TEXTS / f"{tid}.json", {"id": tid, "agent": agent, "session": session, "status": "sent",
                                        "at": time.time()}, private=True)
@@ -501,23 +519,18 @@ def main() -> int:
         now = "--now" in args  # the user asked for this ring: past the limit meant for agents
         wait = "--no-wait" not in args
         done = "--done" in args
-        as_session = ""
-        if "--as" in args:
-            at = args.index("--as")
-            if at + 1 >= len(args):
-                print("--as needs an agent's session")
-                return 1
-            as_session = args[at + 1]
-            if not re.fullmatch(r"[A-Za-z0-9_.-]{1,120}", as_session) or ".." in as_session:
-                print("--as needs an agent's session (letters, digits, - _ .)")
-                return 1
-            args = args[:at] + args[at + 2:]
+        args, as_session = taken_as(args)
+        if as_session is None:
+            return 1
         return ring(" ".join(a for a in args if a not in ("--now", "--no-wait", "--done")), now, wait, done, as_session)
     if command == "remind":
         return remind(args)
     if command == "send":
         return send(args)
     if command == "text":
+        args, as_session = taken_as(args)
+        if as_session is None:
+            return 1
         minutes, until = 0.0, "read"
         for flag in ("--until-read", "--until-replied"):
             if flag in args:
@@ -529,7 +542,7 @@ def main() -> int:
                     return 1
                 args = args[:at] + args[at + 2:]
                 until = flag.removeprefix("--until-")
-        return text(" ".join(args), minutes, until)
+        return text(" ".join(args), minutes, until, as_session)
     if command == "text-status":
         status = text_status(args[0] if args else "")
         down = subprocess.run(["systemctl", "--user", "is-active", "--quiet", "call.service"]).returncode != 0

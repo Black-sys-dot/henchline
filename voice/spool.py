@@ -29,6 +29,9 @@ class Clip:
     where: str = ""  # the agent's workspace folder name
     tab: Tab = field(default_factory=Tab)  # where hands-free types replies to this agent
     queued: float = field(default_factory=time.time)
+    # Said to the phone: queued while a call was up. Once the call is over it isn't said aloud at the laptop (maybe
+    # in an office, the user's worry, 2026-11-17): it goes to the phone as a text instead
+    for_call: bool = False
 
     @classmethod
     def of_text(cls, text: str, **fields) -> Clip:

@@ -15,6 +15,7 @@ import re
 import resource
 import signal
 import subprocess
+import sys
 import threading
 import time
 from pathlib import Path
@@ -22,7 +23,7 @@ from pathlib import Path
 from voice import spool
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE
 from voice.state import (BY_HANDSFREE, KOKORO_MODELS, LOCK, PLAYING, TALKBACK_LOG, WORKER_PID, Playing, Speaker,
-                         last_speaker, log, mic_busy, read_json, speaker_sink, target_session_since,
+                         in_call, last_speaker, log, mic_busy, read_json, speaker_sink, target_session_since,
                          target_since)
 
 THREADS = int(os.environ.get("TALKBACK_THREADS", "4"))  # CPU threads: 4 measured best (latency vs load)
@@ -30,6 +31,7 @@ RATE = 24000
 PAUSE = 0.25  # seconds between sentences
 PIECE = 0.1  # seconds of audio written between checks of the mic
 VOICES = {**AGENT_VOICES, BY_HANDSFREE: "bm_george"}  # system notices: the user's "Jarvis" voice, not an agent's
+HANDSFREE = Path(__file__).resolve().parents[2] / "handsfree/handsfree.py"
 SYSTEM = {BY_HANDSFREE}  # notices that neither introduce themselves nor take the user's replies
 TAGS = re.compile(r"\[(?:laugh|chuckle|sigh|gasp|groan|cough|sniff|shush|clear throat|whispering)\]\s*")
 PLAYER = ["pacat", "--playback", "--raw", "--format=float32le", f"--rate={RATE}", "--channels=1",
@@ -78,6 +80,23 @@ class Voice:
         if clip is None:
             path.unlink(missing_ok=True)
             return
+        calling = in_call()
+        if clip.for_call and not calling:  # the call is over: not said aloud at the laptop, sent to the phone
+            if clip.agent in SYSTEM:
+                path.unlink(missing_ok=True)
+                log(TALKBACK_LOG, f"{clip.agent} notice for the call dropped: the call ended")
+                return
+            try:  # in the background, by its own path (a worker started by a service has no ~/.local/bin)
+                subprocess.Popen([sys.executable, str(HANDSFREE), "text", "--as", clip.session, " ".join(clip.sentences)],
+                                 stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 start_new_session=True, env={**os.environ, "TALKBACK_AGENT": clip.agent})
+            except OSError as exc:  # kept in the spool: said or texted on a later try, never lost
+                log(TALKBACK_LOG, f"{clip.agent} clip for the ended call couldn't be texted ({exc}): kept")
+                time.sleep(2)
+                return
+            path.unlink(missing_ok=True)
+            log(TALKBACK_LOG, f"{clip.agent} clip for the call, which ended: texted to the phone instead")
+            return
         sentences = clip.sentences
         intro = 0
         if clip.agent not in SYSTEM:
@@ -119,9 +138,15 @@ class Voice:
                 else:
                     samples = np.concatenate([np.zeros(int(RATE * PAUSE), "<f4"), samples])
                 data = samples.astype("<f4")
-                for start in range(0, len(data), piece):
-                    if mic_busy() or self.skip:
+                for n, start in enumerate(range(0, len(data), piece)):
+                    # The call started or ended mid-clip: the rest is said where the user is now (or texted), not
+                    # carried on at the laptop after a hang-up (the user's catch, 2026-11-17)
+                    moved = n % 5 == 0 and in_call() != calling
+                    if mic_busy() or self.skip or moved:
                         cut = True
+                        if moved:
+                            clip.for_call = True  # resumed on the phone if a call began; texted if it ended
+                            log(TALKBACK_LOG, f"{clip.agent} cut: the call {'began' if not calling else 'ended'}")
                         break
                     player.stdin.write(data[start:start + piece].tobytes())
                     player.stdin.flush()

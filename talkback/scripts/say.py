@@ -32,7 +32,7 @@ from voice import spool  # noqa: E402
 import worker  # noqa: E402
 from voice.agents import agent_where, identity  # noqa: E402
 from voice.desktop import current as desktop  # noqa: E402
-from voice.state import HOLDS, PLAYING, SPOOL, TALKBACK_LOG, WORKER_PID, Playing, log  # noqa: E402
+from voice.state import HOLDS, PLAYING, SPOOL, TALKBACK_LOG, WORKER_PID, Playing, in_call, log  # noqa: E402
 
 
 def spawn_worker() -> None:
@@ -52,7 +52,7 @@ def stop() -> None:
 
 def new_clip(agent: str, session: str, text: str, voice: str) -> spool.Clip:
     return spool.Clip.of_text(text, agent=agent, session=session, voice=voice, where=agent_where(),
-                              tab=desktop().terminals.tab_of_caller())
+                              tab=desktop().terminals.tab_of_caller(), for_call=in_call())
 
 
 def text_from(words: list[str]) -> str:
