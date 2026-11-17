@@ -96,7 +96,7 @@ Everything runs on your machine. These are the models Henchline uses, what each 
 | [Whistle](https://cactuscompute.com/blog/whistle) ([Cactus Compute](https://github.com/cactus-compute/cactus)) | Confirms the wake word fast while Whisper is on the CPU (battery) | CPU | 17 MB | Apache-2.0 | `./install.sh handsfree` |
 | [Kokoro 82M](https://huggingface.co/hexgrad/Kokoro-82M) (via [kokoro-onnx](https://github.com/thewh1teagle/kokoro-onnx)) | Talkback: every agent's voice | CPU | ~350 MB | Apache-2.0 | `./install.sh talkback` |
 | [openWakeWord](https://github.com/dscripka/openWakeWord) feature models | Wake word detection (turns sound into features the detectors read) | CPU | ~4 MB | Apache-2.0 | `./install.sh handsfree` |
-| openWakeWord's published "hey Jarvis" | A second wake word that needs no recordings of you | CPU | <1 MB | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (non-commercial) | `./install.sh handsfree` |
+| openWakeWord's published "hey Jarvis" | A second wake word that needs no recordings of you | CPU | ~1 MB | [CC BY-NC-SA 4.0](https://creativecommons.org/licenses/by-nc-sa/4.0/) (non-commercial) | `./install.sh handsfree` |
 | Your own "hey Claude" / "hey Jarvis" detectors | Wake words in your voice | CPU | tiny | yours | trained on your machine: `handsfree/tools/wakeword_collect.py`, then `wakeword_train.py` |
 | [Silero VAD](https://github.com/snakers4/silero-vad) (bundled with faster-whisper) | Is someone speaking: turn ends, talk-over | CPU | ~1 MB | MIT | with faster-whisper (pip) |
 
