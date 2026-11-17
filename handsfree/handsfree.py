@@ -26,6 +26,14 @@
                                        they answer it (any message of theirs to this agent after it). Exit 0
                                        sent (or read, or answered), 1 not
     handsfree text-status ID            sent, delivered (on the phone) or read (opened, or replied to)
+    handsfree remind [--keep-awake] [--to "AGENT [in WORKSPACE]"] TIME WORDS
+                                       type WORDS into an agent at TIME (08:30, tomorrow 08:30,
+                                       2026-11-18 08:30, in 20m), tagged [henchline · scheduled]: yourself by
+                                       default, or the agent named. The call server delivers it, through the
+                                       same path as a phone message, even to Cursor. --keep-awake: the laptop
+                                       doesn't sleep by itself until it is delivered (a wake-up call); a
+                                       closed lid still suspends it. Prints its id
+    handsfree remind list | cancel ID   the reminders set, and taking one back
     handsfree send FILE [FILE ...] [WORDS]
                                        show the user files on their phone: in the call's chat while a call
                                        is up, else a Henchline notification (an ntfy one if Henchline can't
@@ -401,6 +409,66 @@ def switch(words: list[str]) -> int:
     return 0
 
 
+def remind(args: list[str]) -> int:
+    """`handsfree remind …`: a scheduled message (voice/reminders.py), delivered by the call server."""
+    from voice import reminders
+
+    if args[:1] == ["list"]:
+        for r in reminders.listed():
+            at = time.strftime("%a %d %b %H:%M", time.localtime(r["at"]))
+            print(f"{r['id']}  {at}  {r['state']:9}  {r['session']}  {r['words'][:60]}"
+                  + (f"  ({r['note']})" if r.get("note") else ""))
+        return 0
+    if args[:1] == ["cancel"]:
+        if len(args) < 2 or not reminders.cancel(args[1]):
+            print("no pending reminder with that id (handsfree remind list)")
+            return 1
+        print("cancelled")
+        return 0
+    keep_awake = "--keep-awake" in args
+    args = [a for a in args if a != "--keep-awake"]
+    to = ""
+    if "--to" in args:
+        at = args.index("--to")
+        if at + 1 >= len(args):
+            print('--to needs an agent, e.g. --to "cursor in physical health"')
+            return 1
+        to, args = args[at + 1], args[:at] + args[at + 2:]
+    # The time is the first one or two words ("tomorrow 08:30", "in 20m"), the rest the message
+    for n in (3, 2, 1):
+        try:
+            due = reminders.when(" ".join(args[:n]))
+            words = " ".join(args[n:]).strip()
+            break
+        except ValueError:
+            continue
+    else:
+        print("usage: handsfree remind [--keep-awake] [--to AGENT] TIME WORDS  (TIME: 08:30, tomorrow 08:30, in 20m)")
+        return 1
+    if not words:
+        print("nothing to say: handsfree remind TIME WORDS")
+        return 1
+    if to:
+        parts = re.split(r"\s+in\s+", to, maxsplit=1)
+        target = routing.find(parts[0].strip(), parts[1].strip() if len(parts) > 1 else None)
+        if target is None:
+            print(f"no agent heard lately matches {to!r}")
+            return 1
+        session = target.session
+    else:
+        speaker = caller(register=True)
+        if speaker is None:
+            print("couldn't tell which agent is asking: use --to")
+            return 1
+        session = speaker.session
+    item = reminders.add(due, session, words, "agent" if not to else "user", keep_awake)
+    print(f"reminder {item['id']} for {time.strftime('%a %d %b %H:%M', time.localtime(due))} to {session}"
+          + (" (the laptop stays awake until then)" if keep_awake else ""))
+    if subprocess.run(["systemctl", "--user", "is-active", "--quiet", "call.service"]).returncode != 0:
+        print("note: the call server is down, and it is what delivers reminders (./install.sh call)")
+    return 0
+
+
 def main() -> int:
     if {"-h", "--help"} & set(sys.argv[1:]):  # anywhere: never a ring or a text with "--help" as its words
         print(__doc__)
@@ -436,6 +504,8 @@ def main() -> int:
                 return 1
             args = args[:at] + args[at + 2:]
         return ring(" ".join(a for a in args if a not in ("--now", "--no-wait", "--done")), now, wait, done, as_session)
+    if command == "remind":
+        return remind(args)
     if command == "send":
         return send(args)
     if command == "text":

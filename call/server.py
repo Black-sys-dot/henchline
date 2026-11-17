@@ -39,7 +39,7 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
-from voice import commands, files, pickup  # noqa: E402
+from voice import commands, files, pickup, reminders  # noqa: E402
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
 from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
@@ -1569,6 +1569,93 @@ def serve(address: str, port: int) -> bool:
     return True
 
 
+REMIND_EVERY = 10.0  # seconds between looks for due reminders
+
+
+async def deliver_reminders(app: web.Application) -> None:
+    """Due reminders typed into their agents, as a message from the phone is (paste, a pause, then Enter): tried
+    until delivered, for an hour; meanwhile the laptop kept awake for those that asked."""
+    loop = asyncio.get_running_loop()
+    awake: list = [None]  # the sleep inhibitor, while one is wanted
+    while True:
+        try:
+            for item in reminders.due():
+                late = time.time() - item["at"]
+                got, note = await loop.run_in_executor(
+                    None, to_agent, item["words"], item["session"], Heard.SCHEDULED, False)
+                if got:
+                    reminders.settle(item["id"], "delivered", f"to {got}" + (f", {late / 60:.0f} min late" if late > 120 else ""))
+                    log(HANDSFREE_LOG, f"reminder {item['id']} delivered to {got}" + (f" ({late:.0f} s late)" if late > 30 else ""))
+                elif late > reminders.RETRY_FOR:
+                    reminders.settle(item["id"], "failed", note)
+                    log(HANDSFREE_LOG, f"reminder {item['id']} given up: {note}")
+                else:
+                    reminders.later(item["id"])
+                    log(HANDSFREE_LOG, f"reminder {item['id']} not delivered yet ({note}): trying again later")
+            until = reminders.keep_awake_until()
+            if until > time.time() and awake[0] is None:
+                awake[0] = await asyncio.create_subprocess_exec(
+                    "systemd-inhibit", "--what=sleep:idle", "--who=Henchline", "--why=A scheduled message is due",
+                    "--mode=block", "sleep", "infinity", stdout=asyncio.subprocess.DEVNULL, stderr=asyncio.subprocess.DEVNULL)
+                log(HANDSFREE_LOG, "keeping the laptop awake for a scheduled message")
+            elif until <= time.time() and awake[0] is not None:
+                awake[0].terminate()
+                awake[0] = None
+                log(HANDSFREE_LOG, "no scheduled message needs the laptop awake any more")
+        except asyncio.CancelledError:  # the server stopping: the laptop may sleep again
+            if awake[0] is not None:
+                awake[0].terminate()
+            raise
+        except Exception as exc:  # the loop must outlive any one reminder
+            log(HANDSFREE_LOG, f"reminders: {exc}")
+        try:
+            await asyncio.sleep(REMIND_EVERY)
+        except asyncio.CancelledError:
+            if awake[0] is not None:
+                awake[0].terminate()
+            raise
+
+
+async def start_reminders(app: web.Application) -> None:
+    app["reminders"] = asyncio.create_task(deliver_reminders(app))
+
+
+async def stop_reminders(app: web.Application) -> None:
+    app["reminders"].cancel()
+
+
+async def reminders_list(request: web.Request) -> web.Response:
+    """The reminders for an agent's chat (?session=), soonest first: pending, delivered, failed, cancelled."""
+    trusted(request)
+    return web.json_response({"reminders": reminders.listed(request.query.get("session", ""))})
+
+
+async def reminders_add(request: web.Request) -> web.Response:
+    """The phone's /later: {session, words, at: seconds since the epoch, or "08:30" / "in 20m", keep_awake}."""
+    trusted(request)
+    try:
+        body = await request.json()
+        session, words = str(body.get("session", "")), str(body.get("words", "")).strip()
+        at = body.get("at")
+        at = float(at) if isinstance(at, (int, float)) else reminders.when(str(at or ""))
+    except (ValueError, AttributeError) as exc:
+        return web.json_response({"note": f"Not scheduled: {exc}"}, status=400)
+    if not session or not words:
+        return web.json_response({"note": "Nothing to schedule, or no agent named."}, status=400)
+    item = reminders.add(at, session, words, "phone", bool(body.get("keep_awake")))
+    log(HANDSFREE_LOG, f"reminder {item['id']} set from the phone for {time.strftime('%Y-%m-%d %H:%M', time.localtime(at))}")
+    return web.json_response({"reminder": item})
+
+
+async def reminders_cancel(request: web.Request) -> web.Response:
+    trusted(request)
+    try:
+        rid = str((await request.json()).get("id", ""))
+    except (ValueError, AttributeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    return web.json_response({"ok": reminders.cancel(rid)})
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=CALL_PORT)
@@ -1608,6 +1695,11 @@ def main() -> int:
     app.router.add_get("/chat/working", chat_working)
     app.router.add_get("/crew/models", crew_models)
     app.router.add_get("/crew/commands", crew_commands)
+    app.router.add_get("/reminders", reminders_list)
+    app.router.add_post("/reminders", reminders_add)
+    app.router.add_post("/reminders/cancel", reminders_cancel)
+    app.on_startup.append(start_reminders)
+    app.on_cleanup.append(stop_reminders)
     app.router.add_post("/crew/model", crew_model)
     app.router.add_get("/files/{secret}/{name}", sent_file)
     proxied = False

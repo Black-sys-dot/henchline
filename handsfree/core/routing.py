@@ -41,9 +41,12 @@ class Heard(str, Enum):
     SHARED = "shared"  # files or text shared to Henchline from another app
     TEXTED = "text"  # typed in Henchline's chat, or in an agent's text notification
     VOICE_NOTE = "voice message"  # recorded in Henchline off a call, transcribed here: may be misheard
+    SCHEDULED = "scheduled"  # a reminder the user (or an agent) set for this time: `handsfree remind`, the phone's /later
 
     @property
     def tag(self) -> str:
+        if self is Heard.SCHEDULED:
+            return "[henchline · scheduled]"
         source = "phone" if self in (Heard.SHARED, Heard.TEXTED, Heard.VOICE_NOTE) else "hands-free"
         return f"[{source} · {self.value}]"
 
@@ -345,7 +348,8 @@ def refuse(words: str) -> None:
     """A delivery that can't happen: said out loud, and kept for the phone (it said only "the laptop says why",
     out of the user's earshot, 2026-11-16)."""
     _why.words = words
-    say(words)
+    if not getattr(_why, "quiet", False):  # a scheduled message failing: logged and retried, never said aloud
+        say(words)
 
 
 _interrupted: dict[str, float] = {}  # tab → when "send now" last interrupted its agent
@@ -357,6 +361,7 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None, urgent: bool = F
     "send now" (held send button): the agent's work is interrupted first, so the words reach it at once instead of
     waiting in its queue (Escape in a terminal; in a Cursor chat, Enter again, which sends a queued message now)."""
     _why.words = ""
+    _why.quiet = heard is Heard.SCHEDULED  # nobody is there to hear why: retried later by the call server
     speaker = to or last_speaker()
     message = f"{heard.tag} {introduce(speaker, heard)}{on_a_call(speaker, heard)}{text}"
     if speaker is None:

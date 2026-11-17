@@ -101,7 +101,7 @@ class Sent:
 
     def save(self) -> None:
         write_json(SENT, asdict(self), private=True)
-        if self.session:
+        if self.session and self.heard != "scheduled":  # a reminder isn't the user answering
             mark_replied(self.session)  # whatever way it came (desk, phone, call): an answer to its texts
 
 
