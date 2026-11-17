@@ -87,6 +87,18 @@
         </LinearLayout>
     </LinearLayout>
 
+    <!-- A photo, sent with what is said next: the camera opens, the call carries on -->
+    <ImageButton
+        android:id="@+id/callCamera"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="@android:color/transparent"
+        android:contentDescription="Take a photo for the agent"
+        android:padding="12dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_camera"
+        android:tint="#FFFFFF" />
+
     <!-- Loudspeaker (a light circle) or the earpiece (dimmer, no circle), as a phone call's speaker button -->
     <ImageButton
         android:id="@+id/speaker"

@@ -16,6 +16,7 @@ import time
 from enum import Enum
 from pathlib import Path
 
+from voice import snaps
 from voice.agents import SPOKEN_TO, identity, process, started
 from voice.desktop import current as desktop, cursor_bridge, cursor_cdp
 from voice.state import (BY_HANDSFREE, CALL_PINNED, CALL_TOLD, HANDSFREE_LOG, INTRODUCED, LAST, LISTEN, SPEAKERS, Sent,
@@ -396,6 +397,22 @@ def is_command(text: str, speaker: Speaker | None) -> bool:
 
 
 def deliver(text: str, heard: Heard, to: Speaker | None = None, urgent: bool = False) -> bool:
+    """`deliver_words`, with the photos the user took on the call screen since the last turn going along with these
+    words (a spoken or typed turn on a call; a command, a text or a share carries none). Put back if not delivered."""
+    speaker = to or last_speaker()
+    if not in_call() or heard in PHONE or heard is Heard.SCHEDULED or speaker is None or is_command(text, speaker):
+        return deliver_words(text, heard, to, urgent)
+    photos = snaps.take(speaker.session)
+    delivered = False
+    try:
+        delivered = deliver_words(text, heard, to, urgent, snaps.words(photos))
+    finally:
+        if photos and not delivered:
+            snaps.put_back(photos)
+    return delivered
+
+
+def deliver_words(text: str, heard: Heard, to: Speaker | None = None, urgent: bool = False, extra: str = "") -> bool:
     """Type the words, tagged with how they were heard, to `to`, or else to the agent that spoke last. When it
     can't, says why out loud and leaves the reason in why_not(), for the phone to show too. urgent: the phone's
     "send now" (held send button): the agent's work is interrupted first, so the words reach it at once instead of
@@ -406,7 +423,8 @@ def deliver(text: str, heard: Heard, to: Speaker | None = None, urgent: bool = F
     # A slash command ("/compact", "/rename …") is typed exactly as it is: an agent runs a line as a command only
     # when it starts with "/", so no tag, introduction or call note in front of it (none of those is then given)
     command = is_command(text, speaker)
-    message = text.strip() if command else f"{heard.tag} {introduce(speaker, heard)}{on_a_call(speaker, heard)}{text}"
+    message = text.strip() if command \
+        else f"{heard.tag} {introduce(speaker, heard)}{on_a_call(speaker, heard)}{text}{extra}"
     if speaker is None:
         log(HANDSFREE_LOG, "nobody to send to")
         refuse("I heard you, but no agent has spoken yet.")

@@ -129,6 +129,9 @@ class MainActivity : Activity() {
             afterMove(service, wasClear)
             showSpeaker(on)
         }
+        findViewById<View>(R.id.callCamera).setOnClickListener {  // a photo for the agent, on a call: it goes with the next turn
+            if (CallService.Bus.connected && photo == null) takePhoto(snap = true)  // not twice: one camera at a time
+        }
         talk = findViewById(R.id.talk)
         who = findViewById(R.id.who)
         avatar = findViewById(R.id.avatar)
@@ -245,20 +248,22 @@ class MainActivity : Activity() {
     }
 
     private var photo: android.net.Uri? = null  // where the camera puts the picture it takes
+    private var snapping = false  // that picture is the call bar's camera button's: it goes with the next turn, no sheet
 
     /** Camera: a picture taken now, into the phone's Pictures/Henchline, then shared like any picked file. */
-    private fun takePhoto() {
+    private fun takePhoto(snap: Boolean = false) {
         val values = android.content.ContentValues().apply {
             put(android.provider.MediaStore.Images.Media.DISPLAY_NAME, "henchline-${System.currentTimeMillis()}.jpg")
             put(android.provider.MediaStore.Images.Media.MIME_TYPE, "image/jpeg")
             put(android.provider.MediaStore.Images.Media.RELATIVE_PATH, "Pictures/Henchline")
         }
         photo = contentResolver.insert(android.provider.MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values) ?: return
+        snapping = snap
         try {
             startActivityForResult(Intent(android.provider.MediaStore.ACTION_IMAGE_CAPTURE)
                 .putExtra(android.provider.MediaStore.EXTRA_OUTPUT, photo), TAKE_PHOTO)
         } catch (_: android.content.ActivityNotFoundException) {
-            contentResolver.delete(photo!!, null, null); photo = null
+            contentResolver.delete(photo!!, null, null); photo = null; snapping = false
             android.widget.Toast.makeText(this, "No camera app", android.widget.Toast.LENGTH_SHORT).show()
         }
     }
@@ -268,13 +273,24 @@ class MainActivity : Activity() {
         super.onActivityResult(code, result, data)
         if (code == TAKE_PHOTO) {
             val taken = photo.also { photo = null } ?: return
-            if (result == RESULT_OK) attachUris(listOf(taken)) else contentResolver.delete(taken, null, null)
+            val snap = snapping.also { snapping = false }
+            if (result != RESULT_OK) contentResolver.delete(taken, null, null)
+            else if (snap && CallService.Bus.connected) snapPhoto(taken)
+            else attachUris(listOf(taken))
             return
         }
         if (code != PICK_FILES || result != RESULT_OK || data == null) return
         val uris = data.clipData?.let { clip -> (0 until clip.itemCount).map { clip.getItemAt(it).uri } }
             ?: listOfNotNull(data.data)
         attachUris(uris)
+    }
+
+    /** The call bar's camera: the picture goes up and waits on the laptop for what is said next (or goes alone after
+     *  a short while); it shows in the chat at once, and the call never stopped. */
+    private fun snapPhoto(uri: android.net.Uri) {
+        val name = Files.nameOf(this, uri)
+        startForegroundService(UploadService.intent(this, listOf(uri), listOf(name), "", "", current)
+            .putExtra(UploadService.INTO_CHAT, true).putExtra(UploadService.SNAP, true))
     }
 
     private fun attachUris(uris: List<android.net.Uri>) {

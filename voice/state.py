@@ -58,6 +58,7 @@ CALL_SILENT = STATE / "call.no-audio"  # the phone's mic stopped arriving mid-ca
 CALL_RING = STATE / "call.ring-endpoint"  # where Henchline can be rung (its UnifiedPush address): private, never logged
 CALL_RINGER = STATE / "call.ringer"  # who rang the user last (session, when): the call server routes the answer there
 CALL_RANG_BACK = STATE / "call.rang_back"  # a quiet call last rung back then: one per chain
+CALL_SNAPS = STATE / "call.snaps.json"  # photos from the call screen's camera, waiting to go with the next turn
 CALL_HANGUP = STATE / "call.hangup"  # end the phone call once talkback is done: the user said so, or an agent
 VOICE_NOTES = STATE / "voicenotes"
 CALL_TOLD = STATE / "call.told"  # a file per agent session already reminded, in this call, how to be on a call

@@ -26,6 +26,8 @@ Ring only when it is worth interrupting them: a long job they are waiting on fin
 
 To show the user a picture, a recording, a document or any other file, run `handsfree send FILE [FILE ...] "a few words"`. On a call it appears in the chat; otherwise it arrives as a notification. In Henchline, pictures and audio open in the app, and other files are saved to the phone's Downloads/Henchline. Send only what they would want to see on their phone, not routine output.
 
+"Show me" (or any ask to see what you see): run `handsfree show "a few words"`. It sends a picture of the terminal pane you run in (drawn from tmux's own text) into the call's chat; `handsfree show --screen` sends the whole screen instead, for a page, a window or an agent not in tmux. A photo the user takes with the call screen's camera button arrives with their next turn, as a line "(With this the user took a photo with their phone's camera: PATH …)": open that file and look at it; if no turn follows within 45 s it arrives alone as a `[phone · shared]` message.
+
 Files the user shares from their phone arrive as a message tagged `[phone · shared]`, giving the path on the laptop (under `~/Downloads/Henchline/<date>/`), the type and size, and anything they wrote. Open those files and work with them as you would with any file they give you.
 
 ## Texting the user

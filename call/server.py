@@ -39,7 +39,7 @@ HERE = Path(__file__).resolve().parent
 sys.path[:0] = [str(HERE.parent), str(HERE.parent / "handsfree/core")]  # voice/, and hands-free's routing
 import routing  # noqa: E402
 from routing import Heard  # noqa: E402
-from voice import commands, files, pickup, reminders, usage, workflows  # noqa: E402
+from voice import commands, files, pickup, reminders, snaps, usage, workflows  # noqa: E402
 from voice.agents import AGENT_VOICES, DEFAULT_VOICE  # noqa: E402
 from voice.desktop import current as desktop, cursor_bridge, tmux  # noqa: E402
 from voice.state import (RENAMED, BY_HANDSFREE, CALL, CALL_BUTTON_ONLY, CALL_SILENT, CALL_STAY_ON, CALL_HANGUP, CALL_MIRROR, CALL_ORIGIN,  # noqa: E402
@@ -483,6 +483,58 @@ async def share_tell(request: web.Request) -> web.Response:
     got, why = await asyncio.get_running_loop().run_in_executor(  # off a call it is a text: to that agent only
         None, to_agent, words, session, Heard.SHARED, in_call())
     return web.json_response({"to": got} if got else {"note": why})
+
+
+async def share_snap(request: web.Request) -> web.Response:
+    """Photos from the call screen's camera button, uploaded with /share/file: they wait to go with the turn being
+    spoken (hands-free adds them to the next turn it delivers), or, when no turn comes in snaps.WAIT seconds, are
+    sent to the agent on their own. {"files": [saved names], "session": the chat shown}"""
+    trusted(request)
+    try:
+        shared = await request.json()
+        paths = [files.received(str(n)) for n in shared.get("files", [])]
+        session = str(shared.get("session", ""))
+    except (ValueError, AttributeError, TypeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    if not paths or None in paths:
+        return web.json_response({"note": "That photo never arrived on the laptop."}, status=400)
+    if not in_call():
+        return web.json_response({"note": "The camera button is for calls: share it from the chat instead."}, status=400)
+    snaps.add(paths, session)
+    log(HANDSFREE_LOG, f"call: {len(paths)} photo(s) from the phone's camera wait for the next turn")
+    arm_snaps(snaps.WAIT + 1)
+    return web.json_response({"waiting": snaps.WAIT})
+
+
+SNAP_TIMER: asyncio.TimerHandle | None = None
+
+
+def arm_snaps(after: float) -> None:
+    """Looks in `after` seconds for photos no turn took (one timer at a time, whichever session they are for)."""
+    global SNAP_TIMER
+    if SNAP_TIMER is not None:
+        SNAP_TIMER.cancel()
+    SNAP_TIMER = asyncio.get_running_loop().call_later(after, lambda: asyncio.ensure_future(snaps_alone()))
+
+
+async def snaps_alone() -> None:
+    """No turn took the photos in time: the agent gets them by themselves. One that can't be delivered goes back on
+    the list and is tried again (until it is too old), so it isn't lost."""
+    loop = asyncio.get_running_loop()
+    taken = await loop.run_in_executor(None, lambda: snaps.take(older_than=snaps.WAIT))
+    for session in {s["session"] for s in taken}:
+        mine = [s for s in taken if s["session"] == session]
+        try:
+            words = files.message(snaps.paths(mine), "", "A photo taken with the call screen's camera, no words with it.")
+            got, why = await loop.run_in_executor(None, to_agent, words, session, Heard.SHARED, in_call())
+        except OSError as exc:  # a photo deleted meanwhile
+            got, why = "", str(exc)
+        log(HANDSFREE_LOG, f"call: photo(s) sent alone to {got}" if got else f"call: photo(s) not delivered ({why})")
+        if not got:
+            for lost in await loop.run_in_executor(None, snaps.put_back, mine, True):
+                log(HANDSFREE_LOG, f"call: gave up on a photo ({Path(lost['path']).name}) after {snaps.TRIES} tries")
+    if await loop.run_in_executor(None, snaps.waiting):
+        arm_snaps(30 if taken else 10)  # a turn may yet take them; or this was not yet their time
 
 
 ACCEPTED: dict[str, tuple[float, asyncio.Future]] = {}  # a text's id → its answer: a retry is answered, not typed again
@@ -1523,6 +1575,8 @@ async def call(request: web.Request) -> web.WebSocketResponse:
             CALL_PINNED.unlink(missing_ok=True)  # the last call's pick: this call starts with whoever spoke last
             for told in CALL_TOLD.glob("*"):  # this call reminds each agent afresh how to be on a call
                 told.unlink(missing_ok=True)
+        if not resume:
+            snaps.clear()  # photos taken on an earlier call
         blank_words()  # words a killed server never blanked
         for stale in CALL_MIRROR.glob("*.json"):  # terminal lines from before this call
             stale.unlink(missing_ok=True)
@@ -1865,6 +1919,7 @@ def main() -> int:
     app.router.add_get("/call", call)
     app.router.add_post("/share/file", share_file)
     app.router.add_post("/share/tell", share_tell)
+    app.router.add_post("/share/snap", share_snap)
     app.router.add_post("/text", texted)
     app.router.add_post("/text-status", text_status)
     app.router.add_post("/voice-note", voice_note)

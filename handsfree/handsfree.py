@@ -39,6 +39,10 @@
                                        is up, else a Henchline notification (an ntfy one if Henchline can't
                                        be pushed) that saves and opens it. Any type; kept 7 days. Exit 0 sent,
                                        1 not
+    handsfree show [--screen] [WORDS]
+                                       "show me": a picture of the terminal pane this agent runs in (drawn from
+                                       tmux's own text, works with the screen locked), or with --screen the whole
+                                       screen (also when it isn't in tmux), sent as `handsfree send` does
 
 The built-in mic runs through the echo canceller (sensing.py). The listener
 (listener.py) records a turn when the user talks after a clip, over a clip,
@@ -49,6 +53,7 @@ how it was heard, into the agent that spoke last.
 from __future__ import annotations
 
 import json
+import os
 import re
 import secrets
 import signal
@@ -229,6 +234,40 @@ def send(args: list[str]) -> int:
     print(f"pushed {pushed} of {len(metas)} to the phone as notifications"
           + ("; the rest show in the chat on the next call" if pushed < len(metas) else ""))
     return 0 if pushed == len(metas) else 2
+
+
+def show(args: list[str]) -> int:
+    """A picture of what the agent running this sees, into the call's chat (or the phone): its own terminal pane,
+    or with --screen the whole screen; the user's "show me". The rest of the arguments are the words that go with it."""
+    from voice import screenshot
+    whole = "--screen" in args
+    words = [a for a in args if a != "--screen"]
+    if any(a.startswith("--") for a in words):
+        print("usage: handsfree show [--screen] [WORDS]")
+        return 1
+    path = screenshot.folder() / screenshot.name()
+    pane = ""
+    if not whole:
+        speaker = caller()
+        tab = speaker.tab if speaker and speaker.tab and speaker.tab.owner == "tmux" else None
+        pane = tab.address if tab else os.environ.get("TMUX_PANE", "")
+        shown = screenshot.pane_text(pane) if pane else None
+        try:
+            if shown is not None:
+                screenshot.draw(shown, path)
+            elif pane:  # its pane is known but can't be read: not the screen instead
+                print("couldn't read that terminal pane")
+                return 1
+            else:
+                pane = ""
+        except (ImportError, OSError) as exc:
+            print(f"couldn't draw the terminal: {exc}")
+            return 1
+    if not pane:  # not in tmux (a Konsole tab, a Cursor chat, a page): the screen as it is
+        if screenshot.screen(path) is None:
+            print("couldn't take a picture: no tmux pane to draw, and no screenshot tool (spectacle, ImageMagick)")
+            return 1
+    return send([str(path), *words])
 
 
 def taken_as(args: list[str]) -> tuple[list[str], str | None]:
@@ -527,6 +566,8 @@ def main() -> int:
         return remind(args)
     if command == "send":
         return send(args)
+    if command == "show":
+        return show(args)
     if command == "text":
         args, as_session = taken_as(args)
         if as_session is None:

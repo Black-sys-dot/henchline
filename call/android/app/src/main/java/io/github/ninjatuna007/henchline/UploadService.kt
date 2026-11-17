@@ -52,7 +52,7 @@ class UploadService : Service() {
             }
             val result = try {
                 share(uris, names, intent.getStringExtra(TEXT) ?: "", intent.getStringExtra(NOTE) ?: "",
-                    intent.getStringExtra(SESSION) ?: "")
+                    intent.getStringExtra(SESSION) ?: "", intent.getBooleanExtra(SNAP, false))
             } catch (e: Exception) {
                 "Not shared: ${e.message ?: "the laptop couldn't be reached"} (is Tailscale on?)"
             }
@@ -82,7 +82,8 @@ class UploadService : Service() {
         }
     }
 
-    private fun share(uris: List<Uri>, names: List<String>, text: String, note: String, session: String): String {
+    private fun share(uris: List<Uri>, names: List<String>, text: String, note: String, session: String,
+                      snap: Boolean = false): String {
         val origin = Files.origin(this) ?: return "Set the laptop's address in Henchline first."
         val saved = JSONArray()
         val failed = mutableListOf<String>()  // the others still go, and the agent hears about those that arrived
@@ -98,6 +99,12 @@ class UploadService : Service() {
         }
         if (uris.isNotEmpty() && saved.length() == 0) return "Not shared: ${failed.joinToString("; ")}"
         manager.notify(PROGRESS, progress("Telling your crew…", 0, 0))
+        if (snap) {  // the call's camera: kept on the laptop for the next turn spoken, not told now
+            val kept = post("$origin/share/snap", origin, JSONObject().put("files", saved).put("session", session)
+                .toString().toRequestBody("application/json".toMediaTypeOrNull()))
+            return if (kept.has("waiting")) "Photo with you: it goes with what you say next."
+            else "Photo saved on the laptop, but: ${kept.optString("note")}"
+        }
         val told = post("$origin/share/tell", origin, JSONObject().put("files", saved).put("text", text).put("note", note)
             .put("session", session).toString().toRequestBody("application/json".toMediaTypeOrNull()))
         val what = if (uris.isEmpty()) "that" else if (saved.length() == 1 && uris.size == 1) names.firstOrNull() ?: "the file"
@@ -165,6 +172,7 @@ class UploadService : Service() {
         }
 
         const val NAMES = "names"
+        const val SNAP = "snap"  // from the call's camera button: kept for the next turn, not told at once
         const val INTO_CHAT = "into_chat"  // a share from another app: its lines in the chat come from here
         const val TEXT = "text"
         const val NOTE = "note"
