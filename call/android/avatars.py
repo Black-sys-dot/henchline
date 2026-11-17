@@ -17,6 +17,7 @@ FLAVOURS = {
 }
 NAVY, METAL, DARK, PUPIL = "#0A1430", "#B9C6D6", "#0E1F44", "#062048"
 GUNMETAL, CUP, HEADSET_RIM = "#4B5563", "#2B2F3A", "#00B8D4"  # the boss's headset
+SHIRT = "#1FA5A0"  # the boss's holiday shirt, when away
 
 
 def shapes(body, light, glow, eyes):
@@ -64,7 +65,7 @@ def stripes(top, bottom, count):
     return out
 
 
-def boss():
+def boss(away: bool = False):
     """You, the boss the crew works for (picked by the user, 2026-11-15, from several drafts): a bald head
     with a scowl, a long nose and a smirk, and a headset with a goggle-cyan mic, since you're the one they
     call; a big barrel of a black coat and a thick grey-and-black striped scarf wrapped high, its ends down."""
@@ -80,14 +81,14 @@ def boss():
     # The headset, made to read at chat size (the user's pick, 2026-11-17, "the guy in the chair"): a gunmetal band
     # outlined in the background's navy over the head, both ear cups and a mic capsule rimmed in cyan so they stand
     # out from the dark, a cyan light on the right cup and at the mic
-    face += [
+    headset = [
         ("path", dict(d="M28.5,50 A25.5,28 0,0 1,79.5 50", stroke=NAVY, sw=6.2)),
         ("path", dict(d="M28.5,50 A25.5,28 0,0 1,79.5 50", stroke=GUNMETAL, sw=4.2)),
     ]
     for x in (23.5, 75.5):
-        face += [("rect", dict(x=x, y=40, w=9, h=17, fill=HEADSET_RIM, rx=4.5)),
-                 ("rect", dict(x=x + 1.6, y=41.6, w=5.8, h=13.8, fill=CUP, rx=3))]
-    face += [
+        headset += [("rect", dict(x=x, y=40, w=9, h=17, fill=HEADSET_RIM, rx=4.5)),
+                    ("rect", dict(x=x + 1.6, y=41.6, w=5.8, h=13.8, fill=CUP, rx=3))]
+    headset += [
         ("circle", dict(cx=80, cy=48.5, r=1.4, fill="#00E5FF")),
         ("path", dict(d="M79,57 Q78,70 64,72.5", stroke=HEADSET_RIM, sw=3.4)),
         ("path", dict(d="M79,57 Q78,70 64,72.5", stroke=GUNMETAL, sw=1.8)),
@@ -95,6 +96,16 @@ def boss():
         ("rect", dict(x=56.6, y=70.4, w=7.8, h=4.2, fill=CUP, rx=2.1)),
         ("circle", dict(cx=57.9, cy=72.5, r=1.2, fill="#00E5FF")),
     ]
+    if not away:
+        face += headset
+    if away:  # on vacation (the user's pick, 2026-11-17): no headset, sunglasses, a relaxed smile
+        mouth = next(i for i, (k, a) in enumerate(face) if k == "path" and a.get("d", "").startswith("M47,70.5"))
+        face[mouth] = ("path", dict(d="M45,68.5 Q54,75 63,68.5", stroke="#2B2F3A", sw=2.2))
+        face += [("rect", dict(x=37, y=45, w=15, h=10, fill="#111318", rx=4)),
+                 ("rect", dict(x=56, y=45, w=15, h=10, fill="#111318", rx=4)),
+                 ("path", dict(d="M52,48 L56,48", stroke="#111318", sw=2)),
+                 ("path", dict(d="M40,47.5 L45,47.5", stroke="#5B6B8C", sw=1.4)),
+                 ("path", dict(d="M59,47.5 L64,47.5", stroke="#5B6B8C", sw=1.4))]
     out = [
         ("clip", dict(d=circle_path(54, 54, 54))),  # the coat and scarf go past the round edge: cut there
         ("circle", dict(cx=54, cy=54, r=54, fill=NAVY)),
@@ -109,6 +120,14 @@ def boss():
     out += stripes(bezier((25, 62), (38, 70.5), (70, 70.5), (83, 61)), bezier((26, 78), (38, 87), (70, 87), (82, 77)), 11)
     out.append(("path", dict(d="M27,70.5 C39,78.5 69,78.5 82.5,69.5", stroke="#000000", sw=1.2, alpha=0.2)))
     out += [("ellipse", dict(cx=25.6, cy=70, rx=3.6, ry=8, fill=GREY)), ("ellipse", dict(cx=82.4, cy=69, rx=3.6, ry=8, fill=GREY))]
+    if away:  # the coat and scarf swapped for a teal holiday shirt with red flowers and an open collar
+        out = [(k, dict(a, fill=SHIRT) if k == "path" and a.get("d", "").startswith("M2,108") else a) for k, a in out
+               if not (k == "ellipse" or (k == "path" and (a.get("fill") in (GREY, BLACK) or a.get("alpha") == 0.2
+                                                           or a.get("stroke") in (COAT_DARK, COAT_LINE))))]
+        out += [("path", dict(d="M43,71 L54,86 L65,71 Z", fill="#DCC7AC")),
+                ("path", dict(d="M43,71 L54,86 M65,71 L54,86", stroke="#F3F0E8", sw=2.4))]
+        for x, y in ((22, 80), (33, 88), (76, 88), (87, 79), (64, 92), (44, 92)):
+            out += [("circle", dict(cx=x, cy=y, r=3.6, fill="#FF6B6B")), ("circle", dict(cx=x, cy=y, r=1.4, fill="#FFD166"))]
     # Zoomed in on the face (the user's wish, 2026-11-15): the shoulders and scarf still in, cut by the circle
     return out[:2] + [("group", dict(scale=1.3, px=54, py=40, items=out[2:]))]
 
@@ -262,5 +281,7 @@ if __name__ == "__main__":
         if previews:
             (previews / f"avatar_{name}.svg").write_text(svg(items))
     (res / "avatar_you.xml").write_text(vector(boss(), "The boss (you)"))
+    (res / "avatar_you_away.xml").write_text(vector(boss(away=True), "The boss, away: headset off"))
     if previews:
         (previews / "avatar_you.svg").write_text(svg(boss()))
+        (previews / "avatar_you_away.svg").write_text(svg(boss(away=True)))

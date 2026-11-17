@@ -720,6 +720,12 @@ async def away(request: web.Request) -> web.Response:
     return web.json_response({"away": on})
 
 
+async def away_state(request: web.Request) -> web.Response:
+    """Whether the user is away, for the phone's avatar: {"away": bool}."""
+    trusted(request)
+    return web.json_response({"away": AWAY.exists()})
+
+
 async def chat_workflows(request: web.Request) -> web.Response:
     """A Claude chat's newest workflow runs, each with its phases and agents (voice/workflows.py): the phone's
     workflow sheet and /workflow."""
@@ -1082,9 +1088,20 @@ async def crew_plan(request: web.Request) -> web.Response:
             note = "" if got == want else (f"Cursor is in {got} mode: it didn't move further, so finish what's on its "
                                            "screen first, or switch it in its terminal.")
             return web.json_response({"mode": "plan" if got == "plan" else "agent", **({"note": note} if note else {})})
-    # Claude: off (the review, 2026-11-17). Its mode shows in its log only with its next message, so a press
-    # can't be checked, and from plan mode one press can land it in bypass-permissions
     mode = await loop.run_in_executor(None, plan_mode, target)
+    # Claude: into plan mode only, with its own /plan (a command, not a key cycle: nothing can land elsewhere). Out
+    # of it by approving the plan (Build this), as in Claude itself: a Shift+Tab out can't be checked (its mode is
+    # logged only with its next message) and from plan mode one press can land on bypass-permissions (the user
+    # agreed, 2026-11-17)
+    if target.agent == "claude" and target.tab and mode != "plan":
+        typed = await loop.run_in_executor(None, desktop().terminals.type_line, target.tab, "/plan")
+        if typed:
+            # Not "plan" yet: Claude records its mode only with its next message, so the chip waits for that
+            return web.json_response({"mode": mode, "note": "Asked Claude for plan mode: the chip shows it once Claude "
+                                                            "has. To leave it, approve the plan with Build this."})
+    if target.agent == "claude" and mode == "plan":
+        return web.json_response({"mode": mode, "note": "Claude leaves plan mode when you approve its plan: Build this, "
+                                                        "on the Plan tab."})
     return web.json_response({"mode": mode, "note": "Plan mode can't be switched from the phone for this agent yet. "
                                                     "Type /plan, or press Shift+Tab in its terminal."}, status=409)
 
@@ -2135,6 +2152,7 @@ def main() -> int:
     app.router.add_get("/usage", usage_overview)
     app.router.add_get("/chat/workflows", chat_workflows)
     app.router.add_post("/away", away)
+    app.router.add_get("/away", away_state)
     app.router.add_get("/chat/plan", chat_plan)
     app.router.add_post("/chat/plan/build", chat_plan_build)
     app.router.add_post("/crew/cursor-chats/open", cursor_chat_open)

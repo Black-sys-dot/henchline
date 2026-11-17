@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- You're away: a crescent moon on a navy ring, in place of the green dot -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="16dp" android:height="16dp" android:viewportWidth="24" android:viewportHeight="24">
+    <path android:fillColor="#FF0A1430" android:pathData="M12,0.5a11.5,11.5 0,1 0,0 23a11.5,11.5 0,1 0,0 -23z" />
+    <path android:fillColor="#FFF5C542" android:pathData="M14.8,3.6A8.6,8.6 0,1 0,20.4 15.3A7,7 0,0 1,14.8 3.6Z" />
+</vector>

@@ -169,15 +169,49 @@
                 android:textColor="@color/cyan"
                 android:textSize="13sp" />
 
+            <!-- Settings has its own button: a tap on you sets Away (the design review, 2026-11-17) -->
             <ImageButton
-                android:id="@+id/profile"
-                android:layout_width="44dp"
-                android:layout_height="44dp"
+                android:id="@+id/settingsButton"
+                android:layout_width="40dp"
+                android:layout_height="40dp"
+                android:layout_marginEnd="6dp"
                 android:background="?android:attr/selectableItemBackgroundBorderless"
-                android:contentDescription="You: profile and settings"
-                android:scaleType="fitCenter"
-                android:src="@drawable/avatar_you" />
+                android:contentDescription="Settings"
+                android:src="@android:drawable/ic_menu_preferences"
+                android:tint="@color/muted" />
+
+            <!-- You: a tap goes Away (headset off) or back; a long press opens Settings. The dot says which -->
+            <FrameLayout
+                android:layout_width="44dp"
+                android:layout_height="44dp">
+
+                <ImageButton
+                    android:id="@+id/profile"
+                    android:layout_width="44dp"
+                    android:layout_height="44dp"
+                    android:background="?android:attr/selectableItemBackgroundBorderless"
+                    android:contentDescription="You: tap to go away or come back, hold for settings"
+                    android:scaleType="fitCenter"
+                    android:src="@drawable/avatar_you" />
+
+                <View
+                    android:id="@+id/presence"
+                    android:layout_width="12dp"
+                    android:layout_height="12dp"
+                    android:layout_gravity="bottom|end" />
+            </FrameLayout>
         </LinearLayout>
+
+        <TextView
+            android:id="@+id/awayLine"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="-10dp"
+            android:paddingHorizontal="20dp"
+            android:paddingBottom="8dp"
+            android:textColor="@color/muted"
+            android:textSize="13sp"
+            android:visibility="gone" />
 
         <!-- Search: project and agent names first, then what was said in the chats -->
         <EditText

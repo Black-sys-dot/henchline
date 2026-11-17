@@ -107,7 +107,10 @@ class MainActivity : Activity() {
         refresh.setProgressBackgroundColorSchemeColor(getColor(R.color.surface))
         refresh.setOnRefreshListener { if (tab == "usage") showUsage(fresh = true) else findCrew() }
         quoteBar.setOnClickListener { setQuote("") }  // tap it to stop replying
-        findViewById<View>(R.id.profile).setOnClickListener { show(settingsScreen) }
+        findViewById<View>(R.id.settingsButton).setOnClickListener { show(settingsScreen) }
+        findViewById<View>(R.id.profile).setOnClickListener { toggleAway() }
+        findViewById<View>(R.id.profile).setOnLongClickListener { show(settingsScreen); true }
+        showAway(prefs().getBoolean("away", false), animate = false)
         findViewById<View>(R.id.settingsBack).setOnClickListener { show(listScreen) }
         findViewById<TextView>(R.id.myName).apply {
             text = prefs().getString("my_name", "Boss")
@@ -2162,8 +2165,9 @@ class MainActivity : Activity() {
     private fun show(screen: View) {
         if (panel?.isOpen == true) panel?.close(animate = false)  // a menu belongs to the screen it opened on
         if (screen !== chatScreen) stopSelecting()  // and a selection to the chat it was made in
+        (shownUndo?.parent as? android.view.ViewGroup)?.removeView(shownUndo)
         for (s in listOf(listScreen, chatScreen, settingsScreen)) s.visibility = if (s === screen) View.VISIBLE else View.GONE
-        if (screen === listScreen) { showCrew(); refreshCrewQuietly() }
+        if (screen === listScreen) { showCrew(); refreshCrewQuietly(); refreshAway() }
         showCallBar()
         // A chat opens at its newest message, as a messaging app's does (it opened at the oldest, 2026-11-16)
         if (screen === chatScreen) chatScroll.post { chatScroll.fullScroll(View.FOCUS_DOWN) }
@@ -2295,6 +2299,81 @@ class MainActivity : Activity() {
     }
 
     private var lastPlan: JSONObject? = null
+
+    // --- Away (the user's idea, 2026-11-17; the design review's look) ---------------------------------------------
+
+    private var away = false
+
+    /** You, away or not: the avatar with its headset on or round the neck, a green or grey dot, and a line under
+     *  the title while away. The laptop's state is the truth (the tray and /away set it too). */
+    private fun showAway(on: Boolean, animate: Boolean = true) {
+        val changed = on != away
+        away = on
+        prefs().edit().putBoolean("away", on).apply()
+        val face = findViewById<ImageButton>(R.id.profile)
+        val swap = { face.setImageResource(if (on) R.drawable.avatar_you_away else R.drawable.avatar_you) }
+        if (animate && changed) face.animate().scaleX(0.9f).scaleY(0.9f).alpha(0f).setDuration(140).withEndAction {
+            swap()
+            face.animate().scaleX(1f).scaleY(1f).alpha(1f).setDuration(220)
+                .setInterpolator(android.view.animation.OvershootInterpolator(2f)).start()
+        }.start() else swap()
+        findViewById<View>(R.id.presence).apply {
+            background = if (on) getDrawable(R.drawable.presence_away)  // a crescent moon while you're away
+                else android.graphics.drawable.GradientDrawable().apply {
+                    shape = android.graphics.drawable.GradientDrawable.OVAL
+                    setColor(getColor(R.color.call_live)); setStroke(dp(2), getColor(R.color.navy))
+                }
+            layoutParams = layoutParams.apply { width = dp(if (on) 16 else 12); height = width }
+        }
+        findViewById<TextView>(R.id.awayLine).apply {
+            visibility = if (on) View.VISIBLE else View.GONE
+            text = android.text.Html.fromHtml("<font color=\"#00E5FF\">Away</font> · agents text you", android.text.Html.FROM_HTML_MODE_COMPACT)
+        }
+    }
+
+    private fun toggleAway(to: Boolean = !away, undo: Boolean = true) {
+        if (onCall()) return android.widget.Toast.makeText(this, "End the call first.", android.widget.Toast.LENGTH_SHORT).show()
+        findViewById<View>(R.id.profile).performHapticFeedback(android.view.HapticFeedbackConstants.CONFIRM)
+        showAway(to)
+        ask("/away", JSONObject().put("on", to)) { answer ->
+            if (!answer.has("away")) {  // not reached: as it was
+                showAway(!to)
+                android.widget.Toast.makeText(this, "Couldn't reach the laptop.", android.widget.Toast.LENGTH_SHORT).show()
+                return@ask
+            }
+            showAway(answer.optBoolean("away"))
+            if (undo) undoBar(if (to) "You're away. Agents will text you." else "Back. Agents will speak again.") { toggleAway(!to, undo = false) }
+        }
+    }
+
+    private var shownUndo: View? = null
+
+    /** A bar at the bottom for a few seconds, with Undo; a new one replaces the one showing. */
+    private fun undoBar(words: String, undo: () -> Unit) {
+        (shownUndo?.parent as? android.view.ViewGroup)?.removeView(shownUndo)
+        val bar = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+            background = android.graphics.drawable.GradientDrawable().apply { cornerRadius = dp(14).toFloat(); setColor(getColor(R.color.surface_high)) }
+            setPadding(dp(16), dp(12), dp(8), dp(12)); elevation = dp(6).toFloat()
+            addView(TextView(this@MainActivity).apply { text = words; setTextColor(getColor(R.color.text)); textSize = 14f },
+                LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+        }
+        val gone = { (bar.parent as? android.view.ViewGroup)?.removeView(bar); if (shownUndo === bar) shownUndo = null }
+        shownUndo = bar
+        bar.addView(TextView(this).apply {
+            text = "UNDO"; setTextColor(getColor(R.color.cyan)); textSize = 14f; typeface = android.graphics.Typeface.DEFAULT_BOLD
+            setPadding(dp(12), dp(6), dp(12), dp(6)); setOnClickListener { gone(); undo() }
+        })
+        addContentView(bar, android.widget.FrameLayout.LayoutParams(android.widget.FrameLayout.LayoutParams.MATCH_PARENT,
+            android.widget.FrameLayout.LayoutParams.WRAP_CONTENT, Gravity.BOTTOM).apply { setMargins(dp(16), 0, dp(16), dp(96)) })
+        main.postDelayed({ gone() }, 4000)
+    }
+
+    /** The laptop says whether you're away (the tray or /away may have changed it). */
+    private fun refreshAway() {
+        if (Files.origin(this) == null) return
+        ask("/away", null) { answer -> if (answer.has("away")) showAway(answer.optBoolean("away")) }
+    }
 
     private fun showChatTab() {
         findViewById<View>(R.id.chatScroll).visibility = View.VISIBLE
