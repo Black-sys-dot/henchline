@@ -589,14 +589,14 @@ class MainActivity : Activity() {
                     }
                     return
                 }
-                // The call has kept it already (CallService): drawn here only
-                if (file == null || line.optString("text").isNotEmpty())
+                // The call has kept it already (CallService): drawn here only; a file's words are its caption
+                if (file == null)
                     say(from, line.getString("text"), mine = from == "you", session = line.optString("session"), keep = false,
                         status = if (from == "you") "delivered" else "")
                 if (file != null) {
                     val where = line.optString("session")
                     if (where == current && joinsAlbum(where)) showHistory()  // it joins the picture before it
-                    else fileCard(from, file, where, keep = false)
+                    else fileCard(from, file, where, keep = false, caption = line.optString("text"))
                 }
                 // An agent's text arriving in the chat you're looking at: read at once
                 if (line.optString("session") == current && chatScreen.visibility == View.VISIBLE) {
@@ -2405,7 +2405,8 @@ class MainActivity : Activity() {
                 i = end; continue
             }
             val file = line.optJSONObject("file")
-            if (file != null) fileCard(line.optString("from"), file, current, keep = false, at = line.optLong("at"))
+            if (file != null) fileCard(line.optString("from"), file, current, keep = false, at = line.optLong("at"),
+                caption = line.optString("text"))
             else if (line.has("thumb")) { picture(line.getString("thumb"), line.optString("text"), current, line.optLong("at")); menuOn(before, current, listOf(line.optLong("at"))) }
             else if (line.optBoolean("note")) {  // a kept note: a call and its length
                 dayLine(line.optLong("at"))
@@ -2487,7 +2488,8 @@ class MainActivity : Activity() {
         }
     }
 
-    private fun fileCard(from: String, file: JSONObject, session: String, keep: Boolean = true, at: Long = 0) {
+    private fun fileCard(from: String, file: JSONObject, session: String, keep: Boolean = true, at: Long = 0,
+                         caption: String = "") {
         val at = if (keep) JSONObject().put("from", from).put("file", file).also { Chats.add(this, session, it) }.optLong("at") else at
         val url = file.getString("url")
         val name = file.optString("name", "file")
@@ -2521,11 +2523,13 @@ class MainActivity : Activity() {
                     val bitmap = Files.preview(this, url, dp(240))
                     main.post { if (bitmap != null) picture.setImageBitmap(bitmap) else label.text = "$name (couldn't load the preview: tap and hold to download)" }
                 }.start()
+                if (caption.isNotEmpty()) card.addView(captionView(caption))
                 card.addView(label)
             }
             type.startsWith("audio/") -> card.addView(audioRow(url, name, size))
             else -> documentCard(card, url, name, type, size)
         }
+        if (caption.isNotEmpty() && !type.startsWith("image/")) card.addView(captionView(caption))
         // Its time in the bottom-right corner, as every message's (the cat picture had none, 2026-11-16): on the
         // name's line under a picture, else a line of its own
         if (at > 0) {
@@ -2547,7 +2551,8 @@ class MainActivity : Activity() {
             (view as? android.view.ViewGroup)?.let { group -> for (k in 0 until group.childCount) holdOpensMenu(group.getChildAt(k)) }
         }
         holdOpensMenu(card)
-        val row = LinearLayout(this).apply {
+        // Swiped right, as any message: the one replied to (the user's catch, 2026-11-17: pictures couldn't be)
+        val row = SwipeRow(this, caption.ifEmpty { "📎 $name" }) { setQuote(it) }.apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.START or Gravity.BOTTOM
             setPadding(0, dp(4), 0, dp(4))
@@ -2760,10 +2765,21 @@ class MainActivity : Activity() {
     /** Two pictures in a row from the same side, sent within a minute: one album, as a messaging app groups them
      *  (the user's wish, 2026-11-16: five pictures were five bubbles). */
     private fun sameAlbum(a: JSONObject, b: JSONObject): Boolean =
-        isPicture(a) && isPicture(b) && a.has("thumb") == b.has("thumb") && a.optBoolean("mine") == b.optBoolean("mine") &&
+        isPicture(a) && isPicture(b) && a.has("thumb") == b.has("thumb") &&
+            !(a.has("file") && a.optString("text").isNotEmpty()) && !(b.has("file") && b.optString("text").isNotEmpty()) && a.optBoolean("mine") == b.optBoolean("mine") &&
             a.optString("from") == b.optString("from") && b.optLong("at") - a.optLong("at") in 0..60_000
 
     /** The newest line of that chat joins an album with the one before it: the chat is drawn again to group them. */
+    /** A file's words, under it in the same bubble. */
+    private fun captionView(words: String) = TextView(this).apply {
+        text = words
+        setTextColor(getColor(R.color.text))
+        textSize = 15f
+        setTextIsSelectable(false)
+        setPadding(0, dp(6), 0, dp(2))
+        maxWidth = dp(240)
+    }
+
     private fun joinsAlbum(session: String): Boolean {
         val history = Chats.load(this, session)
         return history.size >= 2 && sameAlbum(history[history.size - 2], history[history.size - 1])
@@ -2893,5 +2909,51 @@ class MainActivity : Activity() {
             sessionOrName.startsWith("codex", ignoreCase = true) -> R.drawable.avatar_codex
             else -> R.drawable.avatar_handsfree
         }
+    }
+}
+
+/** A row that a sideways drag pulls right, to reply to it, while what's in it keeps its taps and holds (a picture
+ *  opens, its card holds for the menu): the drag is taken only once it is clearly sideways. */
+class SwipeRow(context: android.content.Context, private val words: String, private val onSwiped: (String) -> Unit) :
+    LinearLayout(context) {
+    private var startX = 0f
+    private var startY = 0f
+    private var dragging = false
+    private val px = context.resources.displayMetrics.density
+
+    override fun onInterceptTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { startX = event.rawX; startY = event.rawY; dragging = false }
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.rawX - startX
+                val dy = event.rawY - startY
+                if (dx > 12 * px && dx > 2 * kotlin.math.abs(dy)) {
+                    dragging = true
+                    parent.requestDisallowInterceptTouchEvent(true)
+                }
+            }
+        }
+        return dragging
+    }
+
+    @android.annotation.SuppressLint("ClickableViewAccessibility")
+    override fun onTouchEvent(event: MotionEvent): Boolean {
+        when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { startX = event.rawX; startY = event.rawY; dragging = false }  // beside the bubble
+            MotionEvent.ACTION_MOVE -> {
+                val dx = event.rawX - startX
+                if (!dragging && dx > 12 * px && dx > 2 * kotlin.math.abs(event.rawY - startY)) {
+                    dragging = true
+                    parent.requestDisallowInterceptTouchEvent(true)
+                }
+                if (dragging) translationX = dx.coerceIn(0f, 96 * px)
+            }
+            MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                if (dragging && event.actionMasked == MotionEvent.ACTION_UP && translationX >= 72 * px) onSwiped(words)
+                dragging = false
+                animate().translationX(0f).setDuration(150).start()
+            }
+        }
+        return dragging || event.actionMasked == MotionEvent.ACTION_DOWN
     }
 }

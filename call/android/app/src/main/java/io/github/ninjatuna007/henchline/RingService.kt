@@ -41,9 +41,8 @@ class RingService : PushService() {
         ring.optJSONObject("file")?.let { file ->  // `handsfree send` while no call was up: kept in that agent's chat too
             val from = IncomingActivity.nameOf(ring.optString("agent"))
             val session = ring.optString("session")
-            if (ring.optString("why").isNotEmpty())
-                Chats.add(this, session, JSONObject().put("from", from).put("text", ring.optString("why")).put("mine", false))
-            Chats.add(this, session, JSONObject().put("from", from).put("file", file))
+            // Its words are its caption, in the same bubble (the user's wish, 2026-11-17), as on a call
+            Chats.add(this, session, JSONObject().put("from", from).put("file", file).put("text", ring.optString("why")))
             // The chat on screen shows it at once, with no banner; any other chat gets the notification (the user's
             // catch, 2026-11-16: a PDF came as a notification first and reached the open chat only later)
             if (session.isEmpty() || Messages.viewing != session)
