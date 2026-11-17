@@ -655,7 +655,7 @@ class LaterSheet(
                 close(); onPick(time(), awake.isChecked)
             })
             rows.addView(actionRow("🕘", "Pick a time…", "Today, or tomorrow if it has passed", R.color.text) {
-                android.app.TimePickerDialog(activity, { _, hour, minute ->
+                android.app.TimePickerDialog(activity, R.style.Clock, { _, hour, minute ->
                     close(); onPick(at(hour, minute, false), awake.isChecked)
                 }, now.get(java.util.Calendar.HOUR_OF_DAY), now.get(java.util.Calendar.MINUTE),
                     android.text.format.DateFormat.is24HourFormat(activity)).show()

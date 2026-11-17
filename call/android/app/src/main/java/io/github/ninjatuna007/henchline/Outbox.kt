@@ -77,18 +77,21 @@ object Outbox {
     /** Android tries again by itself as soon as there is a network (and keeps backing off while it can't reach). */
     fun schedule(context: Context) {
         val jobs = context.getSystemService(JobScheduler::class.java) ?: return
-        jobs.schedule(JobInfo.Builder(JOB, ComponentName(context, OutboxJob::class.java))
+        try { jobs.schedule(JobInfo.Builder(JOB, ComponentName(context, OutboxJob::class.java))
             .setRequiredNetworkType(JobInfo.NETWORK_TYPE_ANY)
             .setBackoffCriteria(30_000, JobInfo.BACKOFF_POLICY_LINEAR)
             .setPersisted(false)
-            .build())
+            .build()) } catch (_: Exception) {}  // never lose the message over it: the app's opening flushes too
     }
 }
 
 /** The outbox's turn when there is a network: sent, or tried again later. */
 class OutboxJob : JobService() {
     override fun onStartJob(params: JobParameters): Boolean {
-        Thread { jobFinished(params, Outbox.flush(this)) }.start()
+        Thread {  // never a crash in the background: a failed run is tried again
+            val left = try { Outbox.flush(this) } catch (e: Exception) { android.util.Log.w("Outbox", "flush", e); true }
+            jobFinished(params, left)
+        }.start()
         return true
     }
 

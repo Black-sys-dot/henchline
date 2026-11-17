@@ -949,13 +949,14 @@ class MainActivity : Activity() {
             duration = 420; repeatCount = android.animation.ValueAnimator.INFINITE
             repeatMode = android.animation.ValueAnimator.REVERSE; startDelay = 160; start()
         }
-        android.widget.Toast.makeText(this, "Let go: send now, interrupting · Slide left: cancel", android.widget.Toast.LENGTH_SHORT).show()
+        android.widget.Toast.makeText(this, "Let go: send now, interrupting · Slide up: send later · Slide left: cancel",
+            android.widget.Toast.LENGTH_SHORT).show()
     }
 
     private fun relaxSend() {
         urgentPulse?.cancel(); urgentPulse = null
         urgentTint?.let { send.backgroundTintList = it }
-        send.animate().scaleX(1f).scaleY(1f).translationX(0f).setDuration(160).start()
+        send.animate().scaleX(1f).scaleY(1f).translationX(0f).translationY(0f).setDuration(160).start()
     }
 
     /** The send button with words in the box: a tap sends, a hold sends now (see armUrgent). */
@@ -970,8 +971,18 @@ class MainActivity : Activity() {
                 val dy = event.rawY - urgentDownY
                 if (urgentArmed && !urgentCancelled) {
                     send.translationX = dx.coerceIn(-dp(110).toFloat(), 0f)
+                    send.translationY = dy.coerceIn(-dp(110).toFloat(), 0f)
+                    if (-dy > dp(90) && kotlin.math.abs(dx) < dp(60)) {  // slid up: the send-later menu, words kept
+                        urgentCancelled = true
+                        try {  // a clear tick (the view's own haptic is often off on this phone)
+                            getSystemService(android.os.Vibrator::class.java)?.vibrate(
+                                android.os.VibrationEffect.createOneShot(40, android.os.VibrationEffect.DEFAULT_AMPLITUDE))
+                        } catch (_: Exception) {}
+                        relaxSend()
+                        text.text.toString().trim().takeIf { it.isNotEmpty() }?.let { later(it) }  // on a call it can be empty
+                    }
                     // Slid away, left or off the button any way: not sent, the words stay
-                    if (dx < -dp(90) || kotlin.math.abs(dy) > dp(80) || dx > dp(80)) {
+                    else if (dx < -dp(90) || dy > dp(80) || dx > dp(80)) {
                         urgentCancelled = true
                         send.performHapticFeedback(android.view.HapticFeedbackConstants.CLOCK_TICK)
                         relaxSend()
@@ -2260,6 +2271,7 @@ class MainActivity : Activity() {
                     ask("/reminders", JSONObject().put("session", session).put("words", words).put("at", at / 1000.0)
                         .put("keep_awake", keepAwake)) { got ->
                         val made = got.optJSONObject("reminder")
+                        if (made != null && text.text.toString().trim() == words) text.setText("")
                         if (made == null) say("", got.optString("note").ifEmpty { "Not scheduled." }, note = true)
                         else say("", "⏰ Scheduled for ${android.text.format.DateFormat.getTimeFormat(this)
                             .format(java.util.Date(at))}: $words", note = true)
