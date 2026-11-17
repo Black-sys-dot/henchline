@@ -21,7 +21,7 @@ from pathlib import Path
 
 import paste
 from keys import HotkeyCapture
-from voice.state import HANDSFREE_LOG, HANDSFREE_MODE, LAST, PTT_LOG, Phase, in_call, phase_now, read_json
+from voice.state import HANDSFREE_LOG, HANDSFREE_MODE, LAST, Phase, in_call, phase_now, read_json
 from voice.state import ptt_log as log
 from voice.speech.whisper import Config, ding
 
@@ -150,31 +150,41 @@ class Panel:
         layout.setContentsMargins(14, 12, 14, 12)
         self.text = QLabel()
         self.text.setTextFormat(Qt.RichText)
-        self.text.setMinimumWidth(320)
+        self.text.setMinimumWidth(0)  # as wide as its rows, no wider (an empty right half, 2026-11-17)
         layout.addWidget(self.text)
 
     def show(self, units: dict[str, str], where) -> None:
-        names = dict((unit, name) for name, unit in UNITS)
+        """A small card: one row per service with a dot, where your voice goes, and one quiet line of timings (the
+        first version, every detail in a list, was too busy, 2026-11-17)."""
+        mode = ""
+        try:
+            mode = HANDSFREE_MODE.read_text().strip()
+        except OSError:
+            pass
+        words = {"ptt.service": {"active": "ready"},
+                 "handsfree.service": {"active": "listening" if mode == "listening" else "waiting for the wake word"},
+                 "call.service": {"active": "on a call" if in_call() else "ready"}}
         rows = []
-        for unit, state in units.items():
-            mark = "●" if state == "active" else "○"
-            colour = GREEN if state == "active" else (GREY if state == "inactive" else RED)
-            rows.append(f'<span style="color:{colour}">{mark}</span> <b>{names[unit]}</b>: {state}')
-        keys = ", ".join(self.cfg.keys + ["+".join(chord) for chord in self.cfg.chords])
-        rows.append(f"Push-to-talk keys: {keys}")
+        for name, unit in UNITS:
+            state = units.get(unit)
+            if state is None:
+                continue
+            said = words[unit].get(state, "off" if state == "inactive" else state)
+            dot = GREEN if state == "active" else (RED if state == "failed" else GREY)
+            rows.append(f'<tr valign="middle"><td style="color:{dot}; padding-right:8px">●</td><td><b>{name}</b></td>'
+                        f'<td style="color:#9aa3b0; padding-left:14px">{said}</td></tr>')
         speaker = read_json(LAST)
-        if speaker.get("agent"):
-            rows.append(f"Your voice goes to: {speaker['agent'].capitalize()}, in {speaker.get('where') or '?'}")
-        wake = last_lines(HANDSFREE_LOG, r"wake word confirmed by")
-        turn = last_lines(HANDSFREE_LOG, r"heard by (nemotron|whisper) [0-9.]+s")
-        ptt = last_lines(PTT_LOG, r"heard by (nemotron|whisper) [0-9.]+s")
-        for label, line in (("Last wake", wake), ("Last hands-free turn", turn), ("Last push-to-talk", ptt)):
-            found = re.search(r"^\S+ (\S+) .*?(nemotron|whisper|whistle)\D*([0-9.]+s)", line)
+        to = (f'<div style="margin-top:8px">Talking to <b>{speaker["agent"].capitalize()}</b>'
+              f'<span style="color:#9aa3b0"> · {speaker.get("where") or "?"}</span></div>') if speaker.get("agent") else ""
+        timings = []
+        for label, line in (("wake", last_lines(HANDSFREE_LOG, r"wake word confirmed by")),
+                            ("last turn", last_lines(HANDSFREE_LOG, r"heard by (nemotron|whisper) [0-9.]+s"))):
+            found = re.search(r"([0-9.]+)s", line.split(" by ", 1)[-1]) if line else None
             if found:
-                rows.append(f"{label}: {found.group(3)} by {found.group(2).capitalize()} at {found.group(1)}")
-        if in_call():
-            rows.append("On a phone call")
-        self.text.setText("<br>".join(rows))
+                timings.append(f"{label} {found.group(1)} s")
+        quiet = (f'<div style="margin-top:6px; color:#9aa3b0; font-size:small">{" · ".join(timings)}</div>'
+                 if timings else "")
+        self.text.setText(f'<table cellspacing="3">{"".join(rows)}</table>{to}{quiet}')
         self.window.adjustSize()
         from PyQt5.QtWidgets import QApplication
 
