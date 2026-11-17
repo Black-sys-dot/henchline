@@ -752,38 +752,47 @@ class CursorChatsSheet(
 }
 
 /**
- * An agent's usage as bars (the user's wish, 2026-11-17: not a text dump): each plan limit with when it resets, the
- * context with what fills it, then a few notes. Green while there's room, amber past 70 %, red past 90 %.
+ * Usage drawn as bars (the user's wish, 2026-11-17: not a text dump), for the /usage sheet and the Usage tab: each
+ * plan limit with when it resets, the context with what fills it. Green while there's room, amber past 70 %, red past
+ * 90 %.
  */
-class UsageSheet(activity: Activity, private val usage: JSONObject) : BottomPanel(activity) {
+class UsageDraw(private val activity: Activity) {
+    private val dp = activity.resources.displayMetrics.density
+    private fun px(v: Int) = (v * dp).toInt()
+    private fun colour(id: Int) = activity.getColor(id)
+    private fun rounded(fill: Int, radius: Float) = GradientDrawable().apply { setColor(fill); cornerRadius = radius * dp }
+    private fun wide(top: Int = 0, height: Int = ViewGroup.LayoutParams.WRAP_CONTENT) =
+        LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, height).apply { topMargin = px(top) }
     private val palette = listOf(0xFF2BC4D9.toInt(), 0xFF8E7CFF.toInt(), 0xFFF5A623.toInt(), 0xFF3DBE6B.toInt(),
         0xFFE5484D.toInt(), 0xFF5B9BFF.toInt(), 0xFFD77BD0.toInt(), 0xFF9AA3B0.toInt())
 
-    private fun level(percent: Double) = when {
+    fun level(percent: Double) = when {
         percent >= 90 -> colour(R.color.hang)
         percent >= 70 -> 0xFFF5A623.toInt()
         else -> 0xFF3DBE6B.toInt()
     }
 
-    private fun tokens(n: Long) = when {
+    fun tokens(n: Long) = when {
         n >= 1_000_000 -> String.format(java.util.Locale.US, "%.1fM", n / 1e6).replace(".0M", "M")
         n >= 1_000 -> "${n / 1000}K"
         else -> "$n"
     }
 
-    private fun resets(at: Long): String {
+    fun resets(at: Long): String {
         if (at <= 0) return ""
         val minutes = (at * 1000 - System.currentTimeMillis()) / 60_000
         return when {
             minutes <= 0 -> "Resets now"
             minutes < 60 -> "Resets in $minutes min"
             minutes < 24 * 60 -> "Resets in ${minutes / 60} h ${minutes % 60} min"
-            else -> "Resets " + android.text.format.DateFormat.format("EEE HH:mm", at * 1000)
+            minutes < 7 * 24 * 60 -> "Resets " + android.text.format.DateFormat.format("EEE HH:mm", at * 1000) +
+                " · in ${minutes / (24 * 60)} d ${minutes % (24 * 60) / 60} h"
+            else -> "Resets " + android.text.format.DateFormat.format("d MMM", at * 1000) + " · in ${minutes / (24 * 60)} days"
         }
     }
 
     /** A rounded track, filled to the share given, in segments when there are several. */
-    private fun bar(segments: List<Pair<Double, Int>>) = LinearLayout(activity).apply {
+    fun bar(segments: List<Pair<Double, Int>>) = LinearLayout(activity).apply {
         orientation = LinearLayout.HORIZONTAL
         background = rounded(colour(R.color.surface_high), 6f)
         clipToOutline = true
@@ -799,62 +808,78 @@ class UsageSheet(activity: Activity, private val usage: JSONObject) : BottomPane
         if (used < 100) addView(View(activity), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.MATCH_PARENT, (100 - used).toFloat()))
     }
 
-    private fun heading(title: String, right: String, rightColour: Int) = LinearLayout(activity).apply {
+    fun heading(title: String, right: String, rightColour: Int) = LinearLayout(activity).apply {
         orientation = LinearLayout.HORIZONTAL; gravity = Gravity.BOTTOM
-        addView(TextView(activity).apply { text = title; setTextColor(colour(R.color.text)); textSize = 16f; typeface = Typeface.DEFAULT_BOLD },
+        addView(TextView(activity).apply { text = title; setTextColor(colour(R.color.text)); textSize = 15f },
             LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         addView(TextView(activity).apply { text = right; setTextColor(rightColour); textSize = 15f; typeface = Typeface.DEFAULT_BOLD })
     }
 
-    private fun small(words: String) = TextView(activity).apply {
+    fun small(words: String) = TextView(activity).apply {
         text = words; setTextColor(colour(R.color.muted)); textSize = 12f; setPadding(0, px(4), 0, 0)
     }
 
+    fun label(words: String) = TextView(activity).apply {
+        text = words; setTextColor(colour(R.color.muted)); textSize = 12f; letterSpacing = 0.08f; typeface = Typeface.DEFAULT_BOLD
+    }
+
+    /** Each limit: its name and how much is used, the bar, when it resets. */
+    fun limits(into: LinearLayout, limits: org.json.JSONArray?) {
+        for (i in 0 until (limits?.length() ?: 0)) {
+            val limit = limits!!.getJSONObject(i)
+            val percent = limit.optDouble("percent")
+            into.addView(heading(limit.optString("label"), "${percent.toInt()}% used", level(percent)), wide(12))
+            into.addView(bar(listOf(percent to level(percent))), wide(6, px(12)))
+            resets(limit.optLong("resets")).takeIf { it.isNotEmpty() }?.let { into.addView(small(it)) }
+        }
+    }
+
+    /** How full the context is; with what fills it, when that's known. */
+    fun context(into: LinearLayout, context: JSONObject) {
+        val percent = context.optDouble("percent")
+        val size = context.optLong("size")
+        val used = context.optLong("used")
+        into.addView(heading(if (size > 0) "${tokens(used)} of ${tokens(size)} tokens" else "Context",
+            "${percent.toInt()}%", level(percent)), wide(12))
+        val parts = context.optJSONArray("parts")
+        if (parts != null && parts.length() > 0 && size > 0) {
+            val list = (0 until parts.length()).map { parts.getJSONObject(it) }
+            into.addView(bar(list.mapIndexed { i, p -> 100.0 * p.optLong("tokens") / size to palette[i % palette.size] }), wide(6, px(14)))
+            for ((i, part) in list.withIndex()) into.addView(LinearLayout(activity).apply {
+                orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                addView(View(activity).apply { background = rounded(palette[i % palette.size], 3f) }, LinearLayout.LayoutParams(px(10), px(10)))
+                addView(TextView(activity).apply {
+                    text = part.optString("label"); setTextColor(colour(R.color.text)); textSize = 13f; setPadding(px(8), 0, 0, 0)
+                }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+                addView(TextView(activity).apply { text = tokens(part.optLong("tokens")); setTextColor(colour(R.color.muted)); textSize = 13f })
+            }, wide(6))
+        } else into.addView(bar(listOf(percent to level(percent))), wide(6, px(12)))
+        if (size > 0) into.addView(small("Free: ${tokens((size - used).coerceAtLeast(0))}"))
+    }
+
+    fun notes(into: LinearLayout, notes: org.json.JSONArray?) {
+        for (i in 0 until (notes?.length() ?: 0)) into.addView(small(notes!!.getString(i)))
+    }
+}
+
+/** /usage and /context in a chat: that agent's plan limits and its context, as bars. */
+class UsageSheet(activity: Activity, private val usage: JSONObject) : BottomPanel(activity) {
     fun show() {
+        val draw = UsageDraw(activity)
         val agent = usage.optString("agent").replaceFirstChar { it.uppercase() }
         val sheet = open("$agent usage", usage.optString("model"))
         val body = LinearLayout(activity).apply { orientation = LinearLayout.VERTICAL }
         val limits = usage.optJSONArray("limits")
         if (limits != null && limits.length() > 0) {
             body.addView(label("PLAN LIMITS"), wide(16))
-            for (i in 0 until limits.length()) {
-                val limit = limits.getJSONObject(i)
-                val percent = limit.optDouble("percent")
-                body.addView(heading(limit.optString("label"), "${percent.toInt()}% used", level(percent)), wide(12))
-                body.addView(bar(listOf(percent to level(percent))), wide(6, px(12)))
-                resets(limit.optLong("resets")).takeIf { it.isNotEmpty() }?.let { body.addView(small(it)) }
-            }
+            draw.limits(body, limits)
         }
         usage.optJSONObject("context")?.let { context ->
-            val percent = context.optDouble("percent")
             body.addView(label("CONTEXT"), wide(20))
-            val size = context.optLong("size")
-            val used = context.optLong("used")
-            body.addView(heading(if (size > 0) "${tokens(used)} of ${tokens(size)} tokens" else "Context",
-                "${percent.toInt()}%", level(percent)), wide(12))
-            val parts = context.optJSONArray("parts")
-            if (parts != null && parts.length() > 0 && size > 0) {
-                val list = (0 until parts.length()).map { parts.getJSONObject(it) }
-                body.addView(bar(list.mapIndexed { i, p -> 100.0 * p.optLong("tokens") / size to palette[i % palette.size] }), wide(6, px(14)))
-                for ((i, part) in list.withIndex()) body.addView(LinearLayout(activity).apply {
-                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
-                    addView(View(activity).apply { background = rounded(palette[i % palette.size], 3f) }, LinearLayout.LayoutParams(px(10), px(10)))
-                    addView(TextView(activity).apply {
-                        text = part.optString("label"); setTextColor(colour(R.color.text)); textSize = 13f; setPadding(px(8), 0, 0, 0)
-                    }, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
-                    addView(TextView(activity).apply { text = tokens(part.optLong("tokens")); setTextColor(colour(R.color.muted)); textSize = 13f })
-                }, wide(6))
-                body.addView(small("Free: ${tokens((size - used).coerceAtLeast(0))}"))
-            } else {
-                body.addView(bar(listOf(percent to level(percent))), wide(6, px(12)))
-                if (size > 0) body.addView(small("Free: ${tokens((size - used).coerceAtLeast(0))}"))
-            }
+            draw.context(body, context)
         }
-        val notes = usage.optJSONArray("notes")
-        if (notes != null && notes.length() > 0) {
-            body.addView(View(activity), wide(10, px(1)))
-            for (i in 0 until notes.length()) body.addView(small(notes.getString(i)))
-        }
+        body.addView(View(activity), wide(10, px(1)))
+        draw.notes(body, usage.optJSONArray("notes"))
         sheet.addView(ScrollView(activity).apply { isVerticalScrollBarEnabled = false; addView(body) },
             LinearLayout.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.WRAP_CONTENT))
         sheet.addView(quiet("Close") { close() }, LinearLayout.LayoutParams(ViewGroup.LayoutParams.WRAP_CONTENT,

@@ -103,7 +103,7 @@ class MainActivity : Activity() {
         }
         refresh.setColorSchemeColors(getColor(R.color.cyan))
         refresh.setProgressBackgroundColorSchemeColor(getColor(R.color.surface))
-        refresh.setOnRefreshListener { findCrew() }
+        refresh.setOnRefreshListener { if (tab == "usage") showUsage(fresh = true) else findCrew() }
         quoteBar.setOnClickListener { setQuote("") }  // tap it to stop replying
         findViewById<View>(R.id.profile).setOnClickListener { show(settingsScreen) }
         findViewById<View>(R.id.settingsBack).setOnClickListener { show(listScreen) }
@@ -181,8 +181,9 @@ class MainActivity : Activity() {
         findViewById<ImageView>(R.id.callAvatar).background =
             GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x0FFFFFFF); setStroke(dp(2), 0x66FFFFFF) }
         findViewById<View>(R.id.modelChip).setOnClickListener { switchModel() }
-        findViewById<View>(R.id.tabChats).setOnClickListener { showCalls(false) }
-        findViewById<View>(R.id.tabCalls).setOnClickListener { showCalls(true) }
+        findViewById<View>(R.id.tabChats).setOnClickListener { showTab("chats") }
+        findViewById<View>(R.id.tabCalls).setOnClickListener { showTab("calls") }
+        findViewById<View>(R.id.tabUsage).setOnClickListener { showTab("usage") }
         callButton.setOnClickListener {
             when {
                 onCall() -> hangUp()
@@ -330,8 +331,30 @@ class MainActivity : Activity() {
 
     /** A swipe in from the left edge of a chat goes back to the list, as the old drawer's swipe did. */
     private var edgeStart = -1f
+    private var tabSwipeX = -1f
+    private var tabSwipeY = 0f
+    private val tabs = listOf("usage", "chats", "calls")  // as the bottom bar shows them: swiped between
 
     override fun dispatchTouchEvent(event: MotionEvent): Boolean {
+        // On the list screen, a sideways swipe moves to the tab beside (the user's wish, 2026-11-17)
+        if (listScreen.visibility == View.VISIBLE && panel?.isOpen != true && sheet?.isOpen != true) when (event.actionMasked) {
+            MotionEvent.ACTION_DOWN -> { tabSwipeX = event.x; tabSwipeY = event.y }
+            MotionEvent.ACTION_UP -> {
+                val dx = event.x - tabSwipeX
+                val dy = event.y - tabSwipeY
+                if (tabSwipeX >= 0 && kotlin.math.abs(dx) > dp(90) && kotlin.math.abs(dx) > 2 * kotlin.math.abs(dy)) {
+                    tabSwipeX = -1f
+                    val next = tabs.indexOf(tab) + if (dx < 0) 1 else -1
+                    if (next in tabs.indices) {
+                        showTab(tabs[next])
+                        // Not a tap on whatever row the finger ended on
+                        val cancel = MotionEvent.obtain(event).apply { action = MotionEvent.ACTION_CANCEL }
+                        return super.dispatchTouchEvent(cancel).also { cancel.recycle() }
+                    }
+                }
+                tabSwipeX = -1f
+            }
+        }
         if (chatScreen.visibility == View.VISIBLE && sheet?.isOpen != true) when (event.actionMasked) {
             MotionEvent.ACTION_DOWN -> edgeStart = if (event.x < dp(24)) event.x else -1f
             MotionEvent.ACTION_UP -> {
@@ -660,7 +683,8 @@ class MainActivity : Activity() {
     private fun showCrew() {
         crew.removeAllViews()
         main.removeCallbacks(searchSoon)
-        if (showingCalls) return showCalls()
+        if (tab == "calls") return showCalls()
+        if (tab == "usage") return showUsage()
         val query = if (::search.isInitialized) search.text.toString().trim() else ""
         if (names.isEmpty()) {
             crew.addView(TextView(this).apply {
@@ -1764,7 +1788,7 @@ class MainActivity : Activity() {
             .count { !it.optBoolean("note") && it.optLong("at") > seen }  // a call's line isn't a message
     }
 
-    private var showingCalls = false  // the list screen shows the call history instead of the chats
+    private var tab = "chats"  // what the list screen shows: the chats, the call history, or every AI's usage
 
     /** The call history, newest first: who rang and why, and how it went; calls with their length. Tap one for
      *  that agent's chat. */
@@ -1794,7 +1818,7 @@ class MainActivity : Activity() {
                 orientation = LinearLayout.HORIZONTAL
                 gravity = Gravity.CENTER_VERTICAL
                 setPadding(dp(20), dp(12), dp(20), dp(12))
-                if (session.isNotEmpty()) setOnClickListener { showCalls(false); open(session) }
+                if (session.isNotEmpty()) setOnClickListener { showTab("chats"); open(session) }
             }
             row.addView(ImageView(this).apply {
                 setImageResource(if (ring) avatarOf(agent) else if (session.isNotEmpty()) avatarOf(session) else R.drawable.avatar_handsfree)
@@ -1825,13 +1849,59 @@ class MainActivity : Activity() {
         }
     }
 
-    /** The bottom bar: Chats or Calls, the one showing lit. */
-    private fun showCalls(on: Boolean) {
-        showingCalls = on
-        findViewById<TextView>(R.id.tabChats).setTextColor(getColor(if (on) R.color.muted else R.color.cyan))
-        findViewById<TextView>(R.id.tabCalls).setTextColor(getColor(if (on) R.color.cyan else R.color.muted))
-        for (id in listOf(R.id.sort, R.id.search, R.id.compose)) findViewById<View>(id).visibility = if (on) View.GONE else View.VISIBLE
+    /** The bottom bar: Chats, Calls or Usage, the one showing lit. */
+    private fun showTab(which: String) {
+        tab = which
+        for ((id, name) in listOf(R.id.tabChats to "chats", R.id.tabCalls to "calls", R.id.tabUsage to "usage"))
+            findViewById<TextView>(id).setTextColor(getColor(if (name == which) R.color.cyan else R.color.muted))
+        for (id in listOf(R.id.sort, R.id.search, R.id.compose))
+            findViewById<View>(id).visibility = if (which == "chats") View.VISIBLE else View.GONE
         showCrew()
+    }
+
+    /** Every AI on the laptop at once (the user's wish, 2026-11-17): a card each, its plan's limits as bars, with
+     *  when each resets. Asked of the laptop each time the tab is shown (it keeps Cursor's for ten minutes). */
+    private fun showUsage(fresh: Boolean = false) {
+        val draw = UsageDraw(this)
+        val waiting = TextView(this).apply {
+            text = if (fresh) "Asking every AI again…" else "Asking the laptop…"
+            setTextColor(getColor(R.color.muted)); setPadding(dp(20), dp(24), dp(20), dp(24))
+        }
+        if (fresh) crew.removeAllViews()
+        crew.addView(waiting)
+        ask("/usage" + if (fresh) "?fresh=1" else "", null) { answer ->
+            refresh.isRefreshing = false
+            if (tab != "usage") return@ask
+            crew.removeAllViews()
+            val agents = answer.optJSONArray("agents")
+            if (agents == null || agents.length() == 0) {
+                crew.addView(waiting.apply { text = answer.optString("note").ifEmpty { "No usage reported yet." } })
+                return@ask
+            }
+            for (i in 0 until agents.length()) {
+                val one = agents.getJSONObject(i)
+                val agent = one.optString("agent")
+                val card = LinearLayout(this).apply {
+                    orientation = LinearLayout.VERTICAL
+                    background = android.graphics.drawable.GradientDrawable().apply {
+                        setColor(getColor(R.color.surface)); cornerRadius = dp(18).toFloat()
+                    }
+                    setPadding(dp(18), dp(16), dp(18), dp(16))
+                }
+                card.addView(LinearLayout(this).apply {
+                    orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL
+                    addView(ImageView(this@MainActivity).apply { setImageResource(avatarOf(agent)) }, LinearLayout.LayoutParams(dp(36), dp(36)))
+                    addView(TextView(this@MainActivity).apply {
+                        text = IncomingActivity.nameOf(agent); setTextColor(getColor(R.color.text)); textSize = 18f
+                        typeface = android.graphics.Typeface.DEFAULT_BOLD; setPadding(dp(12), 0, 0, 0)
+                    })
+                })
+                draw.limits(card, one.optJSONArray("limits"))
+                draw.notes(card, one.optJSONArray("notes"))
+                crew.addView(card, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT,
+                    LinearLayout.LayoutParams.WRAP_CONTENT).apply { setMargins(dp(14), dp(10), dp(14), dp(4)) })
+            }
+        }
     }
 
     private fun sortMode() = prefs().getString("sort", "recent") ?: "recent"

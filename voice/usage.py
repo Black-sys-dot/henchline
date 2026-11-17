@@ -4,14 +4,22 @@ already writes down, never from its screen.
 
 - Claude: its status line's report (agents/claude-status.py): the 5-hour and weekly limits, the context, the cost.
 - Codex: the last token count in its session log: the 5-hour and weekly limits, the context.
-- Cursor: its own record of the chat: the context, and what fills it. Its plan's limits aren't kept on the laptop.
+- Cursor: its own record of the chat: the context, and what fills it. Its plan's limits aren't kept on the laptop,
+  so the Cursor CLI is asked: started out of sight in a folder of its own, sent /usage, read, closed (cursor_plan).
 """
 
 from __future__ import annotations
 
 import json
 import re
+import shutil
+import subprocess
+import threading
+import time
+from datetime import datetime
 from pathlib import Path
+
+from voice.state import STATE
 
 CLAUDE_STATUS = Path.home() / ".local/state/ptt/claude-status"
 CODEX_SESSIONS = Path.home() / ".codex/sessions"
@@ -20,7 +28,10 @@ CODEX_SESSIONS = Path.home() / ".codex/sessions"
 def _limit(label: str, percent, resets) -> dict | None:
     if not isinstance(percent, (int, float)):
         return None
-    return {"label": label, "percent": round(float(percent), 1), "resets": int(resets) if isinstance(resets, (int, float)) else 0}
+    resets = int(resets) if isinstance(resets, (int, float)) else 0
+    if resets and resets < time.time():  # read before the window ended: it has started over since
+        percent, resets = 0, 0
+    return {"label": label, "percent": round(float(percent), 1), "resets": resets}
 
 
 def _window_name(minutes) -> str:
@@ -61,15 +72,16 @@ def claude(session: str, status_dir: Path = CLAUDE_STATUS) -> dict:
     }
 
 
+def _mtime(path: Path) -> float:
+    try:
+        return path.stat().st_mtime
+    except OSError:  # gone since it was listed
+        return 0.0
+
+
 def _codex_log(folder_key: str, root: Path) -> Path | None:
     """The newest Codex session log in that folder (its key: the folder's path with odd characters as _)."""
-    def mtime(path: Path) -> float:
-        try:
-            return path.stat().st_mtime
-        except OSError:
-            return 0.0
-
-    for log in sorted(root.glob("*/*/*/rollout-*.jsonl"), key=mtime, reverse=True)[:30]:
+    for log in sorted(root.glob("*/*/*/rollout-*.jsonl"), key=_mtime, reverse=True)[:30]:
         try:
             with log.open("rb") as f:
                 meta = json.loads(f.readline(1024 * 1024) or b"{}")
@@ -116,6 +128,100 @@ def codex(session: str, root: Path = CODEX_SESSIONS) -> dict:
             "notes": [f"Plan: {plan}"] if isinstance(plan, str) and plan else []}
 
 
+CURSOR_ROOM = STATE / "cursor-usage"  # the hidden CLI's own folder: trusted once (--trust), nothing else in it
+_plan: tuple[float, list[dict], list[str]] = (0.0, [], [])  # when read, limits, notes
+PLAN_FOR = 600  # seconds the plan is kept before the CLI is asked again
+FAILED_FOR = 120  # and after a failed read, before trying again (each try starts a CLI, up to 20 s)
+PROMPT = "Plan, search, build anything"  # the empty input box of a new CLI chat, and nothing else on screen says it
+_plan_lock = threading.Lock()  # one hidden CLI at a time: two would share (and kill) the same tmux server
+
+
+def parse_cursor_usage(screen: str, today: datetime | None = None) -> tuple[list[dict], list[str]]:
+    """The Cursor CLI's /usage panel, as text: (limits, notes). "Included 44% used" rows, "Resets Nov 30"."""
+    today = today or datetime.now()
+    resets = 0
+    found = re.search(r"Resets\s+([A-Z][a-z]{2})\s+(\d{1,2})", screen)
+    if found:
+        try:
+            day = datetime.strptime(f"{found.group(1)} {found.group(2)} {today.year}", "%b %d %Y")
+            if day < today.replace(hour=0, minute=0, second=0, microsecond=0):
+                day = day.replace(year=today.year + 1)
+            resets = int(day.timestamp())
+        except ValueError:
+            pass
+    limits = []
+    for row in re.finditer(r"^\s*(Included|Auto|API|[A-Z][\w-]+)\s+(\d+(?:\.\d+)?)%\s+used", screen, re.M):
+        label = {"Included": "Month: included", "Auto": "Month: Auto model", "API": "Month: other models"}.get(
+            row.group(1), f"Month: {row.group(1)}")
+        limits.append({"label": label, "percent": float(row.group(2)), "resets": resets})
+    notes = []
+    plan = re.search(r"Usage\s*•\s*(\S[^\n]*?)\s{2,}", screen)
+    if plan:
+        notes.append(f"Plan: {plan.group(1).strip()}")
+    if re.search(r"On-demand usage is off", screen):
+        notes.append("On-demand usage is off")
+    return limits, notes
+
+
+def cursor_plan(wait: float = 20.0, fresh: bool = False) -> tuple[list[dict], list[str]]:
+    """Cursor's plan usage, as its CLI shows it under /usage: asked of a CLI started in its own tmux server, out of
+    sight, and closed again; kept ten minutes. ([], []) when the CLI isn't there or didn't show it."""
+    with _plan_lock:  # a second caller waits, then gets the first one's answer
+        # fresh (a pull-down on the Usage tab): asked again, unless another caller just did
+        if time.time() - _plan[0] < (5 if fresh else PLAN_FOR if _plan[1] else FAILED_FOR):
+            return _plan[1], _plan[2]
+        limits, notes = _ask_cursor(wait)
+        _plan_set(limits, notes)
+        return limits, notes
+
+
+def _plan_set(limits: list[dict], notes: list[str]) -> None:
+    global _plan
+    _plan = (time.time(), limits, notes)
+
+
+def _ask_cursor(wait: float) -> tuple[list[dict], list[str]]:
+    """The hidden CLI's /usage. Nothing is typed until its empty input box is on screen, and nothing but /usage:
+    a key typed into a question answers it (an "a" once trusted a folder, 2026-11-17)."""
+    if not shutil.which("agent") or not shutil.which("tmux"):
+        return [], []
+    CURSOR_ROOM.mkdir(parents=True, exist_ok=True)
+    tmux = ["tmux", "-L", "henchline-usage"]
+
+    def screen() -> str:
+        done = subprocess.run([*tmux, "capture-pane", "-p", "-t", "u"], capture_output=True, text=True, timeout=5)
+        return done.stdout
+
+    try:
+        subprocess.run([*tmux, "kill-server"], capture_output=True, timeout=5)
+        subprocess.run([*tmux, "new-session", "-d", "-s", "u", "-x", "160", "-y", "40", "-c", str(CURSOR_ROOM),
+                        "agent --trust"], capture_output=True, timeout=10, check=True)
+        until = time.monotonic() + wait
+        while PROMPT not in screen() and time.monotonic() < until:
+            time.sleep(0.5)
+        if PROMPT not in screen():  # a question, a login, an update: nothing is typed into it
+            return [], []
+        subprocess.run([*tmux, "send-keys", "-t", "u", "-l", "/usage"], timeout=5)
+        time.sleep(0.5)
+        if "/usage" not in screen():  # the words didn't land in its box: no Enter
+            return [], []
+        subprocess.run([*tmux, "send-keys", "-t", "u", "Enter"], timeout=5)
+        shown = ""
+        while time.monotonic() < until:
+            shown = screen()
+            if "% used" in shown or "Disabled" in shown:
+                time.sleep(0.5)
+                shown = screen()
+                break
+            time.sleep(0.5)
+        limits, notes = parse_cursor_usage(shown)
+    except (OSError, subprocess.SubprocessError):
+        limits, notes = [], []
+    finally:
+        subprocess.run([*tmux, "kill-server"], capture_output=True, timeout=5)
+    return limits, notes
+
+
 def cursor(record: dict) -> dict:
     """From Cursor's own record of the chat (cursor_bridge.composer)."""
     if not record:
@@ -128,5 +234,42 @@ def cursor(record: dict) -> dict:
     if isinstance(percent, (int, float)):
         context = {"percent": round(float(percent), 1), "size": int(size or 0), "used": int(used or 0), "parts": parts}
     model = (record.get("modelConfig") or {}).get("modelName") if isinstance(record.get("modelConfig"), dict) else ""
-    return {"model": str(model or ""), "limits": [], "context": context,
-            "notes": ["Cursor keeps its plan's limits on its website, not on the laptop"]}
+    limits, notes = cursor_plan()
+    return {"model": str(model or ""), "limits": limits, "context": context, "notes": notes}
+
+
+def overview(fresh: bool = False) -> list[dict]:
+    """Every AI on the laptop at once, for the phone's Usage tab: each one's plan limits (the account's, not one
+    chat's), from its newest report. [{agent, limits, notes}]."""
+    found = []
+    newest = sorted(CLAUDE_STATUS.glob("*.json"), key=_mtime, reverse=True)
+    if newest:
+        got = claude(f"claude-{newest[0].stem}")
+        if got.get("limits"):
+            found.append({"agent": "claude", "limits": got["limits"], "notes": ["From your newest Claude session"]})
+    logs = sorted(CODEX_SESSIONS.glob("*/*/*/rollout-*.jsonl"), key=_mtime, reverse=True)
+    for log in logs[:5]:
+        last = None
+        try:
+            with log.open("rb") as f:
+                for raw in f:
+                    if b'"rate_limits"' in raw:
+                        last = raw
+        except OSError:
+            continue
+        if last:
+            try:
+                payload = json.loads(last).get("payload") or {}
+            except ValueError:
+                continue
+            limits = payload.get("rate_limits") or {}
+            items = [_limit(_window_name((limits.get(k) or {}).get("window_minutes")), (limits.get(k) or {}).get("used_percent"),
+                            (limits.get(k) or {}).get("resets_at")) for k in ("primary", "secondary")]
+            plan = limits.get("plan_type")
+            found.append({"agent": "codex", "limits": [i for i in items if i],
+                          "notes": [f"Plan: {plan}"] if isinstance(plan, str) and plan else []})
+            break
+    limits, notes = cursor_plan(fresh=fresh)
+    if limits:
+        found.append({"agent": "cursor", "limits": limits, "notes": notes})
+    return found

@@ -621,6 +621,13 @@ async def crew_usage(request: web.Request) -> web.Response:
     return web.json_response({"agent": target.agent, **found})
 
 
+async def usage_overview(request: web.Request) -> web.Response:
+    """The phone's Usage tab: every AI's plan limits at once, with when each resets (voice/usage.py)."""
+    trusted(request)
+    fresh = request.query.get("fresh") == "1"  # pulled down: Cursor's plan read again, not the one kept 10 minutes
+    return web.json_response({"agents": await asyncio.get_running_loop().run_in_executor(None, usage.overview, fresh)})
+
+
 async def cursor_chats(request: web.Request) -> web.Response:
     """Every Cursor editor chat that can be opened again, active or quiet, newest first (the user's wish,
     2026-11-17): {"chats": [{session, name, where, updated, status, open}]}, open when its window is open now."""
@@ -1776,6 +1783,7 @@ def main() -> int:
     app.router.add_get("/crew/folders", crew_folders)
     app.router.add_get("/crew/cursor-chats", cursor_chats)
     app.router.add_get("/crew/usage", crew_usage)
+    app.router.add_get("/usage", usage_overview)
     app.router.add_post("/crew/cursor-chats/open", cursor_chat_open)
     app.router.add_post("/crew/new", crew_new)
     app.router.add_post("/crew/end", crew_end)
