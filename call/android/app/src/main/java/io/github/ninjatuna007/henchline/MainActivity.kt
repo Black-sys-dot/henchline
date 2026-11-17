@@ -1511,7 +1511,14 @@ class MainActivity : Activity() {
             val sheet = WorkflowSheet(this, runs.getJSONObject(0),
                 refresh = { then -> ask("/chat/workflows?session=" + android.net.Uri.encode(session), null) { again ->
                     again.optJSONArray("runs")?.takeIf { it.length() > 0 }?.let { then(it.getJSONObject(0)) } } },
-                askClaude = { words -> text.setText(words); text.setSelection(text.length()); text.requestFocus() })
+                askClaude = { words ->  // ready to type: the cursor at the end and the keyboard up (the user's wish)
+                    text.setText(words); text.setSelection(text.length()); text.requestFocus()
+                    main.postDelayed({  // after the sheet has gone, or its close takes the keyboard down again
+                        text.requestFocus(); text.setSelection(text.length())
+                        getSystemService(android.view.inputmethod.InputMethodManager::class.java)
+                            ?.showSoftInput(text, android.view.inputmethod.InputMethodManager.SHOW_IMPLICIT)
+                    }, 300)
+                })
             panel = sheet.also { it.show() }
         }
     }
