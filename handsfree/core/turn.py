@@ -33,6 +33,7 @@ CALL_END_FRAMES = 30  # 0.9 s on a phone call: the user found 1.5 s slow there; 
 # Nemotron's words so far end a sentence ("…tests.", not "…and uh"): the turn ends after this much quiet instead
 # (the user's wish, 2026-11-17: answers sooner, now that the words are ready as they speak)
 EARLY_END_FRAMES, CALL_EARLY_END_FRAMES = 27, 20  # 0.8 s; 0.6 s on a call
+NO_STOP_FRAMES = 10  # its last full stop often doesn't come: then 0.3 s more, still short of the full pause
 TRAILING = {"uh", "um", "er", "erm", "hmm", "and", "but", "or", "so", "because", "the", "a", "an", "to", "of",
             "with", "like", "if", "then", "that", "which", "is", "are", "my", "your", "for", "in", "on"}
 BELOW_PEAK = 25  # dB under their loudest also counts as quiet, for a noisy room
@@ -152,7 +153,7 @@ class Turn:
             if quiet == OVER_FRAMES and self.ends_with_over(frames):
                 break
             # From the shorter pause on, looked at again now and then: the full stop can come a moment late
-            if early and not held and quiet >= early and (quiet - early) % 5 == 0 and self.sentence_done():
+            if early and not held and quiet >= early and (quiet - early) % 5 == 0 and self.sentence_done(quiet - early):
                 finished = True
                 break
             if calling and not held and len(frames) % VOICE_EVERY == 0:
@@ -250,9 +251,10 @@ class Turn:
             self.last_message = (rich, heard)
         return THINK_WINDOW if routing.THINK.search(text) else 0.0
 
-    def sentence_done(self) -> bool:
+    def sentence_done(self, longer: int = 0) -> bool:
         """Nemotron's words so far end a sentence, not on a filler or a word that leads on: no need to wait out the
-        whole pause. Without live words, never (the full pause then)."""
+        whole pause. Its last full stop often doesn't come (the user's catch, 2026-11-17), so without one, once the
+        quiet has gone `longer` than NO_STOP_FRAMES past the shorter pause. Without live words, never."""
         if not self.live:
             return False
         try:
@@ -260,7 +262,9 @@ class Turn:
         except Exception:
             return False
         words = re.findall(r"[a-z']+", said.lower())
-        return bool(words) and said[-1] in ".?!" and words[-1] not in TRAILING and not OVER.search(said)
+        if not words or words[-1] in TRAILING or OVER.search(said):
+            return False
+        return said[-1] in ".?!" or longer >= NO_STOP_FRAMES
 
     def ends_with_over(self, frames: list[np.ndarray]) -> bool:
         """Did they finish with "over"? Nemotron's words so far say it at once, the turn being heard as it is
