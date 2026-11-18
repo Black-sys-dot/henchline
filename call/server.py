@@ -267,20 +267,39 @@ def flag(path: Path, on: bool) -> None:
         path.unlink(missing_ok=True)
 
 
+def keep_ring_endpoint(address: str) -> bool:
+    """Where texts and rings reach the app (its push address): only the phone's distributor, nobody's URL."""
+    url = urllib.parse.urlsplit(address)
+    if url.scheme != "https" or url.hostname not in RING_HOSTS:
+        log(HANDSFREE_LOG, f"call: refused a ring address on {url.hostname or 'no host'} (not {', '.join(RING_HOSTS)})")
+        return False
+    if CALL_RING.exists() and CALL_RING.read_text().strip() == url.geturl():
+        return True
+    fd = os.open(CALL_RING, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    os.fchmod(fd, 0o600)  # an older file keeps its mode through O_CREAT
+    with os.fdopen(fd, "w") as out:
+        out.write(url.geturl())
+    log(HANDSFREE_LOG, "the app's push address changed: kept")
+    return True
+
+
+async def ring_endpoint(request: web.Request) -> web.Response:
+    """The app's push address, sent whenever the app opens or it changes, not only on a call (2026-11-18: after
+    reinstalls the laptop kept an old one, and every text went nowhere). {"endpoint"} → {"ok"}."""
+    trusted(request)
+    try:
+        address = str((await request.json()).get("endpoint", ""))
+    except (ValueError, AttributeError):
+        raise web.HTTPBadRequest(text="expected JSON")
+    return web.json_response({"ok": keep_ring_endpoint(address)})
+
+
 async def from_page(message: dict, ear: Ear) -> str:
     """The talk button held or let go, a switch, or a typed chat message; a note for the page, if any."""
     if "answering" in message:  # this call answers a ring: to the agent that rang
         await asyncio.get_running_loop().run_in_executor(None, route_to_ringer, str(message["answering"]))
     elif "ring_endpoint" in message:  # where `handsfree ring` reaches the app: kept private, never logged
-        url = urllib.parse.urlsplit(str(message["ring_endpoint"]))
-        if url.scheme != "https" or url.hostname not in RING_HOSTS:  # only the phone's distributor, nobody's URL
-            log(HANDSFREE_LOG, f"call: refused a ring address on {url.hostname or 'no host'} "
-                               f"(not {', '.join(RING_HOSTS)})")
-            return ""
-        fd = os.open(CALL_RING, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        os.fchmod(fd, 0o600)  # an older file keeps its mode through O_CREAT
-        with os.fdopen(fd, "w") as out:
-            out.write(url.geturl())
+        keep_ring_endpoint(str(message["ring_endpoint"]))
     elif "sound" in message:  # the app's sound mode: turns after this line ran in it, for comparing them
         log(HANDSFREE_LOG, f"call: phone sound {message['sound']}")
     elif "stats" in message:
@@ -2149,10 +2168,17 @@ def main() -> int:
     app.router.add_get("/crew/folders", crew_folders)
     app.router.add_get("/crew/cursor-chats", cursor_chats)
     app.router.add_get("/crew/usage", crew_usage)
+    app.router.add_post("/crew/usage/tell", crew_usage_tell)
     app.router.add_get("/usage", usage_overview)
     app.router.add_get("/chat/workflows", chat_workflows)
     app.router.add_post("/away", away)
     app.router.add_get("/away", away_state)
+    app.router.add_post("/ring-endpoint", ring_endpoint)
+    app.router.add_get("/voices", voices_state)
+    app.router.add_post("/voices", voices_save)
+    app.router.add_post("/voices/preview", voices_preview)
+    app.router.add_get("/show/windows", show_windows)
+    app.router.add_post("/show", show_send)
     app.router.add_get("/chat/plan", chat_plan)
     app.router.add_post("/chat/plan/build", chat_plan_build)
     app.router.add_post("/crew/cursor-chats/open", cursor_chat_open)

@@ -6,6 +6,8 @@ import android.app.NotificationManager
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import org.unifiedpush.android.connector.FailedReason
 import org.unifiedpush.android.connector.PushService
@@ -23,6 +25,7 @@ class RingService : PushService() {
     override fun onNewEndpoint(endpoint: PushEndpoint, instance: String) {
         getSharedPreferences("call", MODE_PRIVATE).edit().putString(ENDPOINT, endpoint.url).apply()
         CallService.Bus.service?.send(JSONObject().put("ring_endpoint", endpoint.url).toString())
+        share(this)  // off a call too: a changed address must reach the laptop at once
     }
 
     override fun onMessage(message: PushMessage, instance: String) {
@@ -71,6 +74,20 @@ class RingService : PushService() {
 
     companion object {
         const val ENDPOINT = "ring_endpoint"
+
+        /** The push address to the laptop over plain HTTP (off the main thread), so texts and rings find the app
+         *  after a reinstall without waiting for a call (they went nowhere for a night, 2026-11-18). */
+        fun share(context: Context) {
+            val endpoint = context.getSharedPreferences("call", MODE_PRIVATE).getString(ENDPOINT, null) ?: return
+            val origin = Files.origin(context) ?: return
+            Thread {
+                try {
+                    Files.client.newCall(okhttp3.Request.Builder().url("$origin/ring-endpoint").header("Origin", origin)
+                        .post(JSONObject().put("endpoint", endpoint).toString()
+                            .toRequestBody("application/json".toMediaType())).build()).execute().close()
+                } catch (_: Exception) {}  // offline: the next opening tries again
+            }.start()
+        }
         // "ring", then "calls" until 2026-11-15: a channel made before the app had Do Not Disturb access never gets through
         const val CHANNEL = "calls_v2"
         const val NOTIFICATION = 2

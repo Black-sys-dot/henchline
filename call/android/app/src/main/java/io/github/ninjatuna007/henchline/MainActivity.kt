@@ -474,6 +474,7 @@ class MainActivity : Activity() {
         super.onResume()
         lifecycleSeen = true
         CallService.Bus.listener = { message -> main.post { fromServer(message) } }
+        RingService.share(this)  // where texts reach this app: the laptop kept an old address after a reinstall
         if (Outbox.all(this).isNotEmpty()) {  // messages that waited: now, maybe, and on any change of network
             Outbox.watch(this)
             Thread { Outbox.flush(this) }.start()
