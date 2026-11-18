@@ -475,6 +475,7 @@ class MainActivity : Activity() {
         lifecycleSeen = true
         CallService.Bus.listener = { message -> main.post { fromServer(message) } }
         RingService.share(this)  // where texts reach this app: the laptop kept an old address after a reinstall
+        main.removeCallbacks(textsPoll); main.post(textsPoll)
         if (Outbox.all(this).isNotEmpty()) {  // messages that waited: now, maybe, and on any change of network
             Outbox.watch(this)
             Thread { Outbox.flush(this) }.start()
@@ -517,6 +518,14 @@ class MainActivity : Activity() {
         findViewById<TextView>(R.id.server).text =
             prefs().getString("server", "")?.removePrefix("https://")?.trimEnd('/')?.ifEmpty { null }
                 ?: "Set the laptop's address"
+    }
+
+    /** While the app is open, texts that never came as a push are fetched every 15 s (Messages.catchUp). */
+    private val textsPoll = object : Runnable {
+        override fun run() {
+            Thread { Messages.catchUp(this@MainActivity) }.start()
+            if (lifecycleSeen) main.postDelayed(this, 15_000)
+        }
     }
 
     override fun onPause() {

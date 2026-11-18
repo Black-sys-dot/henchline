@@ -35,9 +35,17 @@ object Messages {
 
     /** An agent's message: shown with the last few of the conversation, and a reply box. */
     fun show(context: Context, agent: String, session: String, text: String, tid: String = "") {
+        // Once: it may come both as a push and from the app's own catch-up (Messages.catchUp)
         val line = JSONObject().put("from", IncomingActivity.nameOf(agent)).put("text", text).put("mine", false)
         if (tid.isNotEmpty()) line.put("tid", tid)
-        Chats.add(context, session, line)
+        val added = synchronized(Messages) {  // the look and the add as one: a push and the catch-up can race
+            if (tid.isNotEmpty() && Chats.load(context, session).any { it.optString("tid") == tid }) false
+            else { Chats.add(context, session, line); true }
+        }
+        if (!added) {
+            receipt(context, listOf(tid), "delivered")
+            return
+        }
         if (tid.isNotEmpty()) receipt(context, listOf(tid), "delivered")  // it reached the phone: one tick for the agent
         Chats.readAll(context, session)  // the agent answered: your earlier lines there are read
         if (viewing != session) post(context, agent, session)  // no banner for the chat on screen (2026-11-16)
@@ -45,6 +53,21 @@ object Messages {
         // notification and the kept chat, but the open screen didn't redraw)
         CallService.Bus.listener?.invoke(JSONObject().put("chat", JSONObject().put("from", IncomingActivity.nameOf(agent))
             .put("text", text).put("session", session)).toString())
+    }
+
+    /** Agents' texts the laptop sent that never arrived as a push: asked for while the app is open (pushes once sat
+     *  undelivered for half an hour with the phone in hand, 2026-11-18). Off the main thread. */
+    fun catchUp(context: Context) {
+        val origin = Files.origin(context) ?: return
+        try {
+            QUICK.newCall(Request.Builder().url("$origin/texts/pending").header("Origin", origin).build()).execute().use { answer ->
+                val list = JSONObject(answer.body?.string() ?: "{}").optJSONArray("texts") ?: return
+                for (i in 0 until list.length()) {
+                    val t = list.optJSONObject(i) ?: continue
+                    show(context, t.optString("agent"), t.optString("session"), t.optString("text"), t.optString("id"))
+                }
+            }
+        } catch (_: Exception) {}  // the laptop unreachable: the next look tries again
     }
 
     /** The notification for that session, from its kept chat: the latest lines, yours and the agent's. */

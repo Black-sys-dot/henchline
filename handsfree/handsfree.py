@@ -310,8 +310,16 @@ def text(words: str, until_read: float = 0, until: str = "read", as_session: str
         speaker = caller()
         agent, session = (speaker.agent, speaker.session) if speaker else identity()
     tid = secrets.token_hex(8)
+    # The words kept too (private): the app fetches any text whose push never reached it (2026-11-18). Records
+    # older than a week go, so the folder (read on every catch-up) stays small
+    for old in TEXTS.glob("*.json"):
+        try:
+            if time.time() - old.stat().st_mtime > 7 * 86400:
+                old.unlink()
+        except OSError:
+            pass
     write_json(TEXTS / f"{tid}.json", {"id": tid, "agent": agent, "session": session, "status": "sent",
-                                       "at": time.time()}, private=True)
+                                       "at": time.time(), "words": words}, private=True)
     sent = False
     if in_call():  # the chat shows it within a moment
         write_json(CALL_MIRROR / f"{time.time_ns()}.json", {"session": session, "from": agent.capitalize(),
